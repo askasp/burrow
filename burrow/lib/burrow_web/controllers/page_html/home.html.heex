@@ -1,0 +1,36 @@
+<Layouts.app flash={@flash} current_scope={@current_scope}>
+  <div class="py-16 text-center space-y-6">
+    <h1 class="text-5xl font-bold tracking-tight">Burrow</h1>
+    <p class="text-lg opacity-80 max-w-xl mx-auto">
+      Describe the web app you want. Your own Peon writes it, tests every change, and shows it running in a live preview while you chat.
+    </p>
+    <div class="flex gap-3 justify-center">
+      <.link navigate={~p"/users/register"} class="btn btn-primary">Create an account</.link>
+      <.link navigate={~p"/users/log-in"} class="btn btn-ghost">Log in</.link>
+    </div>
+    <div class="grid sm:grid-cols-3 gap-4 pt-10 text-left">
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h2 class="card-title text-base">One Peon per project</h2>
+          <p class="text-sm opacity-80">
+            Code history, chats and environments, isolated per app.
+          </p>
+        </div>
+      </div>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h2 class="card-title text-base">Checked before it runs</h2>
+          <p class="text-sm opacity-80">
+            Every change compiles and passes tests in a sandbox first.
+          </p>
+        </div>
+      </div>
+      <div class="card bg-base-200">
+        <div class="card-body">
+          <h2 class="card-title text-base">Phoenix + LiveView</h2>
+          <p class="text-sm opacity-80">Real Elixir apps with login, ready to grow.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layouts.app>
