@@ -461,7 +461,30 @@ defmodule Peon.Chat do
     name = part["name"] || part["tool"] || get_in(part, ["call", "name"]) || "tool"
     input = part["input"] || part["arguments"] || get_in(part, ["state", "input"]) || %{}
     status = get_in(part, ["state", "status"]) || part["status"]
-    [%{id: id, role: :tool, text: "#{name} #{summarize(input)}", status: status}]
+    output = tool_output(part)
+
+    case get_in(part, ["state", "metadata", "toolCalls"]) do
+      # Code mode: MCP tools (Peon's) are called from inside a generic "execute".
+      [_ | _] = calls ->
+        text = Enum.map_join(calls, ", ", &"#{&1["tool"]} #{summarize(&1["input"])}")
+        peon? = Enum.any?(calls, &String.starts_with?(to_string(&1["tool"]), "peon"))
+        [%{id: id, role: :tool, text: text, status: status, detail: output, peon?: peon?}]
+
+      _ ->
+        peon? = String.starts_with?(name, "peon")
+        detail = if peon? or status == "error", do: output
+
+        [
+          %{
+            id: id,
+            role: :tool,
+            text: "#{name} #{summarize(input)}",
+            status: status,
+            detail: detail,
+            peon?: peon?
+          }
+        ]
+    end
   end
 
   defp normalize_part(%{"type" => type}, id)
@@ -469,6 +492,32 @@ defmodule Peon.Chat do
        do: [%{id: id, role: :tool, text: type, status: nil}]
 
   defp normalize_part(_part, _id), do: []
+
+  # A tool's text output, from opencode's state.content (or older output fields).
+  defp tool_output(part) do
+    case get_in(part, ["state", "content"]) || get_in(part, ["state", "output"]) || part["output"] do
+      text when is_binary(text) ->
+        String.slice(text, 0, 4000)
+
+      [_ | _] = content ->
+        content
+        |> Enum.map_join("\n", &(&1["text"] || ""))
+        |> String.trim()
+        |> String.slice(0, 4000)
+
+      _ ->
+        nil
+    end
+  end
+
+  # A patch is shown by the files it touches.
+  defp summarize(%{"patchText" => patch}) when is_binary(patch) do
+    ~r/^\*\*\* (?:Update|Add|Delete) File: (.+)$/m
+    |> Regex.scan(patch, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.join(" ")
+    |> String.slice(0, 160)
+  end
 
   defp summarize(input) when is_map(input) do
     input

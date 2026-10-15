@@ -22,6 +22,10 @@ defmodule Peon.ShipTest do
     assert {:landed, id} = Ship.after_checks(ok)
     assert Code.ref("main").changeset_id == id
 
+    {:ok, auth} = passed(id, "lib/app_web/user_auth.ex", "defmodule AppWeb.UserAuth do end")
+    assert Ship.review_reasons(auth) == []
+    assert {:landed, id} = Ship.after_checks(auth)
+
     {:ok, deps} = passed(id, "mix.exs", "defmodule App.MixProject do @x 1 end")
     assert {:held, ["it changes mix.exs"]} = Ship.after_checks(deps)
 

@@ -99,7 +99,11 @@ defmodule Burrow.Cell do
     {:noreply, set_status(%{state | port: nil, os_pid: nil}, {:exited, code})}
   end
 
-  def handle_info(:restart, %{port: nil} = state), do: {:noreply, start_peon(state)}
+  # Re-read the project: its owner (whose AI login it runs on) may have changed.
+  def handle_info(:restart, %{port: nil} = state),
+    do:
+      {:noreply, start_peon(%{state | project: Projects.get(state.project.id) || state.project})}
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true

@@ -116,6 +116,32 @@ defmodule Burrow.Projects do
     end
   end
 
+  @doc """
+  The owner hands the project to another member of its team. The project
+  keeps its team, and its Peon restarts on the new owner's AI login.
+  """
+  def hand_over(%Scope{} = scope, %Project{} = project, user_id) do
+    user_id = parse_id(user_id)
+
+    cond do
+      not owner?(scope, project) ->
+        {:error, :not_owner}
+
+      project.team_id == nil or user_id in [nil, :invalid] or user_id == project.user_id or
+          not Teams.member_id?(project.team_id, user_id) ->
+        {:error, :not_a_teammate}
+
+      true ->
+        {1, _} =
+          Repo.update_all(from(p in Project, where: p.id == ^project.id), set: [user_id: user_id])
+
+        project = Repo.preload(%{project | user_id: user_id}, [:user, :team], force: true)
+        Burrow.Cell.restart(project.id)
+        Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
+        {:ok, project}
+    end
+  end
+
   defp parse_id(id) when id in [nil, ""], do: nil
   defp parse_id(id) when is_integer(id), do: id
 

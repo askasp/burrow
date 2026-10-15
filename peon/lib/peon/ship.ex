@@ -21,9 +21,10 @@ defmodule Peon.Ship do
   alias Peon.Store.Changeset
   alias PeonCore.Policy
 
-  # Paths an AI changeset can't land by itself (project setting "review_paths").
-  @review_paths ~w(mix.exs mix.lock config/** lib/*/accounts.ex lib/*/accounts/**
-                   lib/*_web/user_auth.ex)
+  # Paths an AI changeset can't land by itself (project setting "review_paths"):
+  # dependencies and config. Everything else, authentication included, lands
+  # once its checks pass; main's tests and the health window guard it.
+  @review_paths ~w(mix.exs mix.lock config/**)
 
   def default_review_paths, do: @review_paths
 

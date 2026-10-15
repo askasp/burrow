@@ -501,6 +501,30 @@ defmodule PeonWeb.ProjectLive do
     """
   end
 
+  # Peon's own answers (submit results) are shown in full; other tools in one
+  # line, with their output only when they failed.
+  defp message(%{message: %{role: :tool, peon?: true, detail: detail}} = assigns)
+       when is_binary(detail) and detail != "" do
+    ~H"""
+    <div class="text-xs border-l-2 border-primary pl-2 space-y-1">
+      <div class="font-mono opacity-60 truncate">→ {@message.text}</div>
+      <div class="whitespace-pre-wrap">{@message.detail}</div>
+    </div>
+    """
+  end
+
+  defp message(%{message: %{role: :tool, detail: detail}} = assigns)
+       when is_binary(detail) and detail != "" do
+    ~H"""
+    <details class="text-xs">
+      <summary class={["font-mono truncate cursor-pointer", tool_class(@message[:status])]}>
+        → {@message.text}
+      </summary>
+      <pre class="whitespace-pre-wrap opacity-70 pl-3">{@message.detail}</pre>
+    </details>
+    """
+  end
+
   defp message(%{message: %{role: :tool}} = assigns) do
     ~H"""
     <div class={["text-xs font-mono truncate", tool_class(@message[:status])]}>→ {@message.text}</div>

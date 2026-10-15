@@ -11,6 +11,24 @@ runs `mix test` and shows the result in a live preview.
   `live_session` in the router and read the user from `@current_scope.user`.
 - `/health` returns 200 when the database answers. Keep it working.
 
+## Data we provide ourselves is code, not tables
+
+Peon changes this app through chats, so there are no admin panels. Data the
+business provides itself lives in code that you edit, test and ship like any
+other change: Elixir modules (data as plain maps or structs in functions) or
+files under `priv/` (Markdown, JSON, CSV). Examples: products, prices,
+categories, opening hours, email texts, roles and permissions, settings.
+
+- Never make database tables, Ecto schemas, migrations or CRUD/admin screens
+  for it.
+- The database is only for data that arrives while the app runs: what users
+  enter (bookings, accounts, comments), data from other services, and what the
+  app records about itself (logs, history).
+- The test: if the owner would change it by asking in a chat rather than by
+  using the app, it is code.
+- Rows that refer to code-defined things store their stable key (a string
+  such as `"sauna-1"`), not a foreign key.
+
 ## Data
 - All database access goes through Ecto. No raw SQL.
 - No database-specific column types or operators. Use :map for JSON.

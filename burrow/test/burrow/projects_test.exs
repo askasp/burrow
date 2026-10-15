@@ -17,6 +17,23 @@ defmodule Burrow.ProjectsTest do
     assert {:error, %Ecto.Changeset{}} = Projects.create(scope, %{"name" => "1"})
   end
 
+  test "the owner hands a shared project to a teammate" do
+    owner = user_scope_fixture()
+    mate = user_scope_fixture()
+    outsider = user_scope_fixture()
+    {:ok, team} = Teams.create(owner, %{"name" => "Crew"})
+    {:ok, _} = Teams.add_member(owner, team, mate.user.email)
+    {:ok, project} = Projects.create(owner, %{"name" => "Tower", "team_id" => team.id})
+
+    assert {:error, :not_a_teammate} = Projects.hand_over(owner, project, outsider.user.id)
+    assert {:error, :not_owner} = Projects.hand_over(mate, project, mate.user.id)
+
+    assert {:ok, handed} = Projects.hand_over(owner, project, to_string(mate.user.id))
+    assert handed.user_id == mate.user.id
+    assert Projects.owner?(mate, handed)
+    assert handed.team_id == team.id
+  end
+
   test "projects are only visible to their owner" do
     {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Mine"})
     other = user_scope_fixture()

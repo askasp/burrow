@@ -14,7 +14,7 @@ A change flows like this, with no queue in front of main:
 
 1. You chat in Peon. The chat is an opencode session; the agent edits the chat's workspace, and the preview reloads. Many chats work in parallel, each in its own workspace; when main moves, every workspace follows it.
 2. The agent calls Peon's MCP tool `submit_changeset`. Peon diffs the workspace against its base, checks policy (forbidden paths, migration rules, secrets) and stores an immutable changeset.
-3. Peon compiles (warnings as errors) and format-checks it in a clean sandbox, several at a time. When that passes it **lands on main right away**, rebased onto main's tip; changes to mix.exs, config and auth wait for your **Land** click instead.
+3. Peon compiles (warnings as errors) and format-checks it in a clean sandbox, several at a time. When that passes it **lands on main right away**, rebased onto main's tip; changes to dependencies and config (mix.exs, mix.lock, config/) wait for your **Land** click instead.
 4. Main's tests run after landing. When they fail, Peon bisects to the changeset that broke them and tells its chat to fix forward (or you click **revert**).
 5. Main's tested tip is **hot-loaded into the running staging app**: the attacher, a hidden Erlang node next to the app, recompiles inside it, rebuilds assets and runs new migrations. mix.exs or config changes restart the container instead. Then a health window: `/health` and `/` must answer and no new error may be logged, or Peon rolls back to the last healthy changeset.
 6. **Promote** sends a healthy staging changeset to prod the same way (or set the project setting `auto_promote: true`).

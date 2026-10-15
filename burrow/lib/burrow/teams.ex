@@ -41,6 +41,10 @@ defmodule Burrow.Teams do
     )
   end
 
+  @doc "Whether user `user_id` is in team `team_id`."
+  def member_id?(team_id, user_id),
+    do: Repo.exists?(from m in Member, where: m.team_id == ^team_id and m.user_id == ^user_id)
+
   def member?(%Scope{user: user}, team_id),
     do: Repo.exists?(from m in Member, where: m.team_id == ^team_id and m.user_id == ^user.id)
 

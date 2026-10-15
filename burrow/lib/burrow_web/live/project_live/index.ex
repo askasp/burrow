@@ -50,7 +50,14 @@ defmodule BurrowWeb.ProjectLive.Index do
     socket
     |> assign(selected: selected)
     |> assign(share_form: to_form(%{"team_id" => selected && selected.team_id}, as: "share"))
+    |> assign(teammates: teammates(selected))
   end
+
+  # Who the owner can hand the project to: the others in its team.
+  defp teammates(%Project{team: %Burrow.Teams.Team{} = team, user_id: owner_id}),
+    do: for(m <- Teams.members(team), m.user_id != owner_id, do: m.user)
+
+  defp teammates(_), do: []
 
   defp new_form(attrs \\ %{}), do: to_form(Projects.change(attrs), as: "project")
 
@@ -82,6 +89,24 @@ defmodule BurrowWeb.ProjectLive.Index do
 
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset, as: "project"))}
+    end
+  end
+
+  def handle_event("hand_over", %{"hand_over" => %{"user_id" => user_id}}, socket) do
+    project = socket.assigns.selected
+
+    case Projects.hand_over(socket.assigns.current_scope, project, user_id) do
+      {:ok, project} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "#{project.name} now belongs to #{project.user.email}. Its Peon restarts on their AI login."
+         )
+         |> load()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Pick someone in the project's team.")}
     end
   end
 
@@ -276,6 +301,26 @@ defmodule BurrowWeb.ProjectLive.Index do
               <p :if={@teams == []} class="hint m-0">
                 To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
               </p>
+            </.form>
+            <.form
+              :if={@selected.team && @teammates != []}
+              for={%{}}
+              as={:hand_over}
+              id="hand-over-form"
+              phx-submit="hand_over"
+              data-confirm="Hand this project over? It will run on their AI login, and only they can share it or hand it on."
+              class="mt-4 max-w-[420px] flex gap-2 items-end"
+            >
+              <div class="flex-1">
+                <.input
+                  name="hand_over[user_id]"
+                  value=""
+                  type="select"
+                  label="Hand it over to"
+                  options={Enum.map(@teammates, &{&1.email, &1.id})}
+                />
+              </div>
+              <.button class="btn btn-secondary btn-sm mb-1">Hand over</.button>
             </.form>
           </div>
         </section>
