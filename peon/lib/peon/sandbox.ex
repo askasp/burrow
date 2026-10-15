@@ -136,6 +136,21 @@ defmodule Peon.Sandbox do
     end
   end
 
+  @doc "A container's environment variables."
+  def env(name) do
+    case System.cmd("docker", ["inspect", "-f", "{{json .Config.Env}}", name],
+           stderr_to_stdout: true
+         ) do
+      {json, 0} ->
+        json
+        |> Jason.decode!()
+        |> Map.new(fn var -> var |> String.split("=", parts: 2) |> List.to_tuple() end)
+
+      _ ->
+        %{}
+    end
+  end
+
   @doc "Runs a command inside a running container."
   def exec(name, script) do
     System.cmd("docker", ["exec", name, "sh", "-c", script], stderr_to_stdout: true)

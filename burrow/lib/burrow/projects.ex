@@ -193,6 +193,6 @@ defmodule Burrow.Projects do
   @doc "A short-lived link that signs the user into the project's Peon."
   def peon_url(project, email) do
     token = Phoenix.Token.sign(secret(project, "sso"), "peon sso", email)
-    "http://#{Application.fetch_env!(:burrow, :peon_host)}:#{project.port}/sso?token=#{token}"
+    Burrow.Ports.url(project.port) <> "/sso?token=#{token}"
   end
 end

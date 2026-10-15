@@ -58,7 +58,10 @@ if config_env() != :test do
     env_ports: env_ports,
     check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
     health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
-    preview_host: System.get_env("PEON_PREVIEW_HOST", "localhost"),
+    # Where a browser reaches a preview or env port (see Peon.Ports.url/1)
+    port_url:
+      System.get_env("PEON_PORT_URL") ||
+        "http://#{System.get_env("PEON_PREVIEW_HOST", "localhost")}:{port}",
     # Burrow's address, for the workspace's link back to the project list
     burrow_url: System.get_env("PEON_BURROW_URL"),
     sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
@@ -116,6 +119,8 @@ if config_env() == :prod do
 
   config :peon, PeonWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
+    # Its public host, and localhost for scripts on this machine
+    check_origin: ["//#{host}", "//localhost", "//127.0.0.1"],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.

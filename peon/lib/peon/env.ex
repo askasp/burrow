@@ -153,7 +153,9 @@ defmodule Peon.Env do
         {:noreply, state}
 
       %{changeset_id: id} ->
-        if state.deployed == id and Sandbox.running?(state.container) do
+        # Not when its public address changed: the app only accepts its own host.
+        if state.deployed == id and Sandbox.running?(state.container) and
+             Sandbox.env(state.container)["PHX_HOST"] == Peon.Ports.host(state.port) do
           Logger.info("#{state.name}: adopting the running container at ##{id}")
           app = Sandbox.follow_logs(state.container)
           state = %{state | app: app, app_status: :running, good: id}
@@ -329,7 +331,7 @@ defmodule Peon.Env do
           "MIX_ENV" => "prod",
           "DATABASE_PATH" => "/data/app.db",
           "SECRET_KEY_BASE" => state.secret_key_base,
-          "PHX_HOST" => Application.fetch_env!(:peon, :preview_host),
+          "PHX_HOST" => Peon.Ports.host(state.port),
           "PORT" => "4000",
           "PEON_COOKIE" => state.cookie
         },
@@ -639,11 +641,9 @@ defmodule Peon.Env do
   ## Helpers
 
   defp info_map(state) do
-    host = Application.fetch_env!(:peon, :preview_host)
-
     %{
       name: state.name,
-      url: "http://#{host}:#{state.port}",
+      url: Peon.Ports.url(state.port),
       status: status(state),
       deployed: state.deployed,
       good: state.good,

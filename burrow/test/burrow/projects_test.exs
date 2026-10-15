@@ -90,4 +90,15 @@ defmodule Burrow.ProjectsTest do
     assert {:ok, "a@b.no"} =
              Phoenix.Token.verify(Projects.secret(project, "sso"), "peon sso", token, max_age: 60)
   end
+
+  test "behind a tunnel the Peon link uses the port's public address" do
+    Application.put_env(:burrow, :port_url, "https://burrow-{port}.example.com")
+    on_exit(fn -> Application.delete_env(:burrow, :port_url) end)
+    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Tunnel"})
+
+    assert Projects.peon_url(project, "a@b.no") =~
+             "https://burrow-#{project.port}.example.com/sso?token="
+
+    assert Burrow.Ports.host(project.port) == "burrow-#{project.port}.example.com"
+  end
 end

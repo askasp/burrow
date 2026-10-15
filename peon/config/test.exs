@@ -31,4 +31,8 @@ config :phoenix_live_view,
 config :phoenix,
   sort_verified_routes_query_params: true
 
-config :peon, start_workers: false, preview_ports: [], fix_retries: 0
+config :peon,
+  start_workers: false,
+  preview_ports: [],
+  fix_retries: 0,
+  port_url: "http://localhost:{port}"

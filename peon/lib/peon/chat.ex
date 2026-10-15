@@ -394,10 +394,8 @@ defmodule Peon.Chat do
   defp ready_reply(%{agent: %{status: {:error, reason}}}), do: {:error, reason}
 
   defp info_map(state) do
-    host = Application.fetch_env!(:peon, :preview_host)
-
     %{
-      preview_url: "http://#{host}:#{state.preview.port}",
+      preview_url: Peon.Ports.url(state.preview.port),
       preview_status: state.preview.status,
       agent_status: state.agent.status,
       busy?: state.busy?,

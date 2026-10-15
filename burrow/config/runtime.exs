@@ -47,12 +47,18 @@ if config_env() != :test do
         Path.join(root, "peon/_build/prod/rel/peon/bin/peon"),
     template_dir: System.get_env("BURROW_TEMPLATE_DIR") || Path.join(root, "template"),
     peon_host: System.get_env("BURROW_PEON_HOST", "localhost"),
+    # Public address per port behind a tunnel, e.g. https://burrow-{port}.example.com
+    port_url: System.get_env("BURROW_PORT_URL"),
     # opencode runs every user's agents with the user's own AI logins.
     opencode_bin: System.get_env("BURROW_OPENCODE_BIN") || System.find_executable("opencode"),
     opencode_model: System.get_env("BURROW_OPENCODE_MODEL", "openai/gpt-6-sol"),
-    # Local mode: let users copy this computer's opencode logins.
+    # Local mode: let users copy this computer's opencode logins. Never by
+    # default once Burrow is public: anyone who signs up could use them.
     local_login_import:
-      System.get_env("BURROW_LOCAL_LOGIN_IMPORT", to_string(config_env() == :dev)) == "true"
+      System.get_env(
+        "BURROW_LOCAL_LOGIN_IMPORT",
+        to_string(config_env() == :dev and is_nil(System.get_env("BURROW_PUBLIC_URL")))
+      ) == "true"
 end
 
 if System.get_env("PHX_SERVER") do
@@ -61,6 +67,12 @@ end
 
 config :burrow, BurrowWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
+
+# Burrow's own public address behind a tunnel, e.g. https://burrow.example.com
+if public = System.get_env("BURROW_PUBLIC_URL") do
+  %URI{host: host, port: port, scheme: scheme} = URI.parse(public)
+  config :burrow, BurrowWeb.Endpoint, url: [host: host, port: port, scheme: scheme]
+end
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.

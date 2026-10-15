@@ -118,7 +118,7 @@ defmodule Burrow.Cell do
 
     env = %{
       "PHX_SERVER" => "true",
-      "PHX_HOST" => Application.fetch_env!(:burrow, :peon_host),
+      "PHX_HOST" => Burrow.Ports.host(project.port),
       "PORT" => to_string(project.port),
       "DATABASE_PATH" => Path.join(data_dir, "peon.db"),
       "SECRET_KEY_BASE" =>
@@ -132,7 +132,7 @@ defmodule Burrow.Cell do
       "PEON_PREVIEW_PORTS" => previews,
       "PEON_STAGING_PORT" => to_string(staging),
       "PEON_PROD_PORT" => to_string(prod),
-      "PEON_PREVIEW_HOST" => Application.fetch_env!(:burrow, :peon_host),
+      "PEON_PORT_URL" => Burrow.Ports.url_template(),
       "PEON_BURROW_URL" => BurrowWeb.Endpoint.url() <> "/projects",
       "PEON_SSO_SECRET" => Projects.secret(project, "sso"),
       "PEON_OPENCODE_BIN" => Application.fetch_env!(:burrow, :opencode_bin),
