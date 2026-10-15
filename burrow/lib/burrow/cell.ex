@@ -110,6 +110,7 @@ defmodule Burrow.Cell do
     project = state.project
     data_dir = Path.join(state.dir, "peon")
     File.mkdir_p!(data_dir)
+    {previews, staging, prod} = split_ports(project.preview_ports)
 
     env = %{
       "PHX_SERVER" => "true",
@@ -124,7 +125,9 @@ defmodule Burrow.Cell do
       "PEON_PROJECT_SLUG" => project.slug,
       "PEON_PROJECT_NAME" => project.name,
       "PEON_TEMPLATE_DIR" => Application.fetch_env!(:burrow, :template_dir),
-      "PEON_PREVIEW_PORTS" => project.preview_ports,
+      "PEON_PREVIEW_PORTS" => previews,
+      "PEON_STAGING_PORT" => to_string(staging),
+      "PEON_PROD_PORT" => to_string(prod),
       "PEON_PREVIEW_HOST" => Application.fetch_env!(:burrow, :peon_host),
       "PEON_SSO_SECRET" => Projects.secret(project, "sso"),
       "PEON_OPENCODE_BIN" => Application.fetch_env!(:burrow, :opencode_bin),
@@ -172,5 +175,11 @@ defmodule Burrow.Cell do
   defp set_status(state, status) do
     Phoenix.PubSub.broadcast(Burrow.PubSub, "cells", {:cell, state.project.id, status})
     %{state | status: status}
+  end
+
+  # The project's port range: chat previews, then the last two for staging and prod.
+  defp split_ports(range) do
+    [first, last] = range |> String.split("-") |> Enum.map(&String.to_integer/1)
+    {"#{first}-#{last - 2}", last - 1, last}
   end
 end

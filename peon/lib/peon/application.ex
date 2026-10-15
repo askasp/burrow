@@ -16,6 +16,7 @@ defmodule Peon.Application do
         {Phoenix.PubSub, name: Peon.PubSub},
         {Task.Supervisor, name: Peon.TaskSupervisor},
         {Registry, keys: :unique, name: Peon.ChatRegistry},
+        {Registry, keys: :unique, name: Peon.EnvRegistry},
         {DynamicSupervisor, name: Peon.ChatSupervisor, strategy: :one_for_one},
         Peon.Store
       ] ++
@@ -31,11 +32,13 @@ defmodule Peon.Application do
     Supervisor.start_link(children, opts)
   end
 
-  # Bootstrap, checks and previews touch Docker and the template; tests start
-  # them explicitly when needed.
+  # Bootstrap, checks, environments and previews touch Docker and the
+  # template; tests start them explicitly when needed.
   defp workers do
     if Application.get_env(:peon, :start_workers, true),
-      do: [Peon.Bootstrap, Peon.Checks, Peon.Agent.MCP],
+      do:
+        [Peon.Bootstrap, Peon.Checks, Peon.Verifier, Peon.Agent.MCP] ++
+          Enum.map(Peon.Env.names(), &{Peon.Env, &1}),
       else: []
   end
 

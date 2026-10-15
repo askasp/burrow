@@ -23,7 +23,12 @@ defmodule Peon.MCPTest do
     %{result: %{tools: tools}} =
       MCP.handle(%{"jsonrpc" => "2.0", "id" => 2, "method" => "tools/list"}, "chat")
 
-    assert Enum.map(tools, & &1.name) == ["submit_changeset", "restart_preview"]
+    assert Enum.map(tools, & &1.name) == [
+             "submit_changeset",
+             "restart_preview",
+             "restore",
+             "runtime"
+           ]
 
     assert %{error: %{code: -32601}} =
              MCP.handle(%{"jsonrpc" => "2.0", "id" => 3, "method" => "nope"}, "chat")

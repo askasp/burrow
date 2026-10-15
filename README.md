@@ -10,12 +10,17 @@ Burrow (burrow/)         users, projects, AI login (opencode credentials per use
          └─ preview      the app in dev mode on the same workspace (http://preview:4000)
 ```
 
-A change flows like this:
+A change flows like this, with no queue in front of main:
 
-1. You chat in Peon. The chat is an opencode session; the agent edits the chat's workspace, and the preview reloads.
+1. You chat in Peon. The chat is an opencode session; the agent edits the chat's workspace, and the preview reloads. Many chats work in parallel, each in its own workspace; when main moves, every workspace follows it.
 2. The agent calls Peon's MCP tool `submit_changeset`. Peon diffs the workspace against its base, checks policy (forbidden paths, migration rules, secrets) and stores an immutable changeset.
-3. Peon compiles (warnings as errors), checks formatting and runs the tests in a clean sandbox, then returns the result to the agent.
-4. You click **Accept to main**. Every other chat's workspace is rebased onto the new main.
+3. Peon compiles (warnings as errors) and format-checks it in a clean sandbox, several at a time. When that passes it **lands on main right away**, rebased onto main's tip; changes to mix.exs, config and auth wait for your **Land** click instead.
+4. Main's tests run after landing. When they fail, Peon bisects to the changeset that broke them and tells its chat to fix forward (or you click **revert**).
+5. Main's tested tip is **hot-loaded into the running staging app**: the attacher, a hidden Erlang node next to the app, recompiles inside it, rebuilds assets and runs new migrations. mix.exs or config changes restart the container instead. Then a health window: `/health` and `/` must answer and no new error may be logged, or Peon rolls back to the last healthy changeset.
+6. **Promote** sends a healthy staging changeset to prod the same way (or set the project setting `auto_promote: true`).
+7. Errors from staging and prod arrive through the attacher with stacktraces and become incidents. A new incident opens a chat that is asked to fix it (`auto_fix`, default on); the incident resolves when that fix is deployed.
+
+Keyboard: `ctrl+b`, then a key (tmux style, from Beamcode). `ctrl+b ?` lists them.
 
 ```
 template/       the app every project starts from (Phoenix + LiveView + SQLite + email/password auth)
@@ -57,12 +62,12 @@ To work in the terminal instead, **Open in opencode** in a chat shows the comman
 |---|---|
 | Burrow | 4000 |
 | Peon for project N | 4100 + N |
-| Previews for project N | 5000 + 10·N … +9 |
+| Previews for project N | 5000 + 10·N … +7 |
+| Staging, prod for project N | 5000 + 10·N + 8, + 9 |
 
 Data lives in `data/` (gitignored); each user's opencode logins are in `data/burrow/users/<id>/opencode`. Delete `data/` to start over.
 
 ## Not built yet
 
-- Staging/prod environments and the Reloader (hot reload, health window, rollback).
 - The host agent: Burrow starts Peons as local OS processes instead of in containers.
 - Caddy and DNS, the CLI (`peon.checkout` / `peon.submit`).

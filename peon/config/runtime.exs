@@ -32,6 +32,17 @@ if config_env() != :test do
       [first, last] -> String.to_integer(first)..String.to_integer(last)
     end
 
+  # Environments that run the app for real; each gets a host port.
+  env_ports =
+    for {name, var, default} <- [
+          {"staging", "PEON_STAGING_PORT", "4210"},
+          {"prod", "PEON_PROD_PORT", "4211"}
+        ],
+        port = System.get_env(var, default),
+        port != "",
+        into: %{},
+        do: {name, String.to_integer(port)}
+
   data_dir = System.get_env("PEON_DATA_DIR") || Path.join(root, "data/peon-dev")
   File.mkdir_p!(data_dir)
 
@@ -44,6 +55,9 @@ if config_env() != :test do
     project_name: System.get_env("PEON_PROJECT_NAME", "Sauna Booking"),
     template_dir: System.get_env("PEON_TEMPLATE_DIR") || Path.join(root, "template"),
     preview_ports: ports,
+    env_ports: env_ports,
+    check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
+    health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
     preview_host: System.get_env("PEON_PREVIEW_HOST", "localhost"),
     sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
     sso_secret: System.get_env("PEON_SSO_SECRET"),

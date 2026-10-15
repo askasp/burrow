@@ -34,6 +34,14 @@ defmodule Peon.WorkspaceTest do
     assert Enum.sort(changes) == [{"lib/a.ex", "a2"}, {"lib/b.ex", :deleted}, {"lib/c.ex", "c1"}]
   end
 
+  test "restore puts files back as they are in the base", %{ws: ws} do
+    File.write!(Path.join(ws, "lib/a.ex"), "a2")
+    File.write!(Path.join(ws, "lib/new.ex"), "n")
+    :ok = Workspace.restore(ws, ["lib/a.ex", "lib/new.ex"])
+    assert File.read!(Path.join(ws, "lib/a.ex")) == "a1"
+    refute File.exists?(Path.join(ws, "lib/new.ex"))
+  end
+
   test "rebase takes main's changes to untouched files and reports conflicts", %{
     base: base,
     ws: ws
@@ -57,6 +65,7 @@ defmodule Peon.WorkspaceTest do
 
     assert File.read!(Path.join(ws, "lib/a.ex")) == "a-main"
     assert File.read!(Path.join(ws, "lib/b.ex")) == "b-agent"
+    assert File.read!(Path.join(ws, ".peon/main/lib/b.ex")) == "b-main"
     assert Workspace.changes(ws) == {cs.id, [{"lib/b.ex", "b-agent"}]}
   end
 end

@@ -7,7 +7,7 @@ defmodule Peon.Agent.Tools do
   `call/3` returns `{text, failed?}`.
   """
 
-  alias Peon.{Chat, Chats, Checks, Code, Store, Workspace}
+  alias Peon.{Chat, Chats, Checks, Env, Store, Workspace}
 
   @check_timeout :timer.minutes(15)
 
@@ -17,8 +17,10 @@ defmodule Peon.Agent.Tools do
         name: "submit_changeset",
         description: """
         Submit all your changes in /app as a changeset. Peon checks policy, compiles with \
-        warnings as errors, checks formatting and runs the tests in a clean sandbox, then \
-        returns the result. On failure, fix the problem and submit again.\
+        warnings as errors and checks formatting in a clean sandbox. When that passes the \
+        change lands on main right away (unless it needs the user's review); main's tests \
+        run after that and it deploys to staging. On failure, fix the problem and submit \
+        again.\
         """,
         parameters: %{
           type: "object",
@@ -38,6 +40,37 @@ defmodule Peon.Agent.Tools do
         again. Use it after adding migrations or changing mix.exs or config.\
         """,
         parameters: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "restore",
+        description: """
+        Undo your changes to files in /app: puts each path back as it is on main (your \
+        checkout's base), or removes it if main doesn't have it. There is no git in /app; \
+        use this instead of git checkout.\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{paths: %{type: "array", items: %{type: "string"}}},
+          required: ["paths"]
+        }
+      },
+      %{
+        name: "runtime",
+        description: """
+        Look into a running environment of the app, like observer. what: "overview" \
+        (status, deployed changeset, memory, process count, run queue, recent errors with \
+        stacktraces) or "processes" (top processes, sorted by "memory", "reductions" or \
+        "message_queue_len").\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{
+            env: %{type: "string", enum: ["staging", "prod"]},
+            what: %{type: "string", enum: ["overview", "processes"]},
+            sort: %{type: "string", enum: ["memory", "reductions", "message_queue_len"]}
+          },
+          required: ["env", "what"]
+        }
       }
     ]
   end
@@ -50,6 +83,30 @@ defmodule Peon.Agent.Tools do
     case Chat.restart_preview(chat_id) do
       :ok -> {"The preview is restarting. Check it with curl in a minute.", false}
       {:error, reason} -> {"Could not restart the preview: #{inspect(reason)}", true}
+    end
+  end
+
+  def call("restore", %{"paths" => paths}, chat_id) when is_list(paths) do
+    {_base, changes} = Workspace.changes(Chat.workspace_dir(chat_id))
+    changed = MapSet.new(changes, &elem(&1, 0))
+    {known, unknown} = Enum.split_with(paths, &MapSet.member?(changed, &1))
+    :ok = Workspace.restore(Chat.workspace_dir(chat_id), known)
+
+    text =
+      "Restored #{length(known)} file(s) to main's version." <>
+        if(unknown == [], do: "", else: " Not changed, left alone: #{Enum.join(unknown, ", ")}")
+
+    {text, false}
+  end
+
+  def call("runtime", %{"env" => env, "what" => what} = args, _chat_id) do
+    if env in Env.names() do
+      case Env.runtime(env, what, Map.take(args, ["sort", "limit"])) do
+        {:ok, result} -> {Jason.encode!(result, pretty: true), false}
+        {:error, reason} -> {"Could not inspect #{env}: #{inspect(reason)}", true}
+      end
+    else
+      {"There is no #{env} environment.", true}
     end
   end
 
@@ -94,23 +151,26 @@ defmodule Peon.Agent.Tools do
 
   defp await_checks(id) do
     receive do
-      {:checked, ^id, status, checks} -> {report(id, status, checks), status == "failed"}
-      {:checked, _, _, _} -> await_checks(id)
-      {:check_step, _, _, _} -> await_checks(id)
+      {:checked, ^id, status, checks, outcome} ->
+        {report(id, status, checks, outcome),
+         status == "failed" or match?({:not_landed, _}, outcome)}
+
+      {:checked, _, _, _, _} ->
+        await_checks(id)
+
+      {:check_step, _, _, _} ->
+        await_checks(id)
     after
       @check_timeout -> {"Checks for changeset #{id} did not finish in time.", true}
     end
   end
 
-  defp report(id, "passed", checks) do
+  defp report(id, "passed", checks, outcome) do
     steps = Enum.map_join(checks["steps"], ", ", &"#{&1["name"]} ok")
-    main = Code.ref("main")
-
-    "Changeset #{id}: all checks passed (#{steps}). The user can now accept it onto main" <>
-      if(main && main.changeset_id == id, do: " (it already is).", else: ".")
+    "Changeset #{id} passed its checks (#{steps}). " <> outcome(outcome)
   end
 
-  defp report(id, "failed", checks) do
+  defp report(id, "failed", checks, _outcome) do
     failed = Enum.find(checks["steps"], &(&1["status"] == "failed"))
 
     """
@@ -121,6 +181,30 @@ defmodule Peon.Agent.Tools do
     Fix this in /app and call submit_changeset again.\
     """
   end
+
+  defp outcome({:landed, main_id}) do
+    staging = if "staging" in Env.names(), do: Env.info("staging"), else: nil
+
+    "It landed on main as ##{main_id}. Main's tests run next; if your change breaks them " <>
+      "you will get a message here. Once they pass it is hot-loaded into staging" <>
+      if(staging, do: " (#{staging.url}).", else: ".")
+  end
+
+  defp outcome({:held, reasons}) do
+    "It needs the user to land it because #{Enum.join(reasons, "; ")}. Tell the user what " <>
+      "it does and why it needs their review."
+  end
+
+  defp outcome({:not_landed, {:conflict, paths}}) do
+    """
+    It did not land: main changed #{Enum.join(paths, ", ")} since your checkout. Your \
+    workspace is now on the new main and keeps your version of those files; main's version \
+    of each is in .peon/main/<path>. Merge main's changes into your files and submit again.\
+    """
+  end
+
+  defp outcome({:not_landed, reason}), do: "It did not land: " <> describe_error(reason)
+  defp outcome(nil), do: ""
 
   defp describe_error({:policy, violations}), do: Enum.map_join(violations, "\n", & &1.reason)
 

@@ -48,7 +48,8 @@ defmodule Peon.Sandbox do
   Options: `:env`, `:name` (required), `:ports` (`{host_port, container_port}`,
   published on 127.0.0.1), `:network` and `:alias` (name on that network),
   `:mounts` (`{host_path, container_path, :ro | :rw}`), `:hosts`
-  (`{name, address}` entries for /etc/hosts).
+  (`{name, address}` entries for /etc/hosts), `:hostname`, and `:label`
+  (default `peon.project=<slug>`, which `remove_all/0` cleans up).
   """
   def start(dir, script, opts) do
     name = Keyword.fetch!(opts, :name)
@@ -65,7 +66,8 @@ defmodule Peon.Sandbox do
           ["--add-host", "#{host}:#{address}"]
         end) ++
         if(opts[:network], do: ["--network", opts[:network]], else: []) ++
-        if(opts[:alias], do: ["--network-alias", opts[:alias]], else: [])
+        if(opts[:alias], do: ["--network-alias", opts[:alias]], else: []) ++
+        if(opts[:hostname], do: ["--hostname", opts[:hostname]], else: [])
 
     args =
       ["run", "--rm", "--init", "--name", name] ++
@@ -93,6 +95,47 @@ defmodule Peon.Sandbox do
     :ok
   end
 
+  @doc """
+  Runs `args` inside a running container and returns a Port connected to its
+  stdin and stdout, delivering output line by line (`{:eol, line}`).
+  """
+  def exec_port(name, args) do
+    Port.open({:spawn_executable, System.find_executable("docker")}, [
+      :binary,
+      :exit_status,
+      :stderr_to_stdout,
+      {:line, 1_048_576},
+      args: ["exec", "-i", name | args]
+    ])
+  end
+
+  @doc "Copies a host file into a running container."
+  def copy_in(name, source, dest) do
+    case System.cmd("docker", ["cp", source, "#{name}:#{dest}"], stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {output, _} -> {:error, output}
+    end
+  end
+
+  @doc "Returns a Port following a running container's output from now on."
+  def follow_logs(name) do
+    Port.open({:spawn_executable, System.find_executable("docker")}, [
+      :binary,
+      :exit_status,
+      :stderr_to_stdout,
+      args: ["logs", "--follow", "--tail", "0", name]
+    ])
+  end
+
+  def running?(name) do
+    case System.cmd("docker", ["inspect", "-f", "{{.State.Running}}", name],
+           stderr_to_stdout: true
+         ) do
+      {"true\n", 0} -> true
+      _ -> false
+    end
+  end
+
   @doc "Runs a command inside a running container."
   def exec(name, script) do
     System.cmd("docker", ["exec", name, "sh", "-c", script], stderr_to_stdout: true)
@@ -112,7 +155,7 @@ defmodule Peon.Sandbox do
       |> Keyword.get(:env, %{})
       |> Enum.flat_map(fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 
-    ["--label", "peon.project=#{project()}"] ++
+    ["--label", Keyword.get(opts, :label, "peon.project=#{project()}")] ++
       ["--user", host_user(), "--cpus", "2", "--memory", "3g", "--pids-limit", "512"] ++
       ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++ env
   end

@@ -14,9 +14,20 @@ defmodule Peon.Project do
 
   def get, do: Repo.one(__MODULE__)
 
+  def settings, do: (get() || %__MODULE__{}).settings
+
+  @doc "Sets human-edited settings, e.g. `%{\"auto_promote\" => true}`."
+  def put_settings(changes) do
+    project = get()
+
+    project
+    |> Ecto.Changeset.change(settings: Map.merge(project.settings, changes))
+    |> Repo.update!()
+  end
+
   @doc "Settings overrides for `PeonCore.Policy.check/3`."
   def policy_settings do
-    settings = (get() || %__MODULE__{}).settings
+    settings = settings()
 
     for {key, policy_key} <- [
           {"restart_paths", :restart_paths},

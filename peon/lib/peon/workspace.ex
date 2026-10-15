@@ -59,7 +59,8 @@ defmodule Peon.Workspace do
   @doc """
   Moves the workspace onto `target_id` (normally the new main). Files the agent
   hasn't touched are updated; files changed on both sides keep the agent's
-  version and are returned as conflicts.
+  version and are returned as conflicts, with main's version written to
+  `.peon/main/<path>` (absent when main deleted it) so the agent can merge.
   """
   def rebase(dir, target_id) do
     %{"tree" => base} = read_base(dir)
@@ -83,12 +84,29 @@ defmodule Peon.Workspace do
               conflicts
 
             true ->
+              theirs = Path.join([dir, ".peon", "main", path])
+              File.rm(theirs)
+              if change != :deleted, do: write(Path.join([dir, ".peon", "main"]), path, change)
               [path | conflicts]
           end
       end
 
     write_base(dir, target_id, target)
     Enum.reverse(conflicts)
+  end
+
+  @doc "Puts `paths` back as they are in the base (deleting those the base doesn't have)."
+  def restore(dir, paths) do
+    base = read_base(dir)["tree"]
+
+    for path <- paths do
+      case base[path] do
+        nil -> File.rm(Path.join(dir, path))
+        hash -> write(dir, path, hash)
+      end
+    end
+
+    :ok
   end
 
   defp write(dir, path, hash) do

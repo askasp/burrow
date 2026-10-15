@@ -102,25 +102,54 @@ defmodule Peon.StoreTest do
              submit(base.id, [%{"path" => "lib/saunas/bookings.ex", "content" => price(300)}])
   end
 
-  test "moving main rebases or supersedes open changesets", %{import: base} do
+  test "land puts a passed changeset on main, rebasing it onto main's tip", %{import: base} do
     {:ok, a} = submit(base.id, [%{"path" => "lib/saunas/bookings.ex", "content" => price(200)}])
 
     {:ok, b} =
-      submit(base.id, [
-        %{"path" => "lib/saunas/rooms.ex", "content" => "defmodule Saunas.Rooms do end"}
-      ])
+      Store.submit(%{
+        parent: base.id,
+        intent: "rooms",
+        files: [%{"path" => "lib/saunas/rooms.ex", "content" => "defmodule Saunas.Rooms do end"}],
+        author: @ai,
+        conversation_id: "chat-b"
+      })
 
     {:ok, c} = submit(base.id, [%{"path" => "lib/saunas/bookings.ex", "content" => price(300)}])
 
-    Store.subscribe()
-    pass_and_merge(a)
+    assert {:error, {:rejected, "changeset " <> _}} = Store.land(a.id, "peon")
 
+    Store.subscribe()
+    assert {:ok, landed_a} = pass_and_merge(a)
+    assert landed_a.id == a.id
+    assert_receive {:ref_moved, "main", id, _} when id == a.id
+
+    # Other open changesets are left alone when main moves...
+    assert {:ok, %{status: "proposed"}} = Code.changeset(b.id)
+
+    # ...and rebased onto the tip when they land.
+    {:ok, _} = Store.set_status(b.id, "passed", %{"steps" => []})
+    assert {:ok, landed_b} = Store.land(b.id, "peon")
+    assert landed_b.parent_id == a.id
+    assert landed_b.rebased_from_id == b.id
+    assert landed_b.conversation_id == "chat-b"
+    assert landed_b.status == "passed"
     assert {:ok, %{status: "superseded"}} = Code.changeset(b.id)
-    assert {:ok, %{status: "superseded"}} = Code.changeset(c.id)
-    assert_receive {:changeset, rebased_id, "proposed"}
-    assert {:ok, rebased} = Code.changeset(rebased_id)
-    assert rebased.rebased_from_id == b.id
-    assert rebased.parent_id == a.id
+    assert Code.ref("main").changeset_id == landed_b.id
+
+    assert Code.tree(landed_b.id)["lib/saunas/bookings.ex"] ==
+             Code.tree(a.id)["lib/saunas/bookings.ex"]
+
+    # Overlapping paths conflict.
+    {:ok, _} = Store.set_status(c.id, "passed", %{"steps" => []})
+    assert {:error, {:conflict, ["lib/saunas/bookings.ex"]}} = Store.land(c.id, "peon")
+    assert {:error, {:rejected, "already on main"}} = Store.land(a.id, "peon")
+  end
+
+  test "set_verify records main's test result", %{import: base} do
+    Store.subscribe()
+    assert {:ok, cs} = Store.set_verify(base.id, %{"status" => "failed", "steps" => []})
+    assert cs.verify["status"] == "failed"
+    assert_receive {:verified, id, "failed"} when id == base.id
   end
 
   test "ref rules: CAS, passed-only main, staging on main, prod approval", %{import: base} do
@@ -169,8 +198,7 @@ defmodule Peon.StoreTest do
 
   defp pass_and_merge(cs) do
     {:ok, _} = Store.set_status(cs.id, "passed", %{"steps" => []})
-    main = Code.ref("main")
-    {:ok, _} = Store.move_ref("main", cs.id, main.version, "aksel")
+    {:ok, _} = Store.land(cs.id, "aksel")
   end
 
   defp price(n), do: "defmodule Saunas.Bookings do\n  def price, do: #{n}\nend"

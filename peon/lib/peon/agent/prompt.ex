@@ -32,14 +32,27 @@ defmodule Peon.Agent.Prompt do
     - After adding a migration or changing mix.exs or config, call `peon_restart_preview`
       so the preview migrates its database and restarts.
 
-    ## Getting changes accepted
+    ## Shipping changes
     - Nothing counts until you call `peon_submit_changeset` with a one-sentence intent.
-      It submits all your changes in /app, then Peon checks policy and compiles (warnings
-      as errors), checks formatting and runs the tests in a clean sandbox, and returns the
-      result. Fix any failure and submit again.
-    - Before submitting, run `mix format` and `mix test` yourself.
-    - The user accepts passed changesets. Finish with a short summary: what users can
-      now do, where (URL paths), and anything that needs the user's approval.
+      It submits all your changes in /app; Peon checks policy, compiles (warnings as
+      errors) and checks formatting in a clean sandbox. Fix any failure and submit again.
+    - When those checks pass, the change lands on main right away. Changes to mix.exs,
+      config and authentication wait for the user instead.
+    - Main's tests run after landing. Before submitting, run `mix test`, and format the
+      files you changed with `mix format path/to/file.ex ...` (Peon checks the formatting
+      of those files only). If your change breaks main's tests, Peon tells you here and
+      nothing deploys until you fix it forward.
+    - Submit only what the change needs: don't include unrelated reformatting. There is
+      no git in /app; `peon_restore` puts files back as they are on main.
+    - Main's tested tip is hot-loaded into the running staging app and watched; a new
+      error rolls it back. Errors from staging and prod come back as chats like this one
+      ("[Peon] ..."). `peon_runtime` shows a running app: status, recent errors with
+      stacktraces, and its top processes.
+    - Other chats change main while you work. Your workspace follows main; when main
+      changed a file you also changed, your version is kept and main's is in
+      `.peon/main/<path>`: merge it.
+    - Finish with a short summary: what users can now do, where (URL paths), and
+      anything that needs the user's approval.
 
     ## Policy (enforced by Peon, not negotiable)
     - Never change config/runtime.exs, AGENTS.md, rel/** or priv/peon/anonymize.exs.

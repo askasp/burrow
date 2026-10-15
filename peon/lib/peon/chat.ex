@@ -23,7 +23,7 @@ defmodule Peon.Chat do
 
   require Logger
 
-  alias Peon.{Chats, Sandbox, Store, Workspace}
+  alias Peon.{Chats, Incidents, Sandbox, Store, Workspace}
   alias Peon.Agent.{MCP, Prompt}
   alias Peon.OpenCode.Client
 
@@ -37,13 +37,17 @@ defmodule Peon.Chat do
 
   @doc "Starts the chat's containers if needed and waits until the agent is ready."
   def ensure_started(id) do
-    pid =
-      case DynamicSupervisor.start_child(Peon.ChatSupervisor, {__MODULE__, id}) do
-        {:ok, pid} -> pid
-        {:error, {:already_started, pid}} -> pid
-      end
+    case DynamicSupervisor.start_child(Peon.ChatSupervisor, {__MODULE__, id}) do
+      {:ok, pid} ->
+        GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
 
-    GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
+      {:error, {:already_started, pid}} ->
+        GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
+
+      # e.g. :no_free_preview_port when every preview port is in use
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   def send_message(id, text) do
@@ -207,6 +211,7 @@ defmodule Peon.Chat do
               do: broadcast(%{state | messages: messages}, {:messages, messages}),
               else: state
 
+          if busy? != state.busy?, do: turn_over(state, messages)
           if busy? != state.busy?, do: broadcast_status(%{state | busy?: busy?}), else: state
 
         {:error, reason} ->
@@ -359,8 +364,22 @@ defmodule Peon.Chat do
     end
   end
 
+  # A turn that ended in an error hands any incident this chat was fixing
+  # back to the user (`Peon.Incidents.chat_failed/2`).
+  defp turn_over(state, messages) do
+    case List.last(messages) do
+      %{role: :error} ->
+        errors = messages |> Enum.take(-3) |> Enum.filter(&(&1.role == :error))
+        Incidents.chat_failed(state.id, Enum.map_join(errors, "; ", & &1.text))
+
+      _ ->
+        :ok
+    end
+  end
+
   defp fail_boot(state, reason) do
     Logger.error("chat #{state.id} could not start its agent: #{inspect(reason)}")
+    Incidents.chat_failed(state.id, "the agent could not start: #{inspect(reason)}")
     state = put_in(state.agent.status, {:error, reason})
     Enum.each(state.waiting, &GenServer.reply(&1, ready_reply(state)))
     {:stop, :normal, %{state | waiting: []}}
@@ -418,7 +437,7 @@ defmodule Peon.Chat do
     |> Enum.flat_map(fn {part, i} -> normalize_part(part, "#{m["id"]}-#{i}") end)
     |> then(fn parts ->
       if m["error"],
-        do: parts ++ [%{id: "#{m["id"]}-error", role: :error, text: inspect(m["error"])}],
+        do: parts ++ [%{id: "#{m["id"]}-error", role: :error, text: error_text(m["error"])}],
         else: parts
     end)
   end
@@ -427,6 +446,10 @@ defmodule Peon.Chat do
     do: [%{id: m["id"], role: :error, text: "The agent stopped: #{outcome}"}]
 
   def normalize(_), do: []
+
+  defp error_text(%{"message" => message}) when is_binary(message), do: message
+  defp error_text(%{"data" => %{"message" => message}}) when is_binary(message), do: message
+  defp error_text(error), do: inspect(error)
 
   defp normalize_part(%{"type" => "text", "text" => text}, id) when text != "",
     do: [%{id: id, role: :assistant, text: text}]

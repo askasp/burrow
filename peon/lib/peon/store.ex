@@ -4,8 +4,14 @@ defmodule Peon.Store do
   every ref move is serialized through this process, inside a transaction.
 
   History is append-only: blobs and changesets are only inserted (a changeset's
-  status, flags and checks are the only fields updated), and refs move by
-  compare-and-swap on their version.
+  status, flags, checks and verify are the only fields updated), and refs move
+  by compare-and-swap on their version.
+
+  Changes land on main as soon as their checks pass (`land/2`): there is no
+  queue in front of main. A changeset written against an older main is rebased
+  onto main's tip at land time, unless a path it touches changed in between.
+  Tests run on main after landing (`Peon.Verifier`), and deploys are gated on
+  those (`Peon.Env`).
 
   Broadcasts on `Peon.PubSub` topic `"store"`:
     * `{:changeset, id, status}`
@@ -13,8 +19,6 @@ defmodule Peon.Store do
   """
 
   use GenServer
-
-  import Ecto.Query
 
   alias Peon.{Code, Project, Repo}
   alias Peon.Store.{Blob, Changeset, ChangesetPath, Event, Ref, TreeCache}
@@ -72,6 +76,17 @@ defmodule Peon.Store do
   """
   def move_ref(name, to, expected_version, actor, opts \\ []),
     do: GenServer.call(__MODULE__, {:move_ref, name, to, expected_version, actor, opts})
+
+  @doc """
+  Puts a passed changeset on main. When main moved since the changeset's
+  parent, a rebased copy is created on main's tip (`rebased_from_id`) and the
+  original is superseded. Returns the changeset now at main, or
+  `{:conflict, paths}` when main changed the same paths in between.
+  """
+  def land(id, actor), do: GenServer.call(__MODULE__, {:land, id, actor})
+
+  @doc "Records the result of testing a changeset on main: `%{\"status\", \"steps\"}`."
+  def set_verify(id, verify), do: GenServer.call(__MODULE__, {:set_verify, id, verify})
 
   @doc "Marks an open changeset superseded, e.g. when a newer draft replaces it."
   def supersede(id), do: GenServer.call(__MODULE__, {:supersede, id})
@@ -169,26 +184,29 @@ defmodule Peon.Store do
 
     with :ok <- valid_ref_name(name),
          :ok <- check_version(current, expected_version),
-         {:ok, cs} <- fetch(to),
-         :ok <- ref_rules(name, cs, current, opts),
-         :ok <- recheck_policy(name, cs) do
-      version = if current, do: current.version + 1, else: 1
+         {:ok, cs} <- fetch(to) do
+      move!(name, cs, current, actor, opts, [])
+    end
+  end
 
-      ref =
-        (current || %Ref{name: name})
-        |> Ecto.Changeset.change(changeset_id: cs.id, version: version)
-        |> Repo.insert_or_update!()
+  defp handle({:land, id, actor}) do
+    current = Repo.get(Ref, "main")
 
-      event!(actor, "ref_moved", %{
-        ref: name,
-        from: current && current.changeset_id,
-        to: cs.id,
-        version: version,
-        approved_by: opts[:approved_by]
-      })
+    with {:ok, cs} <- fetch(id),
+         :ok <- landable(cs, current),
+         {:ok, main} <- main(),
+         {:ok, cs, broadcasts} <- onto(cs, main) do
+      case move!("main", cs, current, actor, [], broadcasts) do
+        {:ok, _ref, broadcasts} -> {:ok, cs, broadcasts}
+        error -> error
+      end
+    end
+  end
 
-      rebased = if name == "main", do: rebase_open(cs), else: []
-      {:ok, ref, [{:ref_moved, name, cs.id, version} | rebased]}
+  defp handle({:set_verify, id, verify}) do
+    with {:ok, cs} <- fetch(id) do
+      cs = cs |> Ecto.Changeset.change(verify: verify) |> Repo.update!()
+      {:ok, cs, [{:verified, cs.id, verify["status"]}]}
     end
   end
 
@@ -215,6 +233,65 @@ defmodule Peon.Store do
 
   defp handle({:set_status, _id, status, _checks}),
     do: {:error, {:invalid, "status #{inspect(status)} cannot be set"}}
+
+  defp move!(name, cs, current, actor, opts, broadcasts) do
+    with :ok <- ref_rules(name, cs, current, opts),
+         :ok <- recheck_policy(name, cs) do
+      version = if current, do: current.version + 1, else: 1
+
+      ref =
+        (current || %Ref{name: name})
+        |> Ecto.Changeset.change(changeset_id: cs.id, version: version)
+        |> Repo.insert_or_update!()
+
+      event!(actor, "ref_moved", %{
+        ref: name,
+        from: current && current.changeset_id,
+        to: cs.id,
+        version: version,
+        approved_by: opts[:approved_by]
+      })
+
+      {:ok, ref, broadcasts ++ [{:ref_moved, name, cs.id, version}]}
+    end
+  end
+
+  ## Land helpers
+
+  defp landable(cs, main_ref) do
+    cond do
+      cs.status != "passed" -> {:error, {:rejected, "changeset #{cs.id} is #{cs.status}"}}
+      Code.ancestor?(cs.id, main_ref.changeset_id) -> {:error, {:rejected, "already on main"}}
+      true -> :ok
+    end
+  end
+
+  # The changeset as a child of main's tip: itself, or a rebased copy.
+  defp onto(%{parent_id: id} = cs, %{id: id}), do: {:ok, cs, []}
+
+  defp onto(cs, main) do
+    {:ok, parent} = fetch(cs.parent_id)
+    changes = Changeset.changes(cs)
+
+    with {:ok, main_tree} <- rebase_target(parent, main, Enum.map(changes, &elem(&1, 0))) do
+      rebased =
+        insert_changeset!(%{
+          parent_id: main.id,
+          rebased_from_id: cs.id,
+          author: %{kind: cs.author_kind, id: cs.author_id},
+          intent: cs.intent,
+          changes: changes,
+          status: "passed",
+          flags: cs.flags,
+          checks: cs.checks,
+          conversation_id: cs.conversation_id,
+          base_tree: main_tree
+        })
+
+      supersede!(cs)
+      {:ok, rebased, [{:changeset, cs.id, "superseded"}, {:changeset, rebased.id, "passed"}]}
+    end
+  end
 
   ## Submit helpers
 
@@ -442,44 +519,6 @@ defmodule Peon.Store do
       {:ok, _} -> :ok
       error -> error
     end
-  end
-
-  # After main moves one step forward, every open changeset based on the old
-  # main is rebased onto the new one, or superseded if their paths overlap.
-  defp rebase_open(new_main) do
-    moved = MapSet.new(new_main.files, & &1["path"])
-    main_tree = Code.tree(new_main.id)
-
-    open =
-      Repo.all(
-        from c in Changeset,
-          where: c.parent_id == ^new_main.parent_id and c.status in @open and c.id != ^new_main.id
-      )
-
-    Enum.flat_map(open, fn cs ->
-      supersede!(cs)
-      changes = Changeset.changes(cs)
-
-      if Enum.any?(changes, fn {path, _} -> MapSet.member?(moved, path) end) do
-        [{:changeset, cs.id, "superseded"}]
-      else
-        rebased =
-          insert_changeset!(%{
-            parent_id: new_main.id,
-            rebased_from_id: cs.id,
-            author: %{kind: cs.author_kind, id: cs.author_id},
-            intent: cs.intent,
-            changes: changes,
-            status: "proposed",
-            flags: cs.flags,
-            checks: %{},
-            conversation_id: cs.conversation_id,
-            base_tree: main_tree
-          })
-
-        [{:changeset, cs.id, "superseded"}, {:changeset, rebased.id, "proposed"}]
-      end
-    end)
   end
 
   defp supersede!(cs), do: cs |> Ecto.Changeset.change(status: "superseded") |> Repo.update!()

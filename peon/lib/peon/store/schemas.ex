@@ -15,7 +15,7 @@ defmodule Peon.Store.Changeset do
 
   @derive {Jason.Encoder,
            only:
-             ~w(id parent_id rebased_from_id author_kind author_id intent files status flags checks conversation_id inserted_at)a}
+             ~w(id parent_id rebased_from_id author_kind author_id intent files status flags checks verify conversation_id inserted_at)a}
   schema "changesets" do
     field :parent_id, :id
     field :rebased_from_id, :id
@@ -29,6 +29,8 @@ defmodule Peon.Store.Changeset do
     # %{"restart_required" => bool, "destructive_migrations" => [path], "approved_destructive" => bool}
     field :flags, :map, default: %{}
     field :checks, :map, default: %{}
+    # Tests on main after landing: %{"status" => "passed" | "failed", "steps" => [...]}
+    field :verify, :map
     field :conversation_id, :string
     timestamps(type: :utc_datetime, updated_at: false)
   end

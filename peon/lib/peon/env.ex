@@ -1,0 +1,722 @@
+defmodule Peon.Env do
+  @moduledoc """
+  A running environment of the app, "staging" or "prod": a long-lived
+  container running the app in prod mode as a distributed node, plus Peon's
+  attacher (`priv/attacher.exs`), a hidden node connected to it that Peon
+  talks to over stdin/stdout.
+
+  The env's ref is the desired state. When it moves, the env deploys it:
+
+    * hot when only app code changed: the attacher recompiles inside the
+      running node, rebuilds assets and runs new migrations, so processes,
+      sockets and LiveView sessions survive
+    * cold (container restart) when a restart path changed (mix.exs, config,
+      application.ex, endpoint.ex), the app isn't running, or hot loading fails
+
+  Then it watches a health window (`:health_window`): /health and / must
+  answer and the app must not log an error that isn't already an open
+  incident. A failed window records an incident and moves the ref back to the
+  last healthy changeset, which redeploys it. Migrations are additive (policy),
+  so rolling code back never needs a database rollback. Prod moves when a
+  human promotes a healthy staging changeset, or by itself when a human set
+  the project's `"auto_promote"` to true.
+
+  Errors the app logs at any time arrive from the attacher and become
+  incidents (`Peon.Incidents`). The container outlives Peon restarts: a new
+  Peon adopts it when it still runs the ref's changeset.
+
+  Broadcasts `{:env, name, info}` on topic `"envs"`.
+  """
+
+  use GenServer
+
+  require Logger
+
+  import Ecto.Query
+
+  alias Peon.{Code, Incidents, Project, Repo, Sandbox, Store, Template, Workspace}
+  alias Peon.Env.Deploy
+  alias Peon.Incidents.Incident
+  alias PeonCore.{Policy, Tree}
+
+  @registry Peon.EnvRegistry
+  @boot_timeout :timer.minutes(15)
+  @health_every :timer.seconds(5)
+  @revive_after :timer.seconds(10)
+  @log_lines 400
+  # Changes that need the CSS/JS bundles rebuilt (Tailwind scans the web layer).
+  @asset_paths ["assets/**", "lib/*_web/**", "priv/static/**"]
+
+  ## API
+
+  @doc "The configured environments, staging first."
+  def names do
+    ports = Application.get_env(:peon, :env_ports, %{})
+    Enum.filter(["staging", "prod"], &Map.has_key?(ports, &1))
+  end
+
+  def child_spec(name), do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [name]}}
+
+  def start_link(name),
+    do: GenServer.start_link(__MODULE__, name, name: {:via, Registry, {@registry, name}})
+
+  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "envs")
+
+  @doc "Status for the UI, or nil when the env isn't running."
+  def info(name), do: call(name, :info, nil)
+
+  def logs(name), do: call(name, :logs, "")
+
+  @doc "Restarts the env's container with what is deployed."
+  def restart(name), do: call(name, :restart, {:error, :not_running})
+
+  @doc """
+  Looks into the running app for the agent: `"overview"` (status, system
+  stats, recent errors) or `"processes"` (top processes; opts `"sort"`,
+  `"limit"`). Returns `{:ok, map | list}` or `{:error, reason}`.
+  """
+  def runtime(name, what, opts \\ %{}),
+    do: call(name, {:runtime, what, opts}, {:error, :not_running}, 20_000)
+
+  def failed_deploy?(env, changeset_id) do
+    Repo.exists?(
+      from d in Deploy,
+        where: d.env == ^env and d.changeset_id == ^changeset_id and d.status == "failed"
+    )
+  end
+
+  def deploys(env, limit \\ 10),
+    do: Repo.all(from d in Deploy, where: d.env == ^env, order_by: [desc: d.id], limit: ^limit)
+
+  @doc "How a deploy from `from` to `to` changes files: `:all` or the changed paths."
+  def changed_paths(nil, _to), do: :all
+
+  def changed_paths(from, to),
+    do: Tree.changed_paths(Code.tree(from), Code.tree(to)) |> Enum.sort()
+
+  @doc "Whether `changed` paths can be loaded into the running app (`true`) or need a restart."
+  def hot?(:all), do: false
+  def hot?(changed), do: not matches_any?(changed, restart_paths())
+
+  defp call(name, msg, default, timeout \\ 5_000) do
+    case GenServer.whereis({:via, Registry, {@registry, name}}) do
+      nil -> default
+      pid -> GenServer.call(pid, msg, timeout)
+    end
+  end
+
+  ## Server
+
+  @impl true
+  def init(name) do
+    slug = Application.fetch_env!(:peon, :project_slug)
+    otp_app = Template.otp_app(slug)
+    base = Path.join([Application.fetch_env!(:peon, :data_dir), "envs", name])
+    Enum.each(["app", "data"], &File.mkdir_p!(Path.join(base, &1)))
+    Store.subscribe()
+
+    state = %{
+      name: name,
+      slug: slug,
+      base: base,
+      dir: Path.join(base, "app"),
+      otp_app: otp_app,
+      endpoint: Macro.camelize(otp_app) <> "Web.Endpoint",
+      container: "peon-env-#{slug}-#{name}",
+      port: Map.fetch!(Application.fetch_env!(:peon, :env_ports), name),
+      cookie: secret(base, "cookie", 24),
+      secret_key_base: secret(base, "secret_key_base", 48),
+      app: nil,
+      app_status: :stopped,
+      attacher: nil,
+      attached?: false,
+      requests: %{},
+      next_id: 1,
+      deployed: read_deployed(base),
+      good: nil,
+      deploy: nil,
+      queued: nil,
+      rollback_to: nil,
+      logs: :queue.new(),
+      log_count: 0,
+      stats: nil,
+      errors: []
+    }
+
+    {:ok, state, {:continue, :boot}}
+  end
+
+  @impl true
+  def handle_continue(:boot, state) do
+    case Code.ref(state.name) do
+      nil ->
+        {:noreply, state}
+
+      %{changeset_id: id} ->
+        if state.deployed == id and Sandbox.running?(state.container) do
+          Logger.info("#{state.name}: adopting the running container at ##{id}")
+          app = Sandbox.follow_logs(state.container)
+          state = %{state | app: app, app_status: :running, good: id}
+          {:noreply, state |> start_attacher() |> broadcast()}
+        else
+          {:noreply, start_deploy(state, id, [])}
+        end
+    end
+  end
+
+  @impl true
+  def handle_call(:info, _from, state), do: {:reply, info_map(state), state}
+
+  def handle_call(:logs, _from, state),
+    do: {:reply, state.logs |> :queue.to_list() |> Enum.join("\n"), state}
+
+  def handle_call(:restart, _from, %{deploy: nil, deployed: id} = state) when id != nil,
+    do: {:reply, :ok, start_deploy(state, id, cold: true)}
+
+  def handle_call(:restart, _from, state), do: {:reply, {:error, :busy}, state}
+
+  def handle_call({:runtime, "overview", _opts}, _from, state) do
+    overview =
+      state
+      |> info_map()
+      |> Map.take([:name, :status, :deployed, :good, :stats, :errors])
+      |> Map.put(:deploy, state.deploy && Map.take(state.deploy, [:target, :mode, :phase]))
+
+    {:reply, {:ok, overview}, state}
+  end
+
+  def handle_call({:runtime, "processes", opts}, from, state) do
+    payload = %{"cmd" => "processes", "sort" => opts["sort"], "limit" => opts["limit"] || 15}
+    {:noreply, request(state, payload, {:call, from})}
+  end
+
+  def handle_call({:runtime, what, _opts}, _from, state),
+    do: {:reply, {:error, "unknown: #{inspect(what)}"}, state}
+
+  @impl true
+  def handle_info({:ref_moved, name, id, _version}, %{name: name} = state) do
+    cond do
+      state.deploy -> {:noreply, %{state | queued: id}}
+      id == state.deployed and state.app_status == :running -> {:noreply, state}
+      true -> {:noreply, start_deploy(state, id, rollback: id == state.rollback_to)}
+    end
+  end
+
+  # The app container's output (from `docker run`, or `docker logs` when adopted).
+  def handle_info({port, {:data, data}}, %{app: port} = state) do
+    state = append_logs(state, data)
+
+    if state.app_status == :booting and data =~ "Running " and data =~ "Endpoint with",
+      do: {:noreply, %{state | app_status: :running} |> start_attacher() |> broadcast()},
+      else: {:noreply, state}
+  end
+
+  def handle_info({port, {:exit_status, code}}, %{app: port} = state) do
+    state = stop_attacher(%{state | app: nil, app_status: {:crashed, code}})
+    reason = "the app exited with status #{code}:\n\n#{log_tail(state, 40)}"
+
+    if state.deploy do
+      {:noreply, fail(state, reason)}
+    else
+      Incidents.report(
+        state.name,
+        %{"fingerprint" => "exit:#{state.name}", "message" => "The app exited", "text" => reason},
+        state.deployed
+      )
+
+      Process.send_after(self(), :revive, @revive_after)
+      {:noreply, broadcast(state)}
+    end
+  end
+
+  def handle_info(:revive, %{deploy: nil, app_status: {:crashed, _}, deployed: id} = state)
+      when id != nil,
+      do: {:noreply, start_deploy(state, id, [])}
+
+  def handle_info(:revive, state), do: {:noreply, state}
+
+  # The attacher's output: protocol lines, and anything the app printed for it.
+  def handle_info({port, {:data, {:eol, "@@peon " <> json}}}, %{attacher: port} = state),
+    do: {:noreply, attacher_message(state, Jason.decode!(json))}
+
+  def handle_info({port, {:data, {_eol, line}}}, %{attacher: port} = state),
+    do: {:noreply, append_logs(state, line)}
+
+  def handle_info({port, {:exit_status, _code}}, %{attacher: port} = state) do
+    state = fail_requests(%{state | attacher: nil, attached?: false})
+    if state.app_status == :running, do: Process.send_after(self(), :reattach, 3_000)
+    {:noreply, broadcast(state)}
+  end
+
+  def handle_info(:reattach, %{attacher: nil, app_status: :running} = state),
+    do: {:noreply, start_attacher(state)}
+
+  def handle_info(:reattach, state), do: {:noreply, state}
+
+  def handle_info({:health, id}, %{deploy: %{record: %{id: id}, phase: :watching}} = state),
+    do: {:noreply, health_check(state)}
+
+  def handle_info({:boot_timeout, id}, %{deploy: %{record: %{id: id}, phase: :booting}} = state),
+    do: {:noreply, fail(state, "the app did not start within #{div(@boot_timeout, 60_000)} min")}
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  ## Deploying
+
+  defp start_deploy(state, target, opts) do
+    changed = if opts[:cold], do: :all, else: changed_paths(state.deployed, target)
+    attached? = state.app_status == :running and state.attached?
+    mode = if attached? and hot?(changed), do: "hot", else: "cold"
+
+    record =
+      Repo.insert!(%Deploy{
+        env: state.name,
+        changeset_id: target,
+        from_id: state.deployed,
+        mode: mode,
+        status: "deploying"
+      })
+
+    Workspace.reset(state.dir, target)
+    File.write!(Path.join(state.base, "deployed"), to_string(target))
+
+    deploy = %{
+      record: record,
+      target: target,
+      mode: mode,
+      rollback?: opts[:rollback] == true,
+      phase: nil,
+      until: nil,
+      known: MapSet.new(),
+      health_failures: 0
+    }
+
+    state = %{state | deployed: target, deploy: deploy, queued: nil, rollback_to: nil}
+    Logger.info("#{state.name}: deploying ##{target} (#{mode})")
+
+    state =
+      case mode do
+        "hot" ->
+          payload = %{
+            "cmd" => "deploy",
+            "assets" => matches_any?(changed, @asset_paths),
+            "migrate" => matches_any?(changed, migration_paths())
+          }
+
+          state |> phase(:loading) |> request(payload, :deploy)
+
+        "cold" ->
+          boot(state)
+      end
+
+    broadcast(state)
+  end
+
+  defp boot(state) do
+    state = stop_attacher(state)
+
+    script =
+      "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
+        "mix ecto.migrate && " <>
+        ~s(exec elixir --sname app --cookie "$PEON_COOKIE" -S mix phx.server)
+
+    app =
+      Sandbox.start(state.dir, script,
+        name: state.container,
+        hostname: "app",
+        label: "peon.env=#{state.slug}",
+        env: %{
+          "MIX_ENV" => "prod",
+          "DATABASE_PATH" => "/data/app.db",
+          "SECRET_KEY_BASE" => state.secret_key_base,
+          "PHX_HOST" => Application.fetch_env!(:peon, :preview_host),
+          "PORT" => "4000",
+          "PEON_COOKIE" => state.cookie
+        },
+        mounts: [{Path.join(state.base, "data"), "/data", :rw}],
+        ports: [{state.port, 4000}]
+      )
+
+    Process.send_after(self(), {:boot_timeout, state.deploy.record.id}, @boot_timeout)
+    phase(%{state | app: app, app_status: :booting, attached?: false}, :booting)
+  end
+
+  # Hot loading didn't work; restart the container instead.
+  defp hot_failed(%{deploy: %{phase: :loading} = deploy} = state, reason) do
+    Logger.warning("#{state.name}: hot deploy failed, restarting: #{reason}")
+    record = Repo.update!(Ecto.Changeset.change(deploy.record, mode: "cold", detail: reason))
+    boot(%{state | deploy: %{deploy | record: record, mode: "cold"}})
+  end
+
+  defp hot_failed(state, _reason), do: state
+
+  defp watch(%{deploy: deploy} = state) do
+    known =
+      Repo.all(
+        from i in Incident,
+          where: i.env == ^state.name and i.status != "resolved",
+          select: i.fingerprint
+      )
+
+    window = Application.get_env(:peon, :health_window, :timer.seconds(60))
+    record = Repo.update!(Ecto.Changeset.change(deploy.record, status: "watching"))
+    Process.send_after(self(), {:health, record.id}, 1_000)
+
+    deploy = %{
+      deploy
+      | record: record,
+        known: MapSet.new(known),
+        until: System.monotonic_time(:millisecond) + window
+    }
+
+    broadcast(phase(%{state | deploy: deploy}, :watching))
+  end
+
+  defp health_check(%{deploy: deploy} = state) do
+    failures = if healthy?(state), do: 0, else: deploy.health_failures + 1
+    state = %{state | deploy: %{deploy | health_failures: failures}}
+
+    cond do
+      failures >= 2 ->
+        fail(state, "/health or / did not answer twice in a row")
+
+      System.monotonic_time(:millisecond) >= deploy.until ->
+        succeed(state)
+
+      true ->
+        Process.send_after(self(), {:health, deploy.record.id}, @health_every)
+        state
+    end
+  end
+
+  defp healthy?(state) do
+    base = "http://127.0.0.1:#{state.port}"
+    opts = [retry: false, receive_timeout: 3_000, redirect: false]
+
+    with {:ok, %{status: 200}} <- Req.get(base <> "/health", opts),
+         {:ok, %{status: status}} when status < 500 <- Req.get(base <> "/", opts) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  defp succeed(%{deploy: deploy} = state) do
+    Repo.update!(Ecto.Changeset.change(deploy.record, status: "healthy"))
+    Logger.info("#{state.name}: ##{deploy.target} is healthy")
+    Incidents.deployed(state.name, deploy.target)
+    state = broadcast(%{state | deploy: nil, good: deploy.target})
+    if state.name == "staging", do: promote(deploy.target)
+
+    if state.queued && state.queued != deploy.target,
+      do: start_deploy(state, state.queued, []),
+      else: state
+  end
+
+  defp fail(%{deploy: deploy} = state, reason) do
+    Repo.update!(Ecto.Changeset.change(deploy.record, status: "failed", detail: reason))
+    Logger.warning("#{state.name}: deploying ##{deploy.target} failed: #{reason}")
+
+    Incidents.report(
+      state.name,
+      %{
+        "fingerprint" => "deploy:#{state.name}:#{deploy.target}",
+        "kind" => "deploy",
+        "message" => "Deploying ##{deploy.target} to #{state.name} failed",
+        "text" => reason <> "\n\n" <> describe_range(state.good, deploy.target)
+      },
+      deploy.target
+    )
+
+    state = %{state | deploy: nil}
+
+    cond do
+      # Something newer is wanted already, perhaps the fix: deploy that instead.
+      state.queued && state.queued != deploy.target ->
+        start_deploy(state, state.queued, [])
+
+      deploy.rollback? or state.good in [nil, deploy.target] ->
+        broadcast(state)
+
+      true ->
+        rollback(state, state.good)
+    end
+  end
+
+  defp rollback(state, to) do
+    ref = Code.ref(state.name)
+
+    case Store.move_ref(state.name, to, ref.version, "peon", approved_by: "rollback") do
+      {:ok, _} ->
+        broadcast(%{state | rollback_to: to})
+
+      error ->
+        Logger.error("#{state.name}: could not roll back to ##{to}: #{inspect(error)}")
+        broadcast(state)
+    end
+  end
+
+  # Healthy on staging moves prod too when a human turned that on for the
+  # project ("auto_promote": true), unless prod already failed with it.
+  defp promote(id) do
+    prod = Code.ref("prod")
+
+    cond do
+      "prod" not in names() ->
+        :ok
+
+      Project.settings()["auto_promote"] != true ->
+        :ok
+
+      prod && prod.changeset_id == id ->
+        :ok
+
+      failed_deploy?("prod", id) ->
+        :ok
+
+      true ->
+        # The approval is the human who turned auto-promote on.
+        approved_by = "auto-promote, turned on by #{Project.settings()["auto_promote_by"]}"
+
+        Store.move_ref("prod", id, (prod && prod.version) || 0, "peon", approved_by: approved_by)
+    end
+  end
+
+  # The changesets a deploy brought in, for whoever fixes it.
+  defp describe_range(from, to) do
+    lines =
+      Stream.unfold(to, fn
+        nil ->
+          nil
+
+        ^from ->
+          nil
+
+        id ->
+          case Code.changeset(id) do
+            {:ok, cs} -> {cs, cs.parent_id}
+            _ -> nil
+          end
+      end)
+      |> Enum.take(20)
+      |> Enum.map_join("\n", &"- ##{&1.id} #{&1.intent}")
+
+    "Changesets in this deploy:\n" <> lines
+  end
+
+  defp phase(%{deploy: deploy} = state, phase), do: %{state | deploy: %{deploy | phase: phase}}
+
+  ## Attacher
+
+  # The script is copied in on every start, so a container that outlived a Peon
+  # upgrade (adopted) still runs the new Peon's attacher.
+  defp start_attacher(state) do
+    script = Application.app_dir(:peon, "priv/attacher.exs")
+
+    case Sandbox.copy_in(state.container, script, "/tmp/peon-attacher.exs") do
+      :ok ->
+        %{
+          state
+          | attacher: Sandbox.exec_port(state.container, attacher_args(state)),
+            attached?: false
+        }
+
+      {:error, output} ->
+        Logger.warning("#{state.name}: could not copy the attacher in: #{output}")
+        Process.send_after(self(), :reattach, 3_000)
+        state
+    end
+  end
+
+  defp attacher_args(state) do
+    [
+      "elixir",
+      "--sname",
+      "attacher#{System.unique_integer([:positive])}",
+      "--cookie",
+      state.cookie,
+      "--hidden",
+      "/tmp/peon-attacher.exs",
+      "app@app",
+      state.otp_app,
+      state.endpoint
+    ]
+  end
+
+  defp stop_attacher(%{attacher: nil} = state), do: state
+
+  defp stop_attacher(state) do
+    try do
+      Port.close(state.attacher)
+    rescue
+      ArgumentError -> :ok
+    end
+
+    fail_requests(%{state | attacher: nil, attached?: false})
+  end
+
+  defp attacher_message(state, %{"event" => "connected"}) do
+    state = %{state | attached?: true}
+
+    case state.deploy do
+      %{phase: :booting} -> watch(state)
+      _ -> broadcast(state)
+    end
+  end
+
+  defp attacher_message(state, %{"event" => "stats", "stats" => stats}),
+    do: broadcast(%{state | stats: stats})
+
+  defp attacher_message(state, %{"event" => "error"} = error) do
+    error = Map.put(error, "at", DateTime.utc_now(:second))
+    state = %{state | errors: Enum.take([error | state.errors], 20)}
+    fingerprint = Incidents.fingerprint(error)
+
+    case state.deploy do
+      %{phase: :watching, known: known} ->
+        if MapSet.member?(known, fingerprint) do
+          Incidents.report(state.name, error, state.deployed)
+          broadcast(state)
+        else
+          fail(state, "it logged a new error:\n\n#{error["message"]}\n#{error["stacktrace"]}")
+        end
+
+      _ ->
+        Incidents.report(state.name, error, state.deployed)
+        broadcast(state)
+    end
+  end
+
+  defp attacher_message(state, %{"reply" => id} = reply) do
+    {tag, requests} = Map.pop(state.requests, id)
+    reply_to(%{state | requests: requests}, tag, reply)
+  end
+
+  defp attacher_message(state, _message), do: state
+
+  defp reply_to(state, :deploy, %{"ok" => true, "result" => %{"compile" => compile} = result})
+       when compile != "error" do
+    state = append_logs(state, result["output"] || "")
+    if state.deploy && state.deploy.phase == :loading, do: watch(state), else: state
+  end
+
+  defp reply_to(state, :deploy, reply) do
+    output = get_in(reply, ["result", "output"]) || reply["error"] || ""
+
+    hot_failed(
+      append_logs(state, output),
+      "hot loading failed:\n\n" <> String.slice(output, -2000, 2000)
+    )
+  end
+
+  defp reply_to(state, {:call, from}, %{"ok" => true, "result" => result}) do
+    GenServer.reply(from, {:ok, result})
+    state
+  end
+
+  defp reply_to(state, {:call, from}, reply) do
+    GenServer.reply(from, {:error, reply["error"]})
+    state
+  end
+
+  defp reply_to(state, nil, _reply), do: state
+
+  defp request(%{attacher: nil} = state, _payload, tag),
+    do: reply_to(state, tag, %{"ok" => false, "error" => "the attacher is not connected"})
+
+  defp request(state, payload, tag) do
+    id = state.next_id
+    Port.command(state.attacher, Jason.encode!(Map.put(payload, "id", id)) <> "\n")
+    %{state | next_id: id + 1, requests: Map.put(state.requests, id, tag)}
+  end
+
+  defp fail_requests(state) do
+    Enum.reduce(state.requests, %{state | requests: %{}}, fn {_id, tag}, state ->
+      reply_to(state, tag, %{"ok" => false, "error" => "the attacher disconnected"})
+    end)
+  end
+
+  ## Helpers
+
+  defp info_map(state) do
+    host = Application.fetch_env!(:peon, :preview_host)
+
+    %{
+      name: state.name,
+      url: "http://#{host}:#{state.port}",
+      status: status(state),
+      deployed: state.deployed,
+      good: state.good,
+      deploy: state.deploy && Map.take(state.deploy, [:target, :mode, :phase]),
+      stats: state.stats,
+      errors: Enum.take(state.errors, 10),
+      attach:
+        "docker exec -it #{state.container} iex --sname debug --cookie #{state.cookie} --remsh app@app"
+    }
+  end
+
+  defp status(%{deploy: %{phase: phase}}), do: phase
+  defp status(%{app_status: :running, attached?: true}), do: :running
+  defp status(%{app_status: :running}), do: :attaching
+  defp status(%{app_status: status}), do: status
+
+  defp broadcast(state) do
+    Phoenix.PubSub.broadcast(Peon.PubSub, "envs", {:env, state.name, info_map(state)})
+    state
+  end
+
+  defp restart_paths,
+    do:
+      Keyword.get(
+        Project.policy_settings(),
+        :restart_paths,
+        Policy.default_settings().restart_paths
+      )
+
+  defp migration_paths,
+    do:
+      Keyword.get(
+        Project.policy_settings(),
+        :migration_paths,
+        Policy.default_settings().migration_paths
+      )
+
+  defp matches_any?(:all, _globs), do: true
+  defp matches_any?(paths, globs), do: Enum.any?(paths, &Policy.matches?(&1, globs))
+
+  defp read_deployed(base) do
+    case File.read(Path.join(base, "deployed")) do
+      {:ok, id} -> String.to_integer(String.trim(id))
+      _ -> nil
+    end
+  end
+
+  defp secret(base, name, bytes) do
+    path = Path.join(base, name)
+
+    case File.read(path) do
+      {:ok, secret} ->
+        secret
+
+      _ ->
+        secret = :crypto.strong_rand_bytes(bytes) |> Base.url_encode64(padding: false)
+        File.write!(path, secret)
+        File.chmod!(path, 0o600)
+        secret
+    end
+  end
+
+  defp append_logs(state, data) do
+    data
+    |> String.split(["\r\n", "\n"], trim: true)
+    |> Enum.reduce(state, fn line, state ->
+      logs = :queue.in(line, state.logs)
+
+      if state.log_count >= @log_lines,
+        do: %{state | logs: :queue.drop(logs)},
+        else: %{state | logs: logs, log_count: state.log_count + 1}
+    end)
+  end
+
+  defp log_tail(state, n), do: state.logs |> :queue.to_list() |> Enum.take(-n) |> Enum.join("\n")
+end

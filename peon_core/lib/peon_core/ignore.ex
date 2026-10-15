@@ -13,7 +13,13 @@ defmodule PeonCore.Ignore do
     "**.db",
     "**.db-*",
     "node_modules/**",
-    "erl_crash.dump"
+    "erl_crash.dump",
+    # Built by the preview and deploys from assets/
+    "priv/static/assets/**",
+    "priv/static/cache_manifest.json",
+    "cover/**",
+    "doc/**",
+    "tmp/**"
   ]
 
   @doc "Returns a predicate for `PeonCore.Tree.from_dir/2`, reading `.peonignore` under `root`."
