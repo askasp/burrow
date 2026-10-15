@@ -91,7 +91,7 @@ defmodule BurrowWeb.AILive do
     {:ok, _} = OpenCode.set_model(user_id, model)
 
     # Peons read the model when they start.
-    for project <- Projects.list(socket.assigns.current_scope), do: Cell.restart(project.id)
+    for project <- Projects.owned(socket.assigns.current_scope), do: Cell.restart(project.id)
 
     {:noreply, socket |> assign(model: model) |> put_flash(:info, "Your Peons now use #{model}.")}
   end
@@ -127,7 +127,7 @@ defmodule BurrowWeb.AILive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} active={:ai}>
       <.header>
         AI login
         <:subtitle>
@@ -135,85 +135,119 @@ defmodule BurrowWeb.AILive do
         </:subtitle>
       </.header>
 
-      <p :if={@error} class="alert alert-error text-sm">{@error}</p>
-      <p :if={@providers == nil and @error == nil} class="text-sm opacity-70 flex items-center gap-2">
-        <span class="loading loading-spinner loading-sm"></span> Loading providers…
-      </p>
+      <div class="max-w-[760px] flex flex-col gap-8">
+        <p :if={@error} class="notice err m-0">{@error}</p>
+        <p
+          :if={@providers == nil and @error == nil}
+          class="m-0 flex items-center gap-2 text-sm text-[var(--text-3)]"
+        >
+          <.icon name="hero-arrow-path" class="size-4 spin" /> Loading providers…
+        </p>
 
-      <div :if={@attempt} id="oauth" class="card bg-base-200 my-4">
-        <div class="card-body text-sm space-y-2">
-          <p class="font-semibold">Finish signing in</p>
-          <p class="whitespace-pre-wrap">{@attempt.instructions}</p>
-          <a href={@attempt.url} target="_blank" class="btn btn-primary btn-sm w-fit">Open the sign-in page</a>
-          <.form
-            :if={@attempt.mode == "code"}
-            for={%{}}
-            as={:oauth}
-            id="oauth-code"
-            phx-submit="oauth_code"
-            class="flex gap-2"
-          >
-            <input
-              name="code"
-              class="input input-bordered input-sm flex-1"
-              placeholder="Paste the code here"
-            />
-            <button class="btn btn-sm">Done</button>
-          </.form>
-          <p :if={@attempt.mode != "code"} class="opacity-70 flex items-center gap-2">
-            <span class="loading loading-dots loading-xs"></span> Waiting for you to sign in…
-          </p>
-          <button phx-click="cancel_oauth" class="link text-xs w-fit">Cancel</button>
-        </div>
-      </div>
-
-      <div :if={@local_import?} class="my-4 text-sm flex items-center gap-3">
-        <button phx-click="import_local" class="btn btn-sm">Use this computer's opencode logins</button>
-        <span class="opacity-60">Local mode: copies the logins of the opencode installed here.</span>
-      </div>
-
-      <div :if={@providers} id="providers" class="space-y-3">
-        <div :for={p <- @providers} id={"provider-#{p.id}"} class="card bg-base-200">
-          <div class="card-body py-4 gap-3">
-            <div class="flex items-center gap-3">
-              <span class="font-semibold">{p.name}</span>
-              <span :if={p.connected?} class="badge badge-success badge-sm">connected</span>
-            </div>
-            <div class="flex flex-wrap gap-2 items-center">
-              <button
-                :for={m <- p.oauth}
-                phx-click="oauth"
-                phx-value-provider={p.id}
-                phx-value-method={m.id}
-                class="btn btn-sm btn-outline"
-              >
-                {m.label}
-              </button>
-              <.form :if={p.key?} for={%{}} as={:key} phx-submit="connect_key" class="flex gap-2">
-                <input type="hidden" name="provider" value={p.id} />
-                <input
-                  name="key"
-                  type="password"
-                  autocomplete="off"
-                  class="input input-bordered input-sm w-64"
-                  placeholder="API key"
-                />
-                <button class="btn btn-sm">Connect key</button>
-              </.form>
-            </div>
+        <section :if={@attempt} id="oauth" aria-label="Finish signing in">
+          <div class="sec-h"><span class="eyebrow">Finish signing in</span></div>
+          <div class="border-t border-[var(--border-strong)] border-b border-b-[var(--border)] py-4 flex flex-col gap-3 text-sm">
+            <p class="m-0 whitespace-pre-wrap text-[var(--text-2)]">{@attempt.instructions}</p>
+            <a href={@attempt.url} target="_blank" class="btn btn-primary btn-sm w-fit">
+              Open the sign-in page
+            </a>
+            <.form
+              :if={@attempt.mode == "code"}
+              for={%{}}
+              as={:oauth}
+              id="oauth-code"
+              phx-submit="oauth_code"
+              class="flex gap-2 max-w-[480px]"
+            >
+              <label for="oauth-code-input" class="sr-only">Code</label>
+              <input
+                id="oauth-code-input"
+                name="code"
+                class="field flex-1"
+                placeholder="Paste the code here"
+              />
+              <button class="btn btn-secondary">Done</button>
+            </.form>
+            <p :if={@attempt.mode != "code"} class="m-0 st warn">
+              <span class="dot"></span> Waiting for you to sign in…
+            </p>
+            <button phx-click="cancel_oauth" class="btn btn-ghost btn-sm w-fit">Cancel</button>
           </div>
-        </div>
-      </div>
+        </section>
 
-      <div :if={@models != []} class="mt-8">
-        <.form for={%{}} as={:model} id="model-form" phx-change="model">
-          <label class="text-sm font-semibold">Model for your Peons</label>
-          <select name="model" class="select select-bordered w-full mt-1">
-            <option :for={m <- Enum.uniq([@model | @models])} value={m} selected={m == @model}>
-              {m}
-            </option>
-          </select>
-        </.form>
+        <div :if={@local_import?} class="notice">
+          <button phx-click="import_local" class="btn btn-secondary btn-sm">
+            Use this computer's opencode logins
+          </button>
+          <span class="text-[13px] text-[var(--text-3)]">
+            Local mode: copies the logins of the opencode installed here.
+          </span>
+        </div>
+
+        <section :if={@providers} aria-label="Providers">
+          <div class="sec-h"><span class="eyebrow">Providers</span></div>
+          <ul id="providers" class="rows">
+            <li
+              :for={p <- @providers}
+              id={"provider-#{p.id}"}
+              class="flex-wrap !items-start !py-3.5"
+            >
+              <div class="w-[180px] flex flex-col gap-1 pt-1.5">
+                <span class="font-semibold">{p.name}</span>
+                <span :if={p.connected?} class="st ok"><span class="dot"></span>connected</span>
+              </div>
+              <div class="flex-1 min-w-[260px] flex flex-wrap gap-2 items-center">
+                <button
+                  :for={m <- p.oauth}
+                  phx-click="oauth"
+                  phx-value-provider={p.id}
+                  phx-value-method={m.id}
+                  class="btn btn-secondary btn-sm"
+                >
+                  {m.label}
+                </button>
+                <.form
+                  :if={p.key?}
+                  for={%{}}
+                  as={:key}
+                  phx-submit="connect_key"
+                  class="flex gap-2 flex-1 min-w-[240px]"
+                >
+                  <input type="hidden" name="provider" value={p.id} />
+                  <label for={"key-#{p.id}"} class="sr-only">{p.name} API key</label>
+                  <input
+                    id={"key-#{p.id}"}
+                    name="key"
+                    type="password"
+                    autocomplete="off"
+                    class="field flex-1 !h-8 !text-[13px]"
+                    placeholder="API key"
+                  />
+                  <button class="btn btn-secondary btn-sm">Connect key</button>
+                </.form>
+              </div>
+            </li>
+          </ul>
+        </section>
+
+        <section :if={@models != []} aria-label="Model">
+          <div class="sec-h"><span class="eyebrow">Model</span></div>
+          <.form
+            for={%{}}
+            as={:model}
+            id="model-form"
+            phx-change="model"
+            class="border-t border-[var(--border-strong)] pt-4 max-w-[420px]"
+          >
+            <label for="model-select" class="label">Model for your Peons</label>
+            <select id="model-select" name="model" class="field">
+              <option :for={m <- Enum.uniq([@model | @models])} value={m} selected={m == @model}>
+                {m}
+              </option>
+            </select>
+            <p class="hint">Changing it restarts the Peons you own.</p>
+          </.form>
+        </section>
       </div>
     </Layouts.app>
     """

@@ -7,53 +7,52 @@ defmodule BurrowWeb.UserLive.Registration do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto max-w-sm">
-        <div class="text-center">
-          <.header>
-            Register for an account
-            <:subtitle>
-              Already registered?
-              <.link navigate={~p"/users/log-in"} class="font-semibold text-brand hover:underline">
-                Log in
-              </.link>
-              to your account now.
-            </:subtitle>
-          </.header>
-        </div>
+    <Layouts.auth flash={@flash} current_scope={@current_scope}>
+      <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Create account</h1>
 
-        <.form
-          for={@form}
-          id="registration_form"
-          phx-submit="save"
-          phx-change="validate"
-          phx-trigger-action={@trigger_submit}
-          action={~p"/users/log-in?_action=registered"}
-          method="post"
+      <.form
+        for={@form}
+        id="registration_form"
+        phx-submit="save"
+        phx-change="validate"
+        phx-trigger-action={@trigger_submit}
+        action={~p"/users/log-in?_action=registered"}
+        method="post"
+        class="flex flex-col"
+      >
+        <.input
+          field={@form[:email]}
+          type="email"
+          label="Email"
+          autocomplete="username"
+          spellcheck="false"
+          placeholder="you@example.com"
+          required
+          phx-mounted={JS.focus()}
+        />
+        <.input
+          field={@form[:password]}
+          type="password"
+          label="Password"
+          autocomplete="new-password"
+          hint="At least 12 characters."
+          reveal
+          required
+        />
+
+        <.button
+          variant="primary"
+          phx-disable-with="Creating account…"
+          class="btn btn-primary btn-lg w-full mt-2"
         >
-          <.input
-            field={@form[:email]}
-            type="email"
-            label="Email"
-            autocomplete="username"
-            spellcheck="false"
-            required
-            phx-mounted={JS.focus()}
-          />
-          <.input
-            field={@form[:password]}
-            type="password"
-            label="Password"
-            autocomplete="new-password"
-            required
-          />
+          Create account
+        </.button>
+      </.form>
 
-          <.button phx-disable-with="Creating account..." class="btn btn-primary w-full">
-            Create an account
-          </.button>
-        </.form>
+      <div class="pt-5 border-t border-[var(--border)] text-sm leading-5 text-[var(--text-2)]">
+        Have an account? <.link navigate={~p"/users/log-in"}>Log in</.link>
       </div>
-    </Layouts.app>
+    </Layouts.auth>
     """
   end
 

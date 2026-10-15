@@ -2,6 +2,10 @@ defmodule Burrow.Projects do
   @moduledoc """
   Users' projects. Every project gets its own Peon, run by a `Burrow.Cell`.
 
+  A project is private to its owner, or shared with one of the owner's teams
+  (`team_id`): then everyone in that team can see, open and restart it. Its
+  Peon still runs on the owner's AI login.
+
   Per-project secrets (Peon's secret key, the SSO secret shared with Peon) are
   derived from Burrow's secret, so none are stored.
   """
@@ -11,6 +15,7 @@ defmodule Burrow.Projects do
   alias Burrow.Repo
   alias Burrow.Accounts.Scope
   alias Burrow.Projects.Project
+  alias Burrow.Teams
 
   @peon_port_base 4100
   @preview_port_base 5000
@@ -18,21 +23,39 @@ defmodule Burrow.Projects do
 
   def subscribe, do: Phoenix.PubSub.subscribe(Burrow.PubSub, "projects")
 
-  def list(%Scope{user: user}),
-    do: Repo.all(from p in Project, where: p.user_id == ^user.id, order_by: [desc: p.id])
+  @doc "The user's own projects and those shared with their teams, newest first."
+  def list(%Scope{} = scope),
+    do: Repo.all(from p in visible(scope), order_by: [desc: p.id], preload: [:user, :team])
+
+  @doc "Only the projects the user owns."
+  def owned(%Scope{user: user}), do: Repo.all(from p in Project, where: p.user_id == ^user.id)
 
   def all, do: Repo.all(Project)
 
-  def get!(%Scope{user: user}, id), do: Repo.get_by!(Project, id: id, user_id: user.id)
+  def get!(%Scope{} = scope, id),
+    do: Repo.one!(from p in visible(scope), where: p.id == ^id, preload: [:user, :team])
+
+  defp visible(%Scope{user: user}) do
+    from p in Project,
+      where: p.user_id == ^user.id or p.team_id in subquery(Teams.ids_query(user.id))
+  end
+
+  def owner?(%Scope{user: user}, %Project{user_id: user_id}), do: user.id == user_id
 
   def get(id), do: Repo.get(Project, id)
 
   def change(attrs \\ %{}), do: Project.create_changeset(%Project{}, attrs)
 
-  @doc "Creates a project and starts its Peon."
-  def create(%Scope{user: user}, attrs) do
+  @doc """
+  Creates a project and starts its Peon. A `"team_id"` in `attrs` shares it
+  with that team, which must be one of the user's.
+  """
+  def create(%Scope{user: user} = scope, attrs) do
     Repo.transaction(fn ->
-      changeset = Project.create_changeset(%Project{user_id: user.id}, attrs)
+      changeset =
+        %Project{user_id: user.id}
+        |> Project.create_changeset(attrs)
+        |> put_team(scope, attrs["team_id"] || attrs[:team_id])
 
       with {:ok, _} <- Ecto.Changeset.apply_action(changeset, :insert) do
         name = Ecto.Changeset.get_field(changeset, :name)
@@ -61,15 +84,62 @@ defmodule Burrow.Projects do
     end
   end
 
-  defp unique_slug(name) do
+  defp put_team(changeset, _scope, team_id) when team_id in [nil, ""], do: changeset
+
+  defp put_team(changeset, scope, team_id) do
+    with id when is_integer(id) <- parse_id(team_id),
+         true <- Teams.member?(scope, id) do
+      Ecto.Changeset.put_change(changeset, :team_id, id)
+    else
+      _ -> Ecto.Changeset.add_error(changeset, :team_id, "is not one of your teams")
+    end
+  end
+
+  @doc "The owner shares the project with one of their teams, or makes it private (`nil`)."
+  def share(%Scope{} = scope, %Project{} = project, team_id) do
+    team_id = parse_id(team_id)
+
+    cond do
+      not owner?(scope, project) ->
+        {:error, :not_owner}
+
+      team_id == :invalid or (team_id && not Teams.member?(scope, team_id)) ->
+        {:error, :not_member}
+
+      true ->
+        {1, _} =
+          Repo.update_all(from(p in Project, where: p.id == ^project.id), set: [team_id: team_id])
+
+        project = Repo.preload(%{project | team_id: team_id}, [:team], force: true)
+        Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
+        {:ok, project}
+    end
+  end
+
+  defp parse_id(id) when id in [nil, ""], do: nil
+  defp parse_id(id) when is_integer(id), do: id
+
+  defp parse_id(id) do
+    case Integer.parse(to_string(id)) do
+      {id, ""} -> id
+      _ -> :invalid
+    end
+  end
+
+  @doc "The slug a name turns into, before a number is added to make it unique."
+  def slug_base(name) do
     base =
-      name
+      (name || "")
       |> String.downcase()
       |> String.replace(~r/[^a-z0-9]+/, "_")
       |> String.trim("_")
       |> String.slice(0, 30)
 
-    base = if base =~ ~r/^[a-z]/, do: base, else: "app_" <> base
+    if base =~ ~r/^[a-z]/, do: base, else: "app_" <> base
+  end
+
+  defp unique_slug(name) do
+    base = slug_base(name)
 
     Stream.iterate(1, &(&1 + 1))
     |> Stream.map(fn

@@ -3,6 +3,6 @@ defmodule BurrowWeb.PageControllerTest do
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Your own Peon writes it"
+    assert html_response(conn, 200) =~ "Work work."
   end
 end

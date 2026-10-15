@@ -1,43 +1,103 @@
 defmodule BurrowWeb.ProjectLive.Index do
+  @moduledoc """
+  The projects screen: your projects and those shared with your teams on the
+  left, the selected one (`?p=<id>`) on the right with its Peon and who it is
+  shared with.
+  """
+
   use BurrowWeb, :live_view
 
-  alias Burrow.{Cell, Projects}
+  alias Burrow.{Cell, Projects, Teams}
+  alias Burrow.Projects.Project
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: Cell.subscribe()
+    if connected?(socket) do
+      Cell.subscribe()
+      Projects.subscribe()
+      Teams.subscribe()
+    end
+
     scope = socket.assigns.current_scope
 
     {:ok,
      socket
-     |> assign(projects: Projects.list(scope), form: to_form(Projects.change(), as: "project"))
-     |> assign(ai_connected: nil)
-     |> assign_statuses()
+     |> assign(page_title: "Projects", ai_connected: nil)
+     |> assign(form: new_form(), slug: nil)
+     |> load()
      |> start_async(:ai, fn -> Burrow.OpenCode.connected?(scope.user.id) end)}
   end
 
   @impl true
+  def handle_params(params, _uri, socket),
+    do: {:noreply, socket |> assign(selected_id: parse_id(params["p"])) |> select()}
+
+  defp load(socket) do
+    scope = socket.assigns.current_scope
+    projects = Projects.list(scope)
+
+    socket
+    |> assign(projects: projects, teams: Teams.list(scope))
+    |> assign(statuses: Map.new(projects, &{&1.id, Cell.status(&1.id)}))
+    |> select()
+  end
+
+  defp select(socket) do
+    %{projects: projects} = socket.assigns
+    id = socket.assigns[:selected_id]
+    selected = Enum.find(projects, &(&1.id == id)) || List.first(projects)
+
+    socket
+    |> assign(selected: selected)
+    |> assign(share_form: to_form(%{"team_id" => selected && selected.team_id}, as: "share"))
+  end
+
+  defp new_form(attrs \\ %{}), do: to_form(Projects.change(attrs), as: "project")
+
+  defp parse_id(nil), do: nil
+
+  defp parse_id(id) do
+    case Integer.parse(id) do
+      {id, ""} -> id
+      _ -> nil
+    end
+  end
+
+  @impl true
   def handle_event("validate", %{"project" => attrs}, socket) do
-    form = Projects.change(attrs) |> Map.put(:action, :validate) |> to_form(as: "project")
-    {:noreply, assign(socket, form: form)}
+    form = attrs |> Projects.change() |> Map.put(:action, :validate) |> to_form(as: "project")
+    slug = if String.trim(attrs["name"] || "") != "", do: Projects.slug_base(attrs["name"])
+    {:noreply, assign(socket, form: form, slug: slug)}
   end
 
   def handle_event("create", %{"project" => attrs}, socket) do
-    scope = socket.assigns.current_scope
-
-    case Projects.create(scope, attrs) do
+    case Projects.create(socket.assigns.current_scope, attrs) do
       {:ok, project} ->
         {:noreply,
          socket
          |> put_flash(:info, "Creating #{project.name}. Its Peon starts in a few seconds.")
-         |> assign(
-           projects: Projects.list(scope),
-           form: to_form(Projects.change(), as: "project")
-         )
-         |> assign_statuses()}
+         |> assign(form: new_form(), slug: nil)
+         |> load()
+         |> push_patch(to: ~p"/projects?p=#{project.id}")}
 
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset, as: "project"))}
+    end
+  end
+
+  def handle_event("share", %{"share" => %{"team_id" => team_id}}, socket) do
+    project = socket.assigns.selected
+
+    case Projects.share(socket.assigns.current_scope, project, team_id) do
+      {:ok, %Project{team: nil}} ->
+        {:noreply, socket |> put_flash(:info, "#{project.name} is private now.") |> load()}
+
+      {:ok, %Project{team: team}} ->
+        {:noreply,
+         socket |> put_flash(:info, "#{project.name} is shared with #{team.name}.") |> load()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Only the project's owner can share it.")}
     end
   end
 
@@ -54,81 +114,197 @@ defmodule BurrowWeb.ProjectLive.Index do
   def handle_async(:ai, {:exit, _}, socket), do: {:noreply, assign(socket, ai_connected: false)}
 
   @impl true
-  def handle_info({:cell, _id, _status}, socket), do: {:noreply, assign_statuses(socket)}
-
-  defp assign_statuses(socket) do
-    statuses = Map.new(socket.assigns.projects, &{&1.id, Cell.status(&1.id)})
-    assign(socket, statuses: statuses)
+  def handle_info({:cell, id, status}, socket) do
+    if Map.has_key?(socket.assigns.statuses, id),
+      do: {:noreply, update(socket, :statuses, &Map.put(&1, id, status))},
+      else: {:noreply, socket}
   end
+
+  def handle_info({event, _}, socket)
+      when event in [:project_created, :project_updated, :team_changed],
+      do: {:noreply, load(socket)}
 
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <.header>
-        Your projects
-        <:subtitle>
-          Each project has its own Peon: chat with it to build and change your app.
-        </:subtitle>
-        <:actions>
-          <.link navigate={~p"/ai"} class="btn btn-sm btn-ghost">AI login</.link>
-        </:actions>
-      </.header>
-
-      <div :if={@ai_connected == false} id="ai-missing" class="alert alert-warning text-sm mb-4">
-        Connect an AI provider first, so your Peons can work.
-        <.link navigate={~p"/ai"} class="btn btn-sm">Connect</.link>
+    <Layouts.app flash={@flash} current_scope={@current_scope} active={:projects}>
+      <div class="flex items-start justify-between gap-5 flex-wrap">
+        <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Projects</h1>
+        <.form
+          for={@form}
+          id="project_form"
+          phx-change="validate"
+          phx-submit="create"
+          class="flex gap-2 items-start flex-[0_1_520px] flex-wrap"
+        >
+          <div class="flex-1 min-w-[200px]">
+            <.input
+              field={@form[:name]}
+              label="New project name"
+              class="field"
+              placeholder="Sauna booking"
+              autocomplete="off"
+              hint={"slug: #{@slug || "…"}"}
+            />
+          </div>
+          <div :if={@teams != []} class="w-[160px]">
+            <.input
+              field={@form[:team_id]}
+              type="select"
+              label="Shared with"
+              options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+            />
+          </div>
+          <.button variant="primary" class="btn btn-primary mt-[27px]" phx-disable-with="Creating…">
+            Create
+          </.button>
+        </.form>
       </div>
 
-      <.form
-        for={@form}
-        id="project_form"
-        phx-change="validate"
-        phx-submit="create"
-        class="flex gap-2 items-end"
-      >
-        <div class="flex-1">
-          <.input field={@form[:name]} label="New project" placeholder="Sauna Booking" />
-        </div>
-        <.button class="btn btn-primary mb-2" phx-disable-with="Creating…">Create</.button>
-      </.form>
+      <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
+        <span class="st warn"><span class="dot"></span>No AI login</span>
+        <span class="text-[var(--text-2)]">Connect an AI provider so your Peons can work.</span>
+        <.link navigate={~p"/ai"} class="btn btn-secondary btn-sm ml-auto">Connect</.link>
+      </div>
 
-      <div id="projects" class="mt-6 space-y-3">
-        <p :if={@projects == []} class="text-sm opacity-70">No projects yet.</p>
-        <div :for={p <- @projects} id={"project-#{p.id}"} class="card bg-base-200">
-          <div class="card-body flex-row items-center gap-4 py-4">
-            <div class="flex-1">
-              <div class="font-semibold">{p.name}</div>
-              <div class="text-xs opacity-60">{p.slug} · Peon on port {p.port}</div>
-            </div>
-            <span class={["badge", badge(@statuses[p.id])]}>{status_text(@statuses[p.id])}</span>
+      <div class="flex flex-wrap gap-12 items-start">
+        <ul id="projects" aria-label="Projects" class="plist flex-[1_1_340px] max-w-[420px]">
+          <li :if={@projects == []} class="py-4 text-sm text-[var(--text-3)]">No projects yet.</li>
+          <li :for={p <- @projects} id={"project-#{p.id}"}>
             <.link
-              :if={@statuses[p.id] == :running}
-              href={~p"/projects/#{p.id}/open"}
-              target="_blank"
-              class="btn btn-sm btn-primary"
+              patch={~p"/projects?p=#{p.id}"}
+              class={["prow", @selected && @selected.id == p.id && "sel"]}
+              aria-current={@selected && @selected.id == p.id && "true"}
             >
-              Open
+              <span class="r1">
+                <span class="name">{p.name}</span>
+                <.status status={@statuses[p.id]} />
+              </span>
+              <span class="r2 mono">
+                <span>{p.slug}</span>
+                <span :if={p.team}>shared · <b>{p.team.name}</b></span>
+                <span :if={!p.team}>private</span>
+                <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
+              </span>
+              <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
             </.link>
-            <button
-              phx-click="restart"
-              phx-value-id={p.id}
-              class="btn btn-sm btn-ghost"
-              title="Restart Peon"
+          </li>
+        </ul>
+
+        <section
+          :if={@selected}
+          id="selected-project"
+          aria-label="Selected project"
+          class="flex-[999_1_560px] min-w-0 flex flex-col gap-8"
+        >
+          <div class="flex items-start justify-between gap-4 flex-wrap">
+            <div class="flex flex-col gap-0.5 min-w-0">
+              <h2 class="m-0 text-2xl leading-8 font-semibold tracking-[-0.01em]">
+                {@selected.name}
+              </h2>
+              <span class="mono text-[12.5px] text-[var(--text-3)]">
+                {@selected.slug} · Peon on port {@selected.port}
+              </span>
+            </div>
+            <.link
+              :if={@statuses[@selected.id] == :running}
+              id="open-workspace"
+              href={~p"/projects/#{@selected.id}/open"}
+              target="_blank"
+              class="btn btn-primary"
             >
-              <.icon name="hero-arrow-path" class="size-4" />
+              Open workspace
+            </.link>
+            <button :if={@statuses[@selected.id] != :running} class="btn btn-primary" disabled>
+              Open workspace
             </button>
           </div>
-        </div>
+
+          <div>
+            <div class="cells">
+              <div class="cell">
+                <div class="flex items-center gap-2.5">
+                  <span class="eyebrow">peon</span>
+                  <.status status={@statuses[@selected.id]} />
+                </div>
+                <div class="tip">:{@selected.port}<small>{@selected.preview_ports}</small></div>
+                <button
+                  id="restart-peon"
+                  type="button"
+                  class="xlink w-fit"
+                  phx-click="restart"
+                  phx-value-id={@selected.id}
+                >
+                  Restart Peon <.icon name="hero-arrow-path" class="size-3.5" />
+                </button>
+              </div>
+              <div class="cell">
+                <span class="eyebrow">sharing</span>
+                <div class="tip plain">
+                  {if @selected.team, do: @selected.team.name, else: "Private"}
+                </div>
+                <span class="meta">
+                  {if @selected.team,
+                    do: "Everyone in #{@selected.team.name} can open and restart it.",
+                    else: "Only you can see it."}
+                </span>
+              </div>
+            </div>
+            <p class="m-0 py-3 text-[13.5px] text-[var(--text-2)]">
+              <%= if Projects.owner?(@current_scope, @selected) do %>
+                Runs on your AI login{if @selected.team, do: ", also when teammates chat in it"}.
+              <% else %>
+                Owned by {@selected.user.email}. Runs on their AI login.
+              <% end %>
+            </p>
+          </div>
+
+          <div :if={Projects.owner?(@current_scope, @selected)}>
+            <div class="sec-h"><span class="eyebrow">Share</span></div>
+            <.form
+              for={@share_form}
+              id="share-form"
+              phx-change="share"
+              class="border-t border-[var(--border-strong)] pt-4 max-w-[420px]"
+            >
+              <.input
+                field={@share_form[:team_id]}
+                type="select"
+                label="Who can see this project"
+                options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+              />
+              <p :if={@teams == []} class="hint m-0">
+                To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
+              </p>
+            </.form>
+          </div>
+        </section>
+
+        <section
+          :if={!@selected}
+          class="flex-[999_1_560px] min-w-0 pt-4 text-[15px] text-[var(--text-2)]"
+        >
+          Name your first project above. Its Peon starts in a few seconds; then open its workspace and describe what to build.
+        </section>
       </div>
     </Layouts.app>
     """
   end
 
-  defp badge(:running), do: "badge-success"
-  defp badge(:starting), do: "badge-warning"
-  defp badge(_), do: "badge-error"
+  attr :status, :any, required: true
+
+  defp status(assigns) do
+    ~H"""
+    <span class={["st", tone(@status)]}><span class="dot"></span>{status_text(@status)}</span>
+    """
+  end
+
+  defp tone(:running), do: "ok"
+  defp tone(:starting), do: "warn"
+  defp tone({:exited, _}), do: "err"
+  defp tone(_), do: "idle"
 
   defp status_text({:exited, code}), do: "exited (#{code})"
+  defp status_text(nil), do: "stopped"
   defp status_text(status), do: to_string(status)
 end

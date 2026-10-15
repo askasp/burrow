@@ -13,93 +13,205 @@
    The heroicons installation itself is managed by your mix.exs */
 @plugin "../vendor/heroicons";
 
-/* daisyUI Tailwind Plugin. */
-@plugin "daisyui/packages/bundle/daisyui" {
-  themes: false;
-}
-
-/* daisyUI theme plugin.
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
-@plugin "daisyui/packages/bundle/daisyui-theme" {
-  name: "dark";
-  default: false;
-  prefersdark: true;
-  color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(58% 0.158 241.966);
-  --color-info-content: oklch(97% 0.013 236.62);
-  --color-success: oklch(60% 0.118 184.704);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
-  --noise: 0;
-}
-
-@plugin "daisyui/packages/bundle/daisyui-theme" {
-  name: "light";
-  default: true;
-  prefersdark: false;
-  color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
-  --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
-  --size-selector: 0.21875rem;
-  --size-field: 0.21875rem;
-  --border: 1.5px;
-  --depth: 1;
-  --noise: 0;
-}
-
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
 @custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
 
-/* Use the data attribute for dark mode  */
-@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
-
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
-/* This file is for your main application CSS */
+/* Peon · Iron · Hairline: ink primary, outlines, rules instead of boxes. */
+
+@font-face {
+  font-family: "Rubik";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/rubik-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+}
+
+:root {
+  color-scheme: light;
+  --bg: #EEECE9; --surface: #FAF9F7; --sunken: #E4E0DB; --raised: #FFFFFF;
+  --border: #D7D1CA; --border-strong: #B5ACA3;
+  --text: #1C1917; --text-2: #4D4640; --text-3: #625A53;
+  --accent: #8FBF5A; --accent-ink: #18240B; --accent-text: #3B691C; --accent-soft: #E0EAD1;
+  --rust: #9E4128;
+  --ok: #356818; --ok-soft: #DCE8CE; --warn: #7F4D00; --warn-soft: #F2E2BF; --err: #AD1F3E; --err-soft: #F6D8DE;
+  --shadow: rgba(40, 25, 15, .10);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #141210; --surface: #1B1816; --sunken: #0E0C0B; --raised: #24201D;
+    --border: #2E2925; --border-strong: #433C36;
+    --text: #ECE8E3; --text-2: #B3AAA2; --text-3: #938A82;
+    --accent: #8FBF5A; --accent-ink: #16200B; --accent-text: #A7D278; --accent-soft: #222B19;
+    --rust: #E07A56;
+    --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
+    --shadow: rgba(0, 0, 0, .45);
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Rubik", ui-rounded, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3) }
+.muted { color: var(--text-3) }
+
+a { color: var(--text); text-underline-offset: 4px; text-decoration-color: var(--border-strong) }
+a:hover { color: var(--text); text-decoration-color: var(--text-2) }
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 40px; padding: 0 16px; border-radius: 6px; border: 1px solid transparent;
+  background: transparent; color: var(--text); font-family: inherit; font-size: 14px; font-weight: 500;
+  line-height: 1; text-decoration: none; white-space: nowrap; cursor: pointer;
+  transition: opacity .12s ease, border-color .12s ease, color .12s ease;
+}
+.btn-primary { background: var(--text); color: var(--bg); border-color: var(--text) }
+.btn-primary:hover { color: var(--bg); opacity: .86 }
+.btn-secondary { color: var(--text); border-color: var(--border-strong) }
+.btn-secondary:hover { border-color: var(--text-2) }
+.btn-ghost {
+  padding: 0 4px; color: var(--text-2);
+  text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px;
+}
+.btn-ghost:hover { color: var(--text); text-decoration-color: var(--text-2) }
+.btn-danger { color: var(--err); border-color: var(--border-strong) }
+.btn-danger:hover { color: var(--err); border-color: var(--err) }
+.btn:active { opacity: .8 }
+.btn[disabled] { opacity: .4; cursor: not-allowed }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 13px; gap: 6px }
+.btn-ghost.btn-sm { padding: 0 4px }
+.btn-lg { height: 44px; padding: 0 20px; font-size: 15px }
+.btn-ghost.btn-lg { padding: 0 4px }
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+  padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent;
+  color: var(--text-2); cursor: pointer; flex: none; transition: border-color .12s ease, color .12s ease;
+}
+.icon-btn:hover { border-color: var(--border-strong); color: var(--text) }
+.icon-btn.sm { width: 32px; height: 32px }
+.xlink {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; background: none;
+  color: var(--text); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px;
+  text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px; cursor: pointer;
+}
+.xlink:hover { text-decoration-color: var(--text-2) }
+:is(.btn, .icon-btn, .xlink, .field, .navlink, .prow, a):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+
+/* Forms */
+.field {
+  display: block; width: 100%; height: 40px; padding: 0 12px; border-radius: 6px;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  font-family: inherit; font-size: 15px;
+}
+.field:hover { border-color: var(--text-3) }
+.field::placeholder { color: var(--text-3) }
+.field.invalid { border-color: var(--err) }
+select.field { appearance: none; padding-right: 36px; background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%); background-position: calc(100% - 18px) 17px, calc(100% - 13px) 17px; background-size: 5px 5px; background-repeat: no-repeat }
+select.field option { background: var(--raised); color: var(--text) }
+textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
+.label { display: block; font-size: 13px; font-weight: 500; color: var(--text-2); margin-bottom: 6px }
+.hint { margin-top: 6px; font-size: 13px; line-height: 18px; color: var(--text-3) }
+.error-text { margin-top: 6px; display: flex; gap: 6px; align-items: center; font-size: 13px; line-height: 18px; color: var(--err) }
+.check { display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-2); cursor: pointer }
+.check input { width: 16px; height: 16px; accent-color: var(--accent-text) }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap }
+
+/* Status */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none }
+.st { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; line-height: 1; white-space: nowrap }
+.st.ok { color: var(--ok) } .st.warn { color: var(--warn) } .st.err { color: var(--err) } .st.idle { color: var(--text-3) }
+.st.warn .dot { animation: bw-pulse 1.4s ease-in-out infinite }
+.tag { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; border-radius: 4px; font-size: 12px; font-weight: 500; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border-strong); white-space: nowrap }
+
+/* Notices: a hairline box with a colored rule */
+.notice { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 0; border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border); font-size: 14px; color: var(--text-2) }
+.notice.warn { color: var(--warn) } .notice.err { color: var(--err) }
+
+/* Flash toasts */
+.toast { position: fixed; top: 16px; right: 16px; z-index: 50; width: min(380px, calc(100vw - 32px)) }
+.toast-body {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 8px;
+  background: var(--raised); color: var(--text); border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px var(--shadow); font-size: 14px; line-height: 20px; cursor: pointer;
+}
+.toast-body.info .ic { color: var(--ok) } .toast-body.error .ic { color: var(--err) }
+
+/* Header */
+.navlink { font-size: 14px; font-weight: 500; color: var(--text-2); text-decoration: none }
+.navlink:hover { color: var(--text) }
+.navlink[aria-current="page"] { color: var(--text); text-decoration: underline; text-underline-offset: 6px; text-decoration-color: var(--text-3) }
+
+/* Lists: rows with a health strip and selection brackets */
+.plist { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-strong) }
+.prow {
+  position: relative; display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 14px 14px 16px;
+  border: 0; background: transparent; color: inherit; font-family: inherit; text-align: left; text-decoration: none; cursor: pointer;
+}
+.prow:hover { background: var(--surface) }
+.prow::before, .prow::after { content: ""; position: absolute; width: 10px; height: 10px; opacity: 0; pointer-events: none }
+.prow::before { left: 0; top: 6px; border-left: 1.5px solid var(--accent-text); border-top: 1.5px solid var(--accent-text) }
+.prow::after { right: 0; bottom: 8px; border-right: 1.5px solid var(--accent-text); border-bottom: 1.5px solid var(--accent-text) }
+.prow.sel::before, .prow.sel::after { opacity: 1 }
+.prow .r1 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0 }
+.prow .name { font-size: 16px; line-height: 22px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.prow .r2 { display: flex; gap: 2px 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-3) }
+.prow .r2 b { font-weight: 500; color: var(--text-2) }
+.hp { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--border) }
+.hp i { display: block; height: 100%; transition: width .5s ease }
+.hp.ok i { width: 100%; background: var(--ok) }
+.hp.warn i { width: 40%; background: var(--warn); animation: bw-build 2.6s ease-in-out infinite }
+.hp.err i { width: 8%; background: var(--err) }
+.hp.idle i { width: 0 }
+
+/* Sections in the detail pane */
+.sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-bottom: 10px }
+.cells { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border) }
+.cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 16px 20px 18px 0 }
+.cell + .cell { padding-left: 20px; border-left: 1px solid var(--border) }
+.tip { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 20px; line-height: 28px; font-weight: 500 }
+.tip.plain { font-family: inherit; font-weight: 600 }
+.tip small { font-size: 12.5px; font-weight: 400; color: var(--text-3); margin-left: 8px }
+.meta { font-size: 12.5px; color: var(--text-3) }
+.rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border-strong) }
+.rows > li { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px }
+
+/* Tables */
+.tbl { width: 100%; border-collapse: collapse; font-size: 14px }
+.tbl th { text-align: left; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); padding: 0 12px 10px 0; border-bottom: 1px solid var(--border-strong) }
+.tbl td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--border) }
+
+@media (max-width: 640px) {
+  .cell + .cell { padding-left: 0; border-left: 0; border-top: 1px solid var(--border) }
+}
+
+.spin { animation: bw-spin .9s linear infinite }
+@keyframes bw-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes bw-build { 0% { width: 6% } 100% { width: 94% } }
+@keyframes bw-spin { to { transform: rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) {
+  .st.warn .dot, .hp.warn i, .spin { animation: none }
+  .hp i { transition: none }
+}

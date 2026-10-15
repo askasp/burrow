@@ -4,59 +4,59 @@ defmodule BurrowWeb.UserLive.Login do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto max-w-sm space-y-4">
-        <div class="text-center">
-          <.header>
-            <p>Log in</p>
-            <:subtitle>
-              <%= if @current_scope do %>
-                You need to reauthenticate to perform sensitive actions on your account.
-              <% else %>
-                Don't have an account? <.link
-                  navigate={~p"/users/register"}
-                  class="font-semibold text-brand hover:underline"
-                  phx-no-format
-                >Sign up</.link> for an account now.
-              <% end %>
-            </:subtitle>
-          </.header>
-        </div>
-
-        <.form
-          :let={f}
-          for={@form}
-          id="login_form_password"
-          action={~p"/users/log-in"}
-          phx-submit="submit_password"
-          phx-trigger-action={@trigger_submit}
-        >
-          <.input
-            readonly={!!@current_scope}
-            field={f[:email]}
-            type="email"
-            label="Email"
-            autocomplete="username"
-            spellcheck="false"
-            required
-            phx-mounted={JS.focus()}
-          />
-          <.input
-            field={@form[:password]}
-            type="password"
-            label="Password"
-            autocomplete="current-password"
-            spellcheck="false"
-          />
-          <.button class="btn btn-primary w-full" name={@form[:remember_me].name} value="true">
-            Log in and stay logged in <span aria-hidden="true">→</span>
-          </.button>
-          <.button class="btn btn-primary btn-soft w-full mt-2">
-            Log in only this time
-          </.button>
-        </.form>
+    <Layouts.auth flash={@flash} current_scope={@current_scope}>
+      <div class="flex flex-col gap-2">
+        <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Log in</h1>
+        <p :if={@current_scope} class="m-0 text-[15px] text-[var(--text-2)]">
+          Log in again to change your account settings.
+        </p>
       </div>
-    </Layouts.app>
+
+      <.form
+        :let={f}
+        for={@form}
+        id="login_form_password"
+        action={~p"/users/log-in"}
+        phx-submit="submit_password"
+        phx-trigger-action={@trigger_submit}
+        class="flex flex-col"
+      >
+        <.input
+          readonly={!!@current_scope}
+          field={f[:email]}
+          type="email"
+          label="Email"
+          autocomplete="username"
+          spellcheck="false"
+          placeholder="you@example.com"
+          required
+          phx-mounted={JS.focus()}
+        />
+        <.input
+          field={@form[:password]}
+          type="password"
+          label="Password"
+          autocomplete="current-password"
+          spellcheck="false"
+          reveal
+        />
+        <.button
+          variant="primary"
+          class="btn btn-primary btn-lg w-full mt-2"
+          name={@form[:remember_me].name}
+          value="true"
+        >
+          Log in
+        </.button>
+      </.form>
+
+      <div
+        :if={!@current_scope}
+        class="pt-5 border-t border-[var(--border)] text-sm leading-5 text-[var(--text-2)]"
+      >
+        New to Peon? <.link navigate={~p"/users/register"}>Create an account</.link>
+      </div>
+    </Layouts.auth>
     """
   end
 

@@ -47,6 +47,7 @@ defmodule BurrowWeb.Router do
     live_session :require_authenticated_user,
       on_mount: [{BurrowWeb.UserAuth, :require_authenticated}] do
       live "/projects", ProjectLive.Index, :index
+      live "/teams", TeamLive.Index, :index
       live "/ai", AILive, :index
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email

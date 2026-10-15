@@ -8,6 +8,7 @@ defmodule Burrow.Projects.Project do
     field :port, :integer
     field :preview_ports, :string
     belongs_to :user, Burrow.Accounts.User
+    belongs_to :team, Burrow.Teams.Team
     timestamps(type: :utc_datetime)
   end
 
@@ -18,4 +19,6 @@ defmodule Burrow.Projects.Project do
     |> validate_length(:name, min: 2, max: 60)
     |> validate_format(:name, ~r/[a-zA-Z]/, message: "must contain a letter")
   end
+
+  def shared?(%__MODULE__{team_id: team_id}), do: team_id != nil
 end

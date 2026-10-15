@@ -1,36 +1,13 @@
-<Layouts.app flash={@flash} current_scope={@current_scope}>
-  <div class="py-16 text-center space-y-6">
-    <h1 class="text-5xl font-bold tracking-tight">Burrow</h1>
-    <p class="text-lg opacity-80 max-w-xl mx-auto">
-      Describe the web app you want. Your own Peon writes it, tests every change, and shows it running in a live preview while you chat.
-    </p>
-    <div class="flex gap-3 justify-center">
-      <.link navigate={~p"/users/register"} class="btn btn-primary">Create an account</.link>
-      <.link navigate={~p"/users/log-in"} class="btn btn-ghost">Log in</.link>
-    </div>
-    <div class="grid sm:grid-cols-3 gap-4 pt-10 text-left">
-      <div class="card bg-base-200">
-        <div class="card-body">
-          <h2 class="card-title text-base">One Peon per project</h2>
-          <p class="text-sm opacity-80">
-            Code history, chats and environments, isolated per app.
-          </p>
-        </div>
-      </div>
-      <div class="card bg-base-200">
-        <div class="card-body">
-          <h2 class="card-title text-base">Checked before it runs</h2>
-          <p class="text-sm opacity-80">
-            Every change compiles and passes tests in a sandbox first.
-          </p>
-        </div>
-      </div>
-      <div class="card bg-base-200">
-        <div class="card-body">
-          <h2 class="card-title text-base">Phoenix + LiveView</h2>
-          <p class="text-sm opacity-80">Real Elixir apps with login, ready to grow.</p>
-        </div>
-      </div>
-    </div>
+<main class="min-h-screen flex flex-col items-center justify-center gap-9 px-6 py-12 text-center">
+  <BurrowWeb.Layouts.mark size={88} label="Peon" />
+  <h1 class="m-0 text-[clamp(64px,11vw,152px)] leading-[0.95] font-bold tracking-[-0.045em]">
+    Work work.
+  </h1>
+  <p class="m-0 max-w-[520px] text-[17px] text-[var(--text-2)]">
+    Describe the web app you want. Your own Peon writes it, tests every change and shows it running while you chat.
+  </p>
+  <div class="flex gap-5 items-center flex-wrap justify-center">
+    <.link navigate={~p"/users/register"} class="btn btn-primary btn-lg">Create account</.link>
+    <.link navigate={~p"/users/log-in"} class="btn btn-ghost btn-lg">Log in</.link>
   </div>
-</Layouts.app>
+</main>
