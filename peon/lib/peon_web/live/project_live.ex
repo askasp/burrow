@@ -30,6 +30,8 @@ defmodule PeonWeb.ProjectLive do
      |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
      |> assign(changeset: nil, main_id: nil, form: to_form(%{"text" => ""}))
      |> assign(landed?: false, held: nil, env_names: Env.names(), show_ship: false)
+     # Phones: one pane at a time, chats in a drawer
+     |> assign(pane: "chat", drawer: false)
      |> assign(envs: Map.new(Env.names(), &{&1, Env.info(&1)}))
      |> load_ship()}
   end
@@ -48,7 +50,7 @@ defmodule PeonWeb.ProjectLive do
 
         socket =
           socket
-          |> assign(chat: chat, info: nil, start_error: nil, show_logs: false)
+          |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, drawer: false)
           |> load_changeset()
 
         if connected?(socket),
@@ -63,7 +65,9 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_params(_params, _uri, socket) do
     if old = socket.assigns.chat, do: Phoenix.PubSub.unsubscribe(Peon.PubSub, "chat:#{old.id}")
-    {:noreply, assign(socket, chat: nil, info: nil, changeset: nil, starting: false)}
+
+    {:noreply,
+     assign(socket, chat: nil, info: nil, changeset: nil, starting: false, drawer: false)}
   end
 
   @impl true
@@ -174,6 +178,12 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("reload_preview", _params, socket),
     do: {:noreply, update(socket, :frame_key, &(&1 + 1))}
+
+  def handle_event("drawer", _params, socket),
+    do: {:noreply, update(socket, :drawer, &(!&1))}
+
+  def handle_event("pane", %{"pane" => pane}, socket) when pane in ["chat", "preview"],
+    do: {:noreply, assign(socket, pane: pane)}
 
   def handle_event("preview_env", %{"env" => env}, socket) when env in ["dev", "staging", "prod"],
     do:
@@ -333,7 +343,31 @@ defmodule PeonWeb.ProjectLive do
 
     ~H"""
     <Layouts.flash_group flash={@flash} />
-    <div class="ws-root">
+    <div class={["ws-root", @drawer && "drawer"]} data-pane={@pane}>
+      <header class="ws-mbar">
+        <button
+          type="button"
+          phx-click="drawer"
+          class="ws-mbar-menu"
+          aria-label="Chats and project"
+          aria-expanded={to_string(@drawer)}
+        >
+          <.icon name="hero-bars-3" class="size-5" />
+        </button>
+        <span class="ws-mbar-title truncate">{(@chat && @chat.title) || "New chat"}</span>
+        <div class="seg" role="group" aria-label="View">
+          <button
+            :for={{pane, label} <- [{"chat", "Chat"}, {"preview", "Preview"}]}
+            type="button"
+            phx-click="pane"
+            phx-value-pane={pane}
+            aria-pressed={to_string(@pane == pane)}
+          >
+            {label}
+          </button>
+        </div>
+      </header>
+      <div :if={@drawer} class="ws-scrim" phx-click="drawer" aria-hidden="true"></div>
       <aside class="ws-left" data-kb-zoom-hide aria-label="Project and chats">
         <div class="ws-left-top">
           <a href={@burrow_url || ~p"/"} class="ws-brand" aria-label="Peon, back to projects">
@@ -406,10 +440,7 @@ defmodule PeonWeb.ProjectLive do
           <div class="ws-thread">
             <div :if={@chat == nil and @pending == nil} class="ws-hello">
               <Layouts.mark size={56} />
-              <h2>What should we build?</h2>
-              <p>
-                Describe your app in a sentence or two. Peon builds it in its own workspace, checks every change and shows it here live.
-              </p>
+              <h2>Something need doing?</h2>
             </div>
             <div :if={@starting} class="ws-working" role="status">
               <.icon name="hero-arrow-path" class="size-4 spin" /> Starting the agent and preview…

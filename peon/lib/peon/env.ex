@@ -318,7 +318,8 @@ defmodule Peon.Env do
     state = stop_attacher(state)
 
     script =
-      "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
+      Sandbox.unlock_deps() <>
+        "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
         "mix ecto.migrate && " <>
         ~s(exec elixir --sname app --cookie "$PEON_COOKIE" -S mix phx.server)
 

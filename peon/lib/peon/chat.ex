@@ -268,7 +268,9 @@ defmodule Peon.Chat do
 
   defp start_preview(state) do
     script =
-      "mkdir -p .peon && (mix deps.get && mix ecto.migrate && mix phx.server) 2>&1 | tee -a .peon/preview.log"
+      "mkdir -p .peon && " <>
+        Sandbox.unlock_deps() <>
+        "(mix deps.get && mix ecto.migrate && mix phx.server) 2>&1 | tee -a .peon/preview.log"
 
     container =
       Sandbox.start(state.dir, script,

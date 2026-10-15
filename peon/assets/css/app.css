@@ -312,14 +312,27 @@ body.kb-zoom [data-kb-zoom-hide] { display: none }
 .ws-panel { position: fixed; top: 0; right: 0; bottom: 0; z-index: 40; width: min(560px, 100vw); overflow-y: auto; padding: 20px 24px; background: var(--raised); border-left: 1px solid var(--border-strong); box-shadow: -12px 0 32px var(--shadow) }
 
 @media (prefers-reduced-motion: reduce) { .swing, .ws-logs { animation: none } }
+/* Phones and narrow tablets: a top bar with the chats drawer and Chat/Preview tabs */
+.ws-mbar, .ws-scrim { display: none }
 @media (max-width: 960px) {
-  .ws-root { height: auto; min-height: 100vh; flex-direction: column; overflow: visible }
-  .ws-left { flex: none; width: auto; border-right: 0; border-bottom: 1px solid var(--border) }
-  .ws-convos { max-height: 220px }
-  .ws-account { display: none }
-  .ws-chat { flex: none; height: 760px; border-right: 0; border-bottom: 1px solid var(--border) }
-  .ws-prev { flex: none; height: 680px }
+  .ws-root { height: 100dvh; flex-direction: column }
+  .ws-mbar { flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 8px; background: var(--surface); border-bottom: 1px solid var(--border) }
+  .ws-mbar-menu { width: 40px; height: 40px; flex: none; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 8px; background: transparent; color: var(--text); cursor: pointer }
+  .ws-mbar-menu:hover { background: var(--sunken) }
+  .ws-mbar-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600 }
+  .ws-mbar .seg button { height: 32px; padding: 0 12px }
+  .ws-left { position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; width: 90vw; max-width: 420px; transform: translateX(-100%); transition: transform .2s ease-out; box-shadow: 12px 0 32px var(--shadow) }
+  .ws-root.drawer .ws-left { transform: none }
+  .ws-scrim { display: block; position: fixed; inset: 0; z-index: 45; background: rgba(0, 0, 0, .35) }
+  .ws-chat, .ws-prev { flex: 1 1 auto; min-height: 0; border-right: 0 }
+  .ws-root[data-pane="chat"] .ws-prev, .ws-root[data-pane="preview"] .ws-chat { display: none }
+  .ws-chat-head { display: none }
+  .ws-thread { padding: 16px 16px 8px }
+  .ws-bottom { padding: 8px 12px 12px }
+  .composer textarea { font-size: 16px } /* below 16px iOS zooms in on focus */
+  .ws-frame { inset: 0; width: 100%; height: 100%; border-radius: 0 }
 }
+@media (max-width: 960px) and (prefers-reduced-motion: reduce) { .ws-left { transition: none } }
 
 /* Keyboard overlays (assets/js/keys.js) */
 .kb-hint { position: fixed; z-index: 60; padding: 0 4px; border-radius: 3px; background: var(--accent); color: var(--accent-ink); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; font-weight: 700; box-shadow: 0 1px 2px var(--shadow) }

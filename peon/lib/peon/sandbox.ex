@@ -136,6 +136,13 @@ defmodule Peon.Sandbox do
     end
   end
 
+  @doc """
+  Shell that removes git lock files left in deps/ by a `mix deps.get` that was
+  killed (e.g. by a Peon restart); otherwise every later fetch fails on them.
+  Only for containers that just started, where no git runs yet.
+  """
+  def unlock_deps, do: "find deps -path '*/.git/*.lock' -delete 2>/dev/null; "
+
   @doc "A container's environment variables."
   def env(name) do
     case System.cmd("docker", ["inspect", "-f", "{{json .Config.Env}}", name],
