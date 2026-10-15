@@ -721,8 +721,23 @@ defmodule PeonWeb.ProjectLive do
     |> Enum.chunk_by(&(&1.role == :user))
     |> Enum.flat_map(fn
       [%{role: :user} | _] = users -> Enum.map(users, &{:user, &1})
-      agent -> [{:peon, agent}]
+      agent -> [{:peon, drop_preambles(agent)}]
     end)
+  end
+
+  # The agent's text before more tool calls is a preamble or progress note; the
+  # user only reads its answer, the last text of the turn. Tool lines stay.
+  defp drop_preambles(messages) do
+    {kept, _tool_after?} =
+      messages
+      |> Enum.reverse()
+      |> Enum.reduce({[], false}, fn
+        %{role: :assistant}, {kept, true} -> {kept, true}
+        %{role: :tool} = m, {kept, _} -> {[m | kept], true}
+        m, {kept, tool_after?} -> {[m | kept], tool_after?}
+      end)
+
+    kept
   end
 
   attr :block, :any, required: true
