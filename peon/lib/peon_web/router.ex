@@ -22,6 +22,7 @@ defmodule PeonWeb.Router do
     pipe_through :browser
 
     get "/sso", SSOController, :show
+    get "/manifest.webmanifest", ManifestController, :show
   end
 
   scope "/", PeonWeb do

@@ -21,6 +21,7 @@ defmodule BurrowWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    get "/manifest.webmanifest", ManifestController, :show
   end
 
   # Other scopes may use custom stacks.
