@@ -716,13 +716,19 @@ defmodule PeonWeb.ProjectLive do
   end
 
   # Consecutive agent output is one Peon turn under the user's message.
+  # A Peon turn that answers the user (not one of Peon's own "[Peon] ..." notes)
+  # opens with the peon's "Zug zug.", like taking an order in Warcraft III.
   defp blocks(messages) do
     messages
     |> Enum.chunk_by(&(&1.role == :user))
-    |> Enum.flat_map(fn
-      [%{role: :user} | _] = users -> Enum.map(users, &{:user, &1})
-      agent -> [{:peon, drop_preambles(agent)}]
+    |> Enum.flat_map_reduce(false, fn
+      [%{role: :user} | _] = users, _ack? ->
+        {Enum.map(users, &{:user, &1}), not String.starts_with?(List.last(users).text, "[Peon]")}
+
+      agent, ack? ->
+        {[{:peon, drop_preambles(agent), ack?}], false}
     end)
+    |> elem(0)
   end
 
   # The agent's text before more tool calls is a preamble or progress note; the
@@ -750,14 +756,15 @@ defmodule PeonWeb.ProjectLive do
     """
   end
 
-  defp block(%{block: {:peon, messages}} = assigns) do
-    assigns = assign(assigns, :messages, messages)
+  defp block(%{block: {:peon, messages, ack?}} = assigns) do
+    assigns = assign(assigns, messages: messages, ack?: ack?)
 
     ~H"""
     <div class="say-peon-turn">
       <Layouts.mark size={28} />
       <div class="flex-1 min-w-0 flex flex-col gap-2">
         <div class="text-[13px] font-semibold leading-[18px]">Peon</div>
+        <div :if={@ack?} class="say-agent">Zug zug.</div>
         <.message :for={m <- @messages} message={m} />
       </div>
     </div>
@@ -768,7 +775,7 @@ defmodule PeonWeb.ProjectLive do
 
   defp message(%{message: %{role: :assistant}} = assigns) do
     ~H"""
-    <div class="say-agent">{@message.text}</div>
+    <div class="say-agent">{String.replace(@message.text, ~r/\A\s*zug zug\.?\s*/i, "")}</div>
     """
   end
 
