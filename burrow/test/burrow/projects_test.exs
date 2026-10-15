@@ -34,6 +34,13 @@ defmodule Burrow.ProjectsTest do
     assert handed.team_id == team.id
   end
 
+  test "staging and prod get ports a browser opens" do
+    assert Burrow.Cell.split_ports("5000-5009") == {"5000-5007", 5008, 5009}
+    # 5060 and 5061 are blocked (SIP); the range end is fine, previews skip them in Peon.
+    assert Burrow.Cell.split_ports("5060-5069") == {"5060-5067", 5068, 5069}
+    assert Burrow.Cell.split_ports("6660-6669") == {"6660-6662", 6663, 6664}
+  end
+
   test "projects are only visible to their owner" do
     {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Mine"})
     other = user_scope_fixture()

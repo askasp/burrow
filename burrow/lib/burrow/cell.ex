@@ -133,6 +133,7 @@ defmodule Burrow.Cell do
       "PEON_STAGING_PORT" => to_string(staging),
       "PEON_PROD_PORT" => to_string(prod),
       "PEON_PREVIEW_HOST" => Application.fetch_env!(:burrow, :peon_host),
+      "PEON_BURROW_URL" => BurrowWeb.Endpoint.url() <> "/projects",
       "PEON_SSO_SECRET" => Projects.secret(project, "sso"),
       "PEON_OPENCODE_BIN" => Application.fetch_env!(:burrow, :opencode_bin),
       "PEON_OPENCODE_DATA_DIR" => Burrow.OpenCode.data_dir(project.user_id),
@@ -181,9 +182,12 @@ defmodule Burrow.Cell do
     %{state | status: status}
   end
 
-  # The project's port range: chat previews, then the last two for staging and prod.
-  defp split_ports(range) do
+  # The project's port range: chat previews, then the last two ports a browser
+  # will open for staging and prod (Peon skips blocked ones for previews).
+  @doc false
+  def split_ports(range) do
     [first, last] = range |> String.split("-") |> Enum.map(&String.to_integer/1)
-    {"#{first}-#{last - 2}", last - 1, last}
+    [prod, staging | _] = last..first//-1 |> Enum.filter(&Burrow.Ports.browser_safe?/1)
+    {"#{first}-#{staging - 1}", staging, prod}
   end
 end

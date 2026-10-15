@@ -69,4 +69,10 @@ defmodule Peon.ChatTest do
            ] =
              Chat.normalize(assistant([patch, failed]))
   end
+
+  test "ports browsers refuse are never used" do
+    refute Peon.Ports.browser_safe?(5060)
+    refute Peon.Ports.browser_safe?(5061)
+    assert Peon.Ports.browser_safe?(5062)
+  end
 end

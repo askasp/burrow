@@ -59,6 +59,8 @@ if config_env() != :test do
     check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
     health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
     preview_host: System.get_env("PEON_PREVIEW_HOST", "localhost"),
+    # Burrow's address, for the workspace's link back to the project list
+    burrow_url: System.get_env("PEON_BURROW_URL"),
     sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
     sso_secret: System.get_env("PEON_SSO_SECRET"),
     # The agent: opencode, run per chat in the sandbox with the user's login.

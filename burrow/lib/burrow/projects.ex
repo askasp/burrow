@@ -65,7 +65,7 @@ defmodule Burrow.Projects do
         changeset
         |> Ecto.Changeset.change(
           slug: unique_slug(name),
-          port: @peon_port_base + index,
+          port: peon_port(@peon_port_base + index),
           preview_ports: "#{first}-#{first + @previews_per_project - 1}"
         )
         |> Repo.insert!()
@@ -180,6 +180,14 @@ defmodule Burrow.Projects do
   def secret(%Project{id: id}, purpose) do
     base = Application.fetch_env!(:burrow, BurrowWeb.Endpoint)[:secret_key_base]
     :crypto.mac(:hmac, :sha256, base, "#{purpose}:#{id}") |> Base.url_encode64(padding: false)
+  end
+
+  # The first port from `port` on that a browser opens and no project has.
+  defp peon_port(port) do
+    if Burrow.Ports.browser_safe?(port) and
+         not Repo.exists?(from p in Project, where: p.port == ^port),
+       do: port,
+       else: peon_port(port + 1)
   end
 
   @doc "A short-lived link that signs the user into the project's Peon."

@@ -546,7 +546,9 @@ defmodule Peon.Chat do
   defp claim_preview_port(id) do
     used = Registry.select(@registry, [{{:_, :_, :"$1"}, [], [:"$1"]}]) |> MapSet.new()
 
-    case Enum.find(Application.fetch_env!(:peon, :preview_ports), &(not MapSet.member?(used, &1))) do
+    free = &(Peon.Ports.browser_safe?(&1) and not MapSet.member?(used, &1))
+
+    case Enum.find(Application.fetch_env!(:peon, :preview_ports), free) do
       nil ->
         {:stop, :no_free_preview_port}
 

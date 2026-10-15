@@ -72,33 +72,33 @@ function render({which = false, help = false, toast = null} = {}) {
     .map(({label, el}) => {
       const r = el.getBoundingClientRect()
       const done = typed && !label.startsWith(typed)
-      return `<span class="fixed z-[60] px-1 rounded bg-warning text-warning-content font-mono text-[11px] font-bold shadow ${done ? "opacity-20" : ""}"
+      return `<span class="kb-hint ${done ? "faded" : ""}"
         style="left:${Math.max(r.left - 6, 2)}px;top:${Math.max(r.top - 6, 2)}px">${label}</span>`
     })
     .join("")
 
   const whichHtml = which
-    ? `<div class="fixed z-[61] bottom-4 left-1/2 -translate-x-1/2 bg-base-100 border border-base-300 shadow-xl rounded-box p-3 text-xs grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1">
-        ${WHICH_KEY.map(([title, keys]) => `<div><div class="font-semibold mb-1 opacity-70">${title}</div>${keys
-          .map(([k, d]) => `<div class="flex gap-2"><kbd class="kbd kbd-xs whitespace-nowrap">${esc(k)}</kbd><span>${esc(d)}</span></div>`)
+    ? `<div class="kb-panel fixed z-[61] bottom-4 left-1/2 -translate-x-1/2 p-3 text-xs grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1">
+        ${WHICH_KEY.map(([title, keys]) => `<div><div class="eyebrow mb-1">${title}</div>${keys
+          .map(([k, d]) => `<div class="flex gap-2"><kbd class="kbd">${esc(k)}</kbd><span>${esc(d)}</span></div>`)
           .join("")}</div>`).join("")}
       </div>`
     : ""
 
   const helpHtml = help
     ? `<div class="fixed inset-0 z-[62] bg-black/40 grid place-items-center" data-kb-close>
-        <div class="bg-base-100 rounded-box shadow-xl p-5 max-w-2xl w-[calc(100%-2rem)] text-sm space-y-4">
-          <div class="flex items-center"><span class="font-semibold">Keyboard shortcuts</span><span class="ml-auto text-xs opacity-60">esc or ? to close</span></div>
-          ${HELP.map(([title, keys]) => `<div><div class="font-semibold text-xs opacity-70 mb-1">${esc(title)}</div>
+        <div class="kb-panel p-5 max-w-2xl w-[calc(100%-2rem)] text-sm space-y-4">
+          <div class="flex items-center"><span class="font-semibold">Keyboard shortcuts</span><span class="ml-auto text-xs muted">esc or ? to close</span></div>
+          ${HELP.map(([title, keys]) => `<div><div class="eyebrow mb-1">${esc(title)}</div>
             <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1">${keys
-              .map(([k, d]) => `<div class="flex gap-2"><kbd class="kbd kbd-sm shrink-0 whitespace-nowrap">${esc(k)}</kbd><span>${esc(d)}</span></div>`)
+              .map(([k, d]) => `<div class="flex gap-2"><kbd class="kbd shrink-0">${esc(k)}</kbd><span>${esc(d)}</span></div>`)
               .join("")}</div></div>`).join("")}
         </div>
       </div>`
     : ""
 
   const toastHtml = toast
-    ? `<div class="fixed z-[63] bottom-4 right-4 alert alert-info text-xs py-2 px-3 w-auto">${esc(toast)}</div>`
+    ? `<div class="toast" style="top:auto;bottom:16px"><div class="toast-body">${esc(toast)}</div></div>`
     : ""
 
   root.innerHTML = hintHtml + whichHtml + helpHtml + toastHtml
