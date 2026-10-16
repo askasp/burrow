@@ -34,7 +34,7 @@ defmodule Peon.Env do
 
   import Ecto.Query
 
-  alias Peon.{Code, Incidents, Project, Repo, Sandbox, Store, Template, Workspace}
+  alias Peon.{Code, Incidents, Project, Repo, Sandbox, Secrets, Store, Template, Workspace}
   alias Peon.Env.Deploy
   alias Peon.Incidents.Incident
   alias PeonCore.{Policy, Tree}
@@ -114,6 +114,7 @@ defmodule Peon.Env do
     base = Path.join([Application.fetch_env!(:peon, :data_dir), "envs", name])
     Enum.each(["app", "data"], &File.mkdir_p!(Path.join(base, &1)))
     Store.subscribe()
+    Secrets.subscribe()
 
     state = %{
       name: name,
@@ -133,6 +134,8 @@ defmodule Peon.Env do
       requests: %{},
       next_id: 1,
       deployed: read_deployed(base),
+      # Secrets.fingerprint/0 of the values the container was started with
+      secrets: nil,
       good: nil,
       deploy: nil,
       queued: nil,
@@ -154,11 +157,25 @@ defmodule Peon.Env do
 
       %{changeset_id: id} ->
         # Not when its public address changed: the app only accepts its own host.
-        if state.deployed == id and Sandbox.running?(state.container) and
-             Sandbox.env(state.container)["PHX_HOST"] == Peon.Ports.host(state.port) do
+        # Nor when the secrets changed: env vars are set when the container starts.
+        # Containers from before secrets existed have none.
+        env = Sandbox.running?(state.container) && Sandbox.env(state.container)
+        secrets = env && (env["PEON_SECRETS"] || Secrets.fingerprint(%{}))
+
+        if state.deployed == id and env != false and
+             env["PHX_HOST"] == Peon.Ports.host(state.port) and
+             secrets == Secrets.fingerprint() do
           Logger.info("#{state.name}: adopting the running container at ##{id}")
           app = Sandbox.follow_logs(state.container)
-          state = %{state | app: app, app_status: :running, good: id}
+
+          state = %{
+            state
+            | app: app,
+              app_status: :running,
+              good: id,
+              secrets: secrets
+          }
+
           {:noreply, state |> start_attacher() |> broadcast()}
         else
           {:noreply, start_deploy(state, id, [])}
@@ -203,6 +220,10 @@ defmodule Peon.Env do
       true -> {:noreply, start_deploy(state, id, rollback: id == state.rollback_to)}
     end
   end
+
+  # New secret values need a container restart; a deploy in flight picks them
+  # up when it ends (`succeed/1`).
+  def handle_info({:secrets, _list}, state), do: {:noreply, maybe_restart_for_secrets(state)}
 
   # The app container's output (from `docker run`, or `docker logs` when adopted).
   def handle_info({port, {:data, data}}, %{app: port} = state) do
@@ -276,7 +297,8 @@ defmodule Peon.Env do
         changeset_id: target,
         from_id: state.deployed,
         mode: mode,
-        status: "deploying"
+        status: "deploying",
+        detail: opts[:detail]
       })
 
     Workspace.reset(state.dir, target)
@@ -317,6 +339,8 @@ defmodule Peon.Env do
   defp boot(state) do
     state = stop_attacher(state)
 
+    secrets = Secrets.env()
+
     script =
       Sandbox.unlock_deps() <>
         "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
@@ -328,20 +352,32 @@ defmodule Peon.Env do
         name: state.container,
         hostname: "app",
         label: "peon.env=#{state.slug}",
-        env: %{
-          "MIX_ENV" => "prod",
-          "DATABASE_PATH" => "/data/app.db",
-          "SECRET_KEY_BASE" => state.secret_key_base,
-          "PHX_HOST" => Peon.Ports.host(state.port),
-          "PORT" => "4000",
-          "PEON_COOKIE" => state.cookie
-        },
+        env:
+          Map.merge(secrets, %{
+            "MIX_ENV" => "prod",
+            "DATABASE_PATH" => "/data/app.db",
+            "SECRET_KEY_BASE" => state.secret_key_base,
+            "PHX_HOST" => Peon.Ports.host(state.port),
+            "PORT" => "4000",
+            "PEON_COOKIE" => state.cookie,
+            "PEON_SECRETS" => Secrets.fingerprint(secrets)
+          }),
         mounts: [{Path.join(state.base, "data"), "/data", :rw}],
         ports: [{state.port, 4000}]
       )
 
     Process.send_after(self(), {:boot_timeout, state.deploy.record.id}, @boot_timeout)
-    phase(%{state | app: app, app_status: :booting, attached?: false}, :booting)
+
+    phase(
+      %{
+        state
+        | app: app,
+          app_status: :booting,
+          attached?: false,
+          secrets: Secrets.fingerprint(secrets)
+      },
+      :booting
+    )
   end
 
   # Hot loading didn't work; restart the container instead.
@@ -413,8 +449,17 @@ defmodule Peon.Env do
 
     if state.queued && state.queued != deploy.target,
       do: start_deploy(state, state.queued, []),
-      else: state
+      else: maybe_restart_for_secrets(state)
   end
+
+  defp maybe_restart_for_secrets(%{deploy: nil, deployed: id, app: app} = state)
+       when id != nil and app != nil do
+    if state.secrets == Secrets.fingerprint(),
+      do: state,
+      else: start_deploy(state, id, cold: true, detail: "secrets changed")
+  end
+
+  defp maybe_restart_for_secrets(state), do: state
 
   defp fail(%{deploy: deploy} = state, reason) do
     Repo.update!(Ecto.Changeset.change(deploy.record, status: "failed", detail: reason))

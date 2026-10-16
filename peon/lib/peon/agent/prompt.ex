@@ -4,7 +4,7 @@ defmodule Peon.Agent.Prompt do
   system prompt (opencode also reads the app's AGENTS.md by itself).
   """
 
-  alias Peon.{Code, Project}
+  alias Peon.{Code, Project, Secrets}
 
   def instructions do
     project = Project.get()
@@ -80,6 +80,24 @@ defmodule Peon.Agent.Prompt do
     app runs: user input, data from other services, and the app's own records. If the
     owner would change it by asking you, it is code. AGENTS.md has the details.
 
+    ## Secrets
+    API keys, tokens and passwords are secrets the user keeps in Peon, never code.
+    #{secrets_line()}
+    - Each set secret is an environment variable in the preview, staging and prod. Read
+      it where it is used, at run time: `System.get_env("SLACK_TOKEN")`. Not in a module
+      attribute, not in config (config/runtime.exs is off limits).
+    - Need one? Call `peon_request_secret` with its name and a short why; the user gets a
+      box to paste it into and you get a message when it is set. Don't ask in your text.
+    - Your shell and the tests have no secrets: test against fakes, and handle a missing
+      secret in the app with a plain message instead of a crash.
+
+    ## Who can see the app
+    If the app has `#{module}.SiteAccess`, its `mode/0` decides: `:login` (accounts),
+    `:shared_password` (one password for everyone, the secret SITE_PASSWORD) or `:public`.
+    When the user asks to change who can see the app, change that one line; for
+    `:shared_password` also request SITE_PASSWORD. The app's pages go in the router's
+    `:app` scope and `live_session :app`, so the mode applies to them.
+
     ## Policy (enforced by Peon, not negotiable)
     - Never change config/runtime.exs, AGENTS.md, rel/** or priv/peon/anonymize.exs.
     - Never edit an existing migration; add a new one with a later timestamp.
@@ -91,5 +109,17 @@ defmodule Peon.Agent.Prompt do
     ## Recent changesets
     #{recent}
     """
+  end
+
+  defp secrets_line do
+    case Secrets.list() do
+      [] ->
+        "- None are set yet."
+
+      secrets ->
+        "- Set: " <>
+          Enum.map_join(secrets, ", ", &if(&1.set?, do: &1.name, else: "#{&1.name} (asked for)")) <>
+          "."
+    end
   end
 end

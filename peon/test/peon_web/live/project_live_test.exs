@@ -24,6 +24,37 @@ defmodule PeonWeb.ProjectLiveTest do
     assert has_element?(view, "#ship-panel")
   end
 
+  test "secrets are added in the panel; values never show", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    view |> element("[data-kb-action=secrets]") |> render_click()
+    assert has_element?(view, "#secrets-panel")
+
+    view
+    |> form("#secrets-panel form[id^=secret-new]", %{"name" => "slack_token", "value" => "xoxb-1"})
+    |> render_submit()
+
+    assert Peon.Secrets.env() == %{"SLACK_TOKEN" => "xoxb-1"}
+    html = render(view)
+    assert html =~ "SLACK_TOKEN"
+    refute html =~ "xoxb-1"
+
+    view |> element("button[phx-value-name=SLACK_TOKEN]") |> render_click()
+    assert Peon.Secrets.env() == %{}
+  end
+
+  test "a secret the agent asked for gets a box in its chat", %{conn: conn} do
+    chat = Chats.create("Digest", "aksel")
+    {:ok, :requested} = Peon.Secrets.request("SLACK_TOKEN", "Posts to #ops", chat.id)
+
+    {:ok, view, _html} = live(conn, ~p"/c/#{chat.id}")
+    assert render(view) =~ "Peon needs a key"
+    assert render(view) =~ "Posts to #ops"
+
+    view |> form("form[id^=connect-SLACK_TOKEN]", %{"value" => "xoxb-1"}) |> render_submit()
+    assert Peon.Secrets.env() == %{"SLACK_TOKEN" => "xoxb-1"}
+    refute render(view) =~ "Peon needs a key"
+  end
+
   test "auto-promote is a human switch, recorded with who turned it on", %{conn: conn} do
     Application.put_env(:peon, :env_ports, %{"staging" => 1, "prod" => 2})
     on_exit(fn -> Application.delete_env(:peon, :env_ports) end)

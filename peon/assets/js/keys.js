@@ -28,12 +28,12 @@ const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const prefixLabel = isMac ? "⌃B" : "Ctrl+B"
 
 const ACTIONS = {
-  c: "new", s: "ship", a: "land", x: "stop", r: "reload", R: "restart", v: "logs", P: "promote",
+  c: "new", s: "ship", a: "land", x: "stop", r: "reload", R: "restart", v: "logs", P: "promote", k: "secrets",
 }
 
 const WHICH_KEY = [
   ["Chats", [["1–9", "Chat in the sidebar"], ["n p", "Next / previous ↻"], ["l", "Last chat"], ["c", "New chat"]]],
-  ["Ship", [["a", "Land changeset"], ["s", "Incidents · deploys"], ["P", "Promote to prod"]]],
+  ["Ship", [["a", "Land changeset"], ["s", "Incidents · deploys"], ["P", "Promote to prod"], ["k", "Secrets"]]],
   ["Agent & preview", [["x", "Stop the agent"], ["r R", "Reload / restart preview"], ["v", "Preview logs"], ["z", "Zoom preview"]]],
   ["Other", [["/", "Chat box"], ["?", "All shortcuts"], ["a–z", "Letter on a button: press it"]]],
 ]

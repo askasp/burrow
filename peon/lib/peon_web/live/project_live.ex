@@ -9,7 +9,7 @@ defmodule PeonWeb.ProjectLive do
 
   use PeonWeb, :live_view
 
-  alias Peon.{Chat, Chats, Checks, Code, Env, Incidents, Project, Ship, Store, Verifier}
+  alias Peon.{Chat, Chats, Checks, Code, Env, Incidents, Project, Secrets, Ship, Store, Verifier}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -19,6 +19,7 @@ defmodule PeonWeb.ProjectLive do
       Checks.subscribe()
       Env.subscribe()
       Incidents.subscribe()
+      Secrets.subscribe()
     end
 
     {:ok,
@@ -30,6 +31,7 @@ defmodule PeonWeb.ProjectLive do
      |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
      |> assign(changeset: nil, main_id: nil, form: to_form(%{"text" => ""}))
      |> assign(landed?: false, held: nil, env_names: Env.names(), show_ship: false)
+     |> assign(secrets: Secrets.list(), show_secrets: false, secrets_key: 0)
      # Phones: one pane at a time, chats in a drawer
      |> assign(pane: "chat", drawer: false)
      |> assign(envs: Map.new(Env.names(), &{&1, Env.info(&1)}))
@@ -169,7 +171,32 @@ defmodule PeonWeb.ProjectLive do
   end
 
   def handle_event("toggle_ship", _params, socket),
-    do: {:noreply, socket |> update(:show_ship, &(!&1)) |> load_ship()}
+    do:
+      {:noreply,
+       socket |> update(:show_ship, &(!&1)) |> assign(show_secrets: false) |> load_ship()}
+
+  def handle_event("toggle_secrets", _params, socket),
+    do: {:noreply, socket |> update(:show_secrets, &(!&1)) |> assign(show_ship: false)}
+
+  def handle_event("set_secret", %{"name" => name, "value" => value}, socket) do
+    name = name |> String.trim() |> String.upcase()
+
+    case Secrets.put(name, String.trim(value), socket.assigns.user) do
+      :ok ->
+        {:noreply,
+         socket
+         |> update(:secrets_key, &(&1 + 1))
+         |> info("#{name} is set. The preview, staging and prod restart to pick it up.")}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, message)}
+    end
+  end
+
+  def handle_event("delete_secret", %{"name" => name}, socket) do
+    Secrets.delete(name)
+    {:noreply, info(socket, "#{name} is removed.")}
+  end
 
   def handle_event("restart_preview", _params, socket) do
     Chat.restart_preview(socket.assigns.chat.id)
@@ -224,6 +251,8 @@ defmodule PeonWeb.ProjectLive do
   end
 
   def handle_info({:incident, _}, socket), do: {:noreply, load_ship(socket)}
+
+  def handle_info({:secrets, secrets}, socket), do: {:noreply, assign(socket, secrets: secrets)}
 
   def handle_info({:check_step, _id, step, status}, socket),
     do: {:noreply, socket |> assign(step: {step, status}) |> load_changeset()}
@@ -422,6 +451,17 @@ defmodule PeonWeb.ProjectLive do
           open_incidents={@open_incidents}
         />
 
+        <div class="ws-secrets-link">
+          <button
+            phx-click="toggle_secrets"
+            data-kb="row"
+            data-kb-action="secrets"
+            class={["xlink", asked(@secrets) != [] && "text-[var(--warn)]"]}
+          >
+            {secrets_text(@secrets)}
+          </button>
+        </div>
+
         <div class="ws-account">
           <span class="ws-avatar" aria-hidden="true">{initials(@user)}</span>
           <span class="truncate">{@user}</span>
@@ -453,7 +493,12 @@ defmodule PeonWeb.ProjectLive do
             <div :if={@info && @info.busy?} class="ws-working" role="status">
               <Layouts.mark size={28} />
               <span class="swing text-[var(--rust)]"><.icon name="hero-wrench" class="size-4" /></span>
-              <span class="font-medium">Peon is working…</span>
+              <span class="flex flex-col min-w-0">
+                <span class="font-medium">Work, work.</span>
+                <span class="text-[13px] text-[var(--text-2)] truncate">
+                  {doing(@info.messages)}
+                </span>
+              </span>
               <button
                 phx-click="interrupt"
                 data-kb="row"
@@ -484,6 +529,11 @@ defmodule PeonWeb.ProjectLive do
               ", "
             )}
           </div>
+          <.connect_card
+            :if={@chat && asked(@secrets, @chat.id) != []}
+            secrets={asked(@secrets, @chat.id)}
+            key={@secrets_key}
+          />
           <.changeset_card
             :if={@changeset}
             changeset={@changeset}
@@ -634,6 +684,8 @@ defmodule PeonWeb.ProjectLive do
         incidents={@incidents}
         deploys={@deploys}
       />
+
+      <.secrets_panel :if={@show_secrets} secrets={@secrets} key={@secrets_key} />
     </div>
 
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
@@ -745,6 +797,41 @@ defmodule PeonWeb.ProjectLive do
 
     kept
   end
+
+  # What the peon is on right now, in plain words, from its latest tool call.
+  defp doing(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.take_while(&(&1.role != :user))
+    |> Enum.find(&(&1.role == :tool))
+    |> case do
+      nil -> "Thinking it over…"
+      %{text: text} -> text |> split_tool() |> activity()
+    end
+  end
+
+  defp activity({"bash", command}) do
+    cond do
+      command =~ "mix test" -> "Running the tests…"
+      command =~ "mix format" -> "Tidying up…"
+      command =~ ~r/mix (compile|deps)/ -> "Building…"
+      command =~ "curl" -> "Looking at the page…"
+      command =~ "preview.log" -> "Reading the preview's log…"
+      true -> "Running a command…"
+    end
+  end
+
+  defp activity({tool, path}) when tool in ~w(edit write patch apply_patch multiedit),
+    do: "Changing #{path |> String.split(" ") |> Enum.map_join(", ", &Path.basename/1)}…"
+
+  defp activity({tool, _}) when tool in ~w(read glob grep list), do: "Reading the code…"
+  defp activity({"todowrite", _}), do: "Making a plan…"
+  defp activity({"peon_submit_changeset", _}), do: "Handing in the change…"
+  defp activity({"peon_restart_preview", _}), do: "Restarting the preview…"
+  defp activity({"peon_runtime", _}), do: "Checking the running app…"
+  defp activity({"peon_secrets", _}), do: "Checking the keys…"
+  defp activity({"peon_request_secret", _}), do: "Asking you for a key…"
+  defp activity(_), do: "Working on it…"
 
   attr :block, :any, required: true
 
@@ -1078,6 +1165,141 @@ defmodule PeonWeb.ProjectLive do
           class="out mono mt-2"
         >{@envs[name].attach}</pre>
       </div>
+    </section>
+    """
+  end
+
+  # Secrets the agent asked for that nobody has set yet (for one chat, or all).
+  defp asked(secrets, chat_id \\ nil),
+    do: Enum.filter(secrets, &(not &1.set? and (chat_id == nil or &1.chat_id == chat_id)))
+
+  defp secrets_text(secrets) do
+    case {length(secrets), length(asked(secrets))} do
+      {0, _} -> "Secrets"
+      {n, 0} -> "#{n} #{if n == 1, do: "secret", else: "secrets"}"
+      {n, a} -> "#{n - a} set · #{a} asked for"
+    end
+  end
+
+  attr :secrets, :list, required: true
+  attr :key, :integer, required: true
+
+  # In the chat: the keys the agent asked for, with a box to paste each into.
+  defp connect_card(assigns) do
+    ~H"""
+    <section class="framed ws-connect" aria-label="Keys the app needs">
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="m-0 text-[15px] font-semibold">Peon needs a key</h2>
+        <span class="meta">kept in Peon, never in the code</span>
+      </div>
+      <.form
+        :for={s <- @secrets}
+        for={%{}}
+        id={"connect-#{s.name}-#{@key}"}
+        phx-submit="set_secret"
+        class="ws-connect-row"
+      >
+        <input type="hidden" name="name" value={s.name} />
+        <label class="flex flex-col min-w-0 flex-1 gap-1">
+          <span class="mono text-[13px] font-medium">{s.name}</span>
+          <span :if={s.why} class="meta">{s.why}</span>
+          <input
+            type="password"
+            name="value"
+            class="field"
+            autocomplete="off"
+            required
+            aria-label={"Value for #{s.name}"}
+          />
+        </label>
+        <button class="btn btn-primary btn-sm" data-kb="row">Save</button>
+      </.form>
+    </section>
+    """
+  end
+
+  attr :secrets, :list, required: true
+  attr :key, :integer, required: true
+
+  defp secrets_panel(assigns) do
+    ~H"""
+    <section id="secrets-panel" class="ws-panel" aria-label="Secrets">
+      <div class="sec-h">
+        <h2 class="m-0 text-[15px] font-semibold">Secrets</h2>
+        <button type="button" phx-click="toggle_secrets" class="icon-btn sm" aria-label="Close">
+          <.icon name="hero-x-mark" class="size-4" />
+        </button>
+      </div>
+      <p class="meta m-0 pb-3">
+        API keys, tokens and passwords. The preview, staging and prod get each one as an
+        environment variable and restart when one changes. The agent sees names only.
+      </p>
+      <ul class="rows">
+        <li :if={@secrets == []} class="muted">No secrets yet.</li>
+        <li :for={s <- @secrets} class="items-start!">
+          <div class="flex-1 min-w-0 flex flex-col gap-1.5">
+            <div class="flex items-center gap-2">
+              <span class="mono font-medium">{s.name}</span>
+              <span class={["st", if(s.set?, do: "ok", else: "warn")]}>
+                <span class="dot"></span>{if s.set?, do: "set", else: "asked for"}
+              </span>
+            </div>
+            <span :if={s.why} class="meta">{s.why}</span>
+            <span :if={s.set? && s.set_by} class="meta">by {s.set_by}</span>
+            <.form
+              for={%{}}
+              id={"secret-#{s.name}-#{@key}"}
+              phx-submit="set_secret"
+              class="flex gap-2"
+            >
+              <input type="hidden" name="name" value={s.name} />
+              <input
+                type="password"
+                name="value"
+                class="field h-8!"
+                autocomplete="off"
+                required
+                placeholder={if s.set?, do: "New value", else: "Value"}
+                aria-label={"Value for #{s.name}"}
+              />
+              <button class="btn btn-secondary btn-sm" data-kb="row">
+                {if s.set?, do: "Replace", else: "Save"}
+              </button>
+            </.form>
+          </div>
+          <button
+            phx-click="delete_secret"
+            phx-value-name={s.name}
+            data-kb="row"
+            data-confirm={"Remove #{s.name}? The app loses it on its next restart."}
+            class="btn btn-ghost btn-sm"
+          >
+            Remove
+          </button>
+        </li>
+      </ul>
+      <div class="eyebrow pt-5 pb-2">Add a secret</div>
+      <.form for={%{}} id={"secret-new-#{@key}"} phx-submit="set_secret" class="flex flex-col gap-2">
+        <input
+          type="text"
+          name="name"
+          class="field mono"
+          placeholder="NAME, like SLACK_TOKEN"
+          autocomplete="off"
+          required
+          aria-label="Name"
+        />
+        <input
+          type="password"
+          name="value"
+          class="field"
+          placeholder="Value"
+          autocomplete="off"
+          required
+          aria-label="Value"
+        />
+        <button class="btn btn-primary btn-sm self-start" data-kb="row">Add</button>
+      </.form>
     </section>
     """
   end

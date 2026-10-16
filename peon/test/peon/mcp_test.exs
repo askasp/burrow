@@ -27,7 +27,9 @@ defmodule Peon.MCPTest do
              "submit_changeset",
              "restart_preview",
              "restore",
-             "runtime"
+             "runtime",
+             "secrets",
+             "request_secret"
            ]
 
     assert %{error: %{code: -32601}} =

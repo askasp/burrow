@@ -23,7 +23,7 @@ defmodule Peon.Chat do
 
   require Logger
 
-  alias Peon.{Chats, Incidents, Sandbox, Store, Workspace}
+  alias Peon.{Chats, Incidents, Sandbox, Secrets, Store, Workspace}
   alias Peon.Agent.{MCP, Prompt}
   alias Peon.OpenCode.Client
 
@@ -90,6 +90,7 @@ defmodule Peon.Chat do
   def init(id) do
     Process.flag(:trap_exit, true)
     Store.subscribe()
+    Secrets.subscribe()
 
     with {:ok, preview_port} <- claim_preview_port(id) do
       slug = Application.fetch_env!(:peon, :project_slug)
@@ -104,7 +105,8 @@ defmodule Peon.Chat do
           name: "peon-preview-#{slug}-#{id}",
           port: preview_port,
           container: nil,
-          status: :starting
+          status: :starting,
+          secrets: nil
         },
         agent: %{
           name: "peon-agent-#{slug}-#{id}",
@@ -253,6 +255,17 @@ defmodule Peon.Chat do
     {:stop, :normal, put_in(state.agent.container, nil)}
   end
 
+  # The preview gets secrets as env vars when it starts, so new values restart it.
+  def handle_info({:secrets, _list}, %{preview: %{container: container} = preview} = state)
+      when container != nil do
+    if preview.secrets == Secrets.fingerprint() do
+      {:noreply, state}
+    else
+      Sandbox.stop(preview.name)
+      {:noreply, state |> start_preview() |> broadcast_status()}
+    end
+  end
+
   def handle_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
   def handle_info(:idle, state), do: {:stop, :normal, state}
   def handle_info(_msg, state), do: {:noreply, state}
@@ -272,16 +285,27 @@ defmodule Peon.Chat do
         Sandbox.unlock_deps() <>
         "(mix deps.get && mix ecto.migrate && mix phx.server) 2>&1 | tee -a .peon/preview.log"
 
+    # Secrets go to the preview only, never to the agent's container.
+    secrets = Secrets.env()
+
     container =
       Sandbox.start(state.dir, script,
         name: state.preview.name,
         network: state.network,
         alias: "preview",
-        env: %{"MIX_ENV" => "dev", "PREVIEW_BIND" => "0.0.0.0", "PORT" => "4000"},
+        env:
+          Map.merge(secrets, %{"MIX_ENV" => "dev", "PREVIEW_BIND" => "0.0.0.0", "PORT" => "4000"}),
         ports: [{state.preview.port, 4000}]
       )
 
-    %{state | preview: %{state.preview | container: container, status: :starting}}
+    preview = %{
+      state.preview
+      | container: container,
+        status: :starting,
+        secrets: Secrets.fingerprint(secrets)
+    }
+
+    %{state | preview: preview}
   end
 
   defp start_agent(state) do

@@ -7,7 +7,7 @@ defmodule Peon.Agent.Tools do
   `call/3` returns `{text, failed?}`.
   """
 
-  alias Peon.{Chat, Chats, Checks, Env, Store, Workspace}
+  alias Peon.{Chat, Chats, Checks, Env, Secrets, Store, Workspace}
 
   @check_timeout :timer.minutes(15)
 
@@ -71,6 +71,42 @@ defmodule Peon.Agent.Tools do
           },
           required: ["env", "what"]
         }
+      },
+      %{
+        name: "secrets",
+        description: """
+        List the project's secrets: API keys, tokens and passwords the user keeps in Peon. \
+        You see names only. Every set secret is an environment variable in the preview, \
+        staging and prod; read it where it is used with System.get_env("NAME"), at run \
+        time, never in a module attribute or config. Your shell and the tests don't have \
+        them: tests use fakes.\
+        """,
+        parameters: %{type: "object", properties: %{}}
+      },
+      %{
+        name: "request_secret",
+        description: """
+        Ask the user for a secret the app needs (an API key, a token, a shared password). \
+        The chat shows them a box to paste it into; you get a message here once it is set. \
+        Meanwhile write the code that reads it with System.get_env/1 and handles it \
+        missing. Never ask for a secret in your answer text or put one in code.\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{
+            name: %{
+              type: "string",
+              description: "Environment variable name in capitals, like SLACK_TOKEN"
+            },
+            why: %{
+              type: "string",
+              description:
+                "One short line for the user: what it is for and where to get it, like " <>
+                  "\"Posts to #ops. Slack app, OAuth & Permissions, Bot token.\""
+            }
+          },
+          required: ["name", "why"]
+        }
       }
     ]
   end
@@ -107,6 +143,33 @@ defmodule Peon.Agent.Tools do
       end
     else
       {"There is no #{env} environment.", true}
+    end
+  end
+
+  def call("secrets", _args, _chat_id) do
+    case Secrets.list() do
+      [] ->
+        {"No secrets yet. Ask the user for one with request_secret.", false}
+
+      secrets ->
+        {Enum.map_join(secrets, "\n", fn s ->
+           if s.set?, do: "- #{s.name}: set", else: "- #{s.name}: asked for, not set yet"
+         end), false}
+    end
+  end
+
+  def call("request_secret", %{"name" => name, "why" => why}, chat_id)
+      when is_binary(name) and is_binary(why) do
+    case Secrets.request(name, String.slice(why, 0, 300), chat_id) do
+      {:ok, :already_set} ->
+        {"#{name} is already set. Read it with System.get_env(\"#{name}\").", false}
+
+      {:ok, :requested} ->
+        {"Asked the user for #{name}. You get a message here once it is set. Meanwhile " <>
+           "read it with System.get_env(\"#{name}\") and handle it missing.", false}
+
+      {:error, message} ->
+        {message, true}
     end
   end
 

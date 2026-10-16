@@ -245,6 +245,9 @@ body.kb-zoom [data-kb-zoom-hide] { display: none }
 .convo.active { background: var(--sunken); color: var(--text); font-weight: 500 }
 .convo .meta { margin-left: auto; font-size: 11.5px; font-weight: 400; color: var(--text-3); white-space: nowrap }
 .ws-ship { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; font-size: 13px }
+.ws-secrets-link { padding: 0 16px 10px; font-size: 13px }
+.ws-connect { padding: 14px; display: flex; flex-direction: column; gap: 12px; border-color: var(--warn) }
+.ws-connect-row { display: flex; align-items: flex-end; gap: 10px; margin: 0 }
 .ws-ship-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; color: var(--text-2) }
 .ws-account { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2) }
 .ws-avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent-text); font-size: 12px; font-weight: 600; flex: none }
