@@ -79,6 +79,14 @@ only see their names (`peon_secrets`) and ask for new ones with
 - When a GenServer's state shape changes: bump @vsn, update :version, and implement code_change/3 for the upgrade and for {:down, old_vsn}.
 - Prefer state that can be rebuilt from the database. Then a restart is enough and no code_change is needed.
 
+## Keyboard shortcuts
+Every page has the ctrl+b keymap from assets/js/keys.js (the same one as Peon). Leave that file as it is. Ctrl+b, then the letter shown on any link, button or box; `:` or ctrl+k opens a command palette; `?` lists all shortcuts. Mark up the pages you build so the keys reach them:
+- Main nav links: `data-kb-go="b" data-kb-label="Bookings"` (ctrl+b g b). Tabs: `data-kb="tab"`.
+- A sidebar or list of places: `data-kb="item"` on each link (ctrl+b 1–9, n, p), with `aria-current="page"` on the current one.
+- Rows of a list: `data-kb="row"` (j, k, enter). `<.table row_click={...}>` does this already.
+- The page's search box: `data-kb="search"` (the `/` key).
+- The page's main actions: `data-kb-key="a" data-kb-label="Add booking"`. Not 1–9 or n p l w g o z / : ?, which are taken.
+
 ## Structure
 - Business logic lives in contexts. LiveView modules stay thin.
 - Every feature includes tests for its context functions and its LiveViews.

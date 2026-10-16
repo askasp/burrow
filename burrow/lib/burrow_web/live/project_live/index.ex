@@ -168,6 +168,9 @@ defmodule BurrowWeb.ProjectLive.Index do
               label="New project name"
               class="field"
               placeholder="Sauna booking"
+              data-kb-key="c"
+              data-kb-label="New project"
+              data-kb-group="Project"
               autocomplete="off"
               hint={"slug: #{@slug || "…"}"}
             />
@@ -198,6 +201,7 @@ defmodule BurrowWeb.ProjectLive.Index do
           <li :for={p <- @projects} id={"project-#{p.id}"}>
             <.link
               patch={~p"/projects?p=#{p.id}"}
+              data-kb="item"
               class={["prow", @selected && @selected.id == p.id && "sel"]}
               aria-current={@selected && @selected.id == p.id && "true"}
             >
@@ -234,6 +238,9 @@ defmodule BurrowWeb.ProjectLive.Index do
             <.link
               :if={@statuses[@selected.id] == :running}
               id="open-workspace"
+              data-kb-key="e"
+              data-kb-label="Open workspace"
+              data-kb-group="Project"
               href={~p"/projects/#{@selected.id}/open"}
               target="_blank"
               class="btn btn-primary"
@@ -255,6 +262,9 @@ defmodule BurrowWeb.ProjectLive.Index do
                 <div class="tip">:{@selected.port}<small>{@selected.preview_ports}</small></div>
                 <button
                   id="restart-peon"
+                  data-kb-key="R"
+                  data-kb-label="Restart Peon"
+                  data-kb-group="Project"
                   type="button"
                   class="xlink w-fit"
                   phx-click="restart"

@@ -20,13 +20,13 @@ defmodule PeonWeb.ProjectLiveTest do
     assert html =~ "main"
     refute has_element?(view, "#ship-panel")
 
-    view |> element("[data-kb-action=ship]") |> render_click()
+    view |> element("[data-kb-key=s]") |> render_click()
     assert has_element?(view, "#ship-panel")
   end
 
   test "secrets are added in the panel; values never show", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
-    view |> element("[data-kb-action=secrets]") |> render_click()
+    view |> element("[data-kb-key=k]") |> render_click()
     assert has_element?(view, "#secrets-panel")
 
     view
@@ -60,7 +60,7 @@ defmodule PeonWeb.ProjectLiveTest do
     on_exit(fn -> Application.delete_env(:peon, :env_ports) end)
 
     {:ok, view, _html} = live(conn, ~p"/")
-    view |> element("[data-kb-action=ship]") |> render_click()
+    view |> element("[data-kb-key=s]") |> render_click()
     view |> element("#auto-promote") |> render_click()
 
     assert Peon.Project.settings() |> Map.take(["auto_promote", "auto_promote_by"]) ==
@@ -76,7 +76,7 @@ defmodule PeonWeb.ProjectLiveTest do
     {:ok, view, _html} = live(conn, ~p"/c/#{chat.id}")
     assert render(view) =~ "Needs your review: it changes mix.exs"
 
-    view |> element("[data-kb-action=land]") |> render_click()
+    view |> element("[data-kb-key=a]") |> render_click()
     assert Code.ref("main").changeset_id == cs.id
     assert render(view) =~ "on main"
   end

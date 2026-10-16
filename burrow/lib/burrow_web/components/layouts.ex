@@ -49,19 +49,35 @@ defmodule BurrowWeb.Layouts do
               <.link
                 navigate={~p"/projects"}
                 class="navlink"
+                data-kb="tab"
+                data-kb-go="p"
                 aria-current={@active == :projects && "page"}
               >
                 Projects
               </.link>
-              <.link navigate={~p"/teams"} class="navlink" aria-current={@active == :teams && "page"}>
+              <.link
+                navigate={~p"/teams"}
+                class="navlink"
+                data-kb="tab"
+                data-kb-go="t"
+                aria-current={@active == :teams && "page"}
+              >
                 Teams
               </.link>
-              <.link navigate={~p"/ai"} class="navlink" aria-current={@active == :ai && "page"}>
+              <.link
+                navigate={~p"/ai"}
+                class="navlink"
+                data-kb="tab"
+                data-kb-go="a"
+                aria-current={@active == :ai && "page"}
+              >
                 AI login
               </.link>
             </nav>
             <.link
               navigate={~p"/users/settings"}
+              data-kb-go=","
+              data-kb-label="Settings"
               class="text-[13px] text-[var(--text-3)] no-underline hover:text-[var(--text)]"
               aria-current={@active == :settings && "page"}
             >

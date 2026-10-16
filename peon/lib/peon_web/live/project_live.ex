@@ -418,8 +418,10 @@ defmodule PeonWeb.ProjectLive do
           </div>
           <.link
             patch={~p"/"}
-            data-kb="row"
-            data-kb-action="new"
+            data-kb-key="c"
+            data-kb-label="New chat"
+            data-kb-group="Chats"
+            data-kb-focus="#chat-input"
             class="btn btn-secondary btn-sm w-full"
           >
             <.icon name="hero-plus" class="size-4" /> New chat
@@ -454,8 +456,9 @@ defmodule PeonWeb.ProjectLive do
         <div class="ws-secrets-link">
           <button
             phx-click="toggle_secrets"
-            data-kb="row"
-            data-kb-action="secrets"
+            data-kb-key="k"
+            data-kb-label="Secrets"
+            data-kb-group="Ship"
             class={["xlink", asked(@secrets) != [] && "text-[var(--warn)]"]}
           >
             {secrets_text(@secrets)}
@@ -501,8 +504,10 @@ defmodule PeonWeb.ProjectLive do
               </span>
               <button
                 phx-click="interrupt"
-                data-kb="row"
-                data-kb-action="stop"
+                data-kb-key="x"
+                data-kb-label="Stop the agent"
+                data-kb-group="Agent & preview"
+                data-kb-esc
                 class="btn btn-ghost btn-sm"
               >
                 Stop
@@ -548,6 +553,8 @@ defmodule PeonWeb.ProjectLive do
               name="text"
               rows="2"
               id="chat-input"
+              data-kb="search"
+              data-kb-label="Chat box"
               phx-hook=".SubmitOnEnter"
               placeholder={if @chat, do: "Describe a change…", else: "Describe your app…"}
             >{@form[:text].value}</textarea>
@@ -589,8 +596,9 @@ defmodule PeonWeb.ProjectLive do
             :if={@preview.url}
             type="button"
             phx-click="reload_preview"
-            data-kb="row"
-            data-kb-action="reload"
+            data-kb-key="r"
+            data-kb-label="Reload preview"
+            data-kb-group="Agent & preview"
             class="icon-btn"
             aria-label="Reload preview"
           >
@@ -612,8 +620,9 @@ defmodule PeonWeb.ProjectLive do
             :if={@preview_env == "dev" and @info}
             type="button"
             phx-click="restart_preview"
-            data-kb="row"
-            data-kb-action="restart"
+            data-kb-key="R"
+            data-kb-label="Restart preview"
+            data-kb-group="Agent & preview"
             class="btn btn-ghost btn-sm"
           >
             Restart
@@ -622,8 +631,9 @@ defmodule PeonWeb.ProjectLive do
             :if={@preview.url}
             type="button"
             phx-click="toggle_logs"
-            data-kb="row"
-            data-kb-action="logs"
+            data-kb-key="v"
+            data-kb-label="Preview logs"
+            data-kb-group="Agent & preview"
             aria-pressed={to_string(@show_logs)}
             class="btn btn-secondary btn-sm"
           >
@@ -972,8 +982,9 @@ defmodule PeonWeb.ProjectLive do
           :if={@changeset.status == "passed" and not @landed?}
           phx-click="land"
           phx-value-id={@changeset.id}
-          data-kb="row"
-          data-kb-action="land"
+          data-kb-key="a"
+          data-kb-label="Land changeset"
+          data-kb-group="Ship"
           data-confirm="Land this changeset on main?"
           class="btn btn-primary ml-auto"
         >
@@ -1055,8 +1066,9 @@ defmodule PeonWeb.ProjectLive do
         :if={@promote}
         phx-click="promote"
         phx-value-id={@promote}
-        data-kb="row"
-        data-kb-action="promote"
+        data-kb-key="P"
+        data-kb-label="Promote to prod"
+        data-kb-group="Ship"
         data-confirm={"Deploy ##{@promote} (healthy on staging) to prod?"}
         class="btn btn-primary btn-sm w-full mt-1"
       >
@@ -1064,8 +1076,9 @@ defmodule PeonWeb.ProjectLive do
       </button>
       <button
         phx-click="toggle_ship"
-        data-kb="row"
-        data-kb-action="ship"
+        data-kb-key="s"
+        data-kb-label="Incidents · deploys"
+        data-kb-group="Ship"
         class={["xlink mt-1", @open_incidents > 0 && "text-[var(--err)]"]}
       >
         {@open_incidents} {if(@open_incidents == 1, do: "incident", else: "incidents")} · deploys
