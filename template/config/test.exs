@@ -1,5 +1,10 @@
 import Config
 
+# Tests don't ask for the shared password (PeonTemplate.SiteAccess), so
+# switching modes doesn't break them; SiteAccessTest turns it on. No pause
+# after a wrong password.
+config :peon_template, enforce_site_password: false, unlock_delay: 0
+
 # Only in tests, remove the complexity from the password hashing algorithm
 config :bcrypt_elixir, :log_rounds, 1
 

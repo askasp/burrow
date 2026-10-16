@@ -7,8 +7,11 @@ runs `mix test` and shows the result in a live preview.
 ## Stack
 - Phoenix 1.8, LiveView, Ecto with SQLite (`ecto_sqlite3`), Tailwind v4 + daisyUI.
 - Authentication already exists (phx.gen.auth, email + password, `PeonTemplate.Accounts`).
-  Pages that need a logged-in user go in the `:require_authenticated_user`
-  `live_session` in the router and read the user from `@current_scope.user`.
+  Read the user from `@current_scope.user`.
+- The app's pages go in the router's `:app` scope: controller routes next to
+  `get "/"`, LiveViews in `live_session :app`. Who may see them is set in one
+  place, `PeonTemplate.SiteAccess` (below). Pages that always need an account
+  whatever the mode (like settings) go in `:require_authenticated_user`.
 - `/health` returns 200 when the database answers. Keep it working.
 
 ## Data we provide ourselves is code, not tables
@@ -28,6 +31,34 @@ categories, opening hours, email texts, roles and permissions, settings.
   using the app, it is code.
 - Rows that refer to code-defined things store their stable key (a string
   such as `"sauna-1"`), not a foreign key.
+
+## Who can see the app
+`PeonTemplate.SiteAccess.mode/0` (lib/peon_template/site_access.ex) is the
+switch. When the owner asks to change who can see the app, change that line:
+
+- `:login` (the default): people log in with email and password; the `:app`
+  pages need a logged-in user.
+- `:shared_password`: one password for everyone, no accounts. The password is
+  the secret `SITE_PASSWORD`: request it from the user (`peon_request_secret`).
+  Until it is set, nobody gets in. The preview and the tests skip the
+  password so pages can be checked; staging and prod ask for it at `/unlock`.
+- `:public`: anyone can see every page.
+
+The account links in the header only show in `:login` mode (or when someone is
+logged in). Don't build other access checks around the mode; extend
+`PeonTemplateWeb.SiteAccess` if a page needs a different rule.
+
+## Secrets
+API keys, tokens and passwords are secrets. The owner keeps them in Peon; you
+only see their names (`peon_secrets`) and ask for new ones with
+`peon_request_secret`.
+
+- The preview, staging and prod get each secret as an environment variable.
+  Read it where it is used, at run time: `System.get_env("SLACK_TOKEN")`. Not
+  in a module attribute (that runs at compile time) and not in config.
+- Handle a missing secret: show a plain message or skip the work, don't crash.
+- Tests and your shell have no secrets. Put the outside service behind a
+  small module and test against a fake.
 
 ## Data
 - All database access goes through Ecto. No raw SQL.
@@ -55,7 +86,7 @@ categories, opening hours, email texts, roles and permissions, settings.
 
 ## Off limits
 - Never edit config/runtime.exs, AGENTS.md, rel/ or priv/peon/anonymize.exs. Peon rejects those changes.
-- Never put secrets in code. Read them from environment variables in runtime.exs; humans add the values.
+- Never put secrets in code, tests or config. See "Secrets" above.
 
 # Phoenix guidelines
 
@@ -106,6 +137,10 @@ custom classes must fully style the input
 
 <!-- phoenix-gen-auth-start -->
 ## Authentication
+
+In this app, the app's own pages go in the `:app` scope (see "Who can see the
+app"), not in the blocks below. The rules below are for pages that need an
+account whatever the mode, and for the account pages themselves.
 
 - **Always** handle authentication flow at the router level with proper redirects
 - **Always** be mindful of where to place routes. `phx.gen.auth` creates multiple router plugs and `live_session` scopes:

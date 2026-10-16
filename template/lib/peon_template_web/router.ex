@@ -2,6 +2,7 @@ defmodule PeonTemplateWeb.Router do
   use PeonTemplateWeb, :router
 
   import PeonTemplateWeb.UserAuth
+  import PeonTemplateWeb.SiteAccess, only: [require_site_password: 2, require_app_access: 2]
 
   @frame_ancestors Application.compile_env!(:peon_template, :frame_ancestors)
 
@@ -17,16 +18,28 @@ defmodule PeonTemplateWeb.Router do
     }
 
     plug :fetch_current_scope_for_user
+    plug :require_site_password
   end
 
   pipeline :api do
     plug :accepts, ["json"]
   end
 
+  # The app's own pages. Who may see them is PeonTemplate.SiteAccess.mode/0.
+  scope "/", PeonTemplateWeb do
+    pipe_through [:browser, :require_app_access]
+
+    get "/", PageController, :home
+
+    live_session :app, on_mount: [{PeonTemplateWeb.SiteAccess, :app}] do
+    end
+  end
+
   scope "/", PeonTemplateWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    get "/unlock", UnlockController, :new
+    post "/unlock", UnlockController, :create
   end
 
   scope "/", PeonTemplateWeb do

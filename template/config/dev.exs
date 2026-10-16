@@ -1,5 +1,9 @@
 import Config
 
+# The preview doesn't ask for the shared password (PeonTemplate.SiteAccess),
+# so its pages can be checked; staging and prod do.
+config :peon_template, :enforce_site_password, false
+
 # Configure your database
 config :peon_template, PeonTemplate.Repo,
   database: Path.expand("../peon_template_dev.db", __DIR__),

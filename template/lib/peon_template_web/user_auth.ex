@@ -143,10 +143,12 @@ defmodule PeonTemplateWeb.UserAuth do
   #
   defp renew_session(conn, _user) do
     delete_csrf_token()
+    kept = Map.take(get_session(conn), PeonTemplateWeb.SiteAccess.session_keys())
 
     conn
     |> configure_session(renew: true)
     |> clear_session()
+    |> then(&Enum.reduce(kept, &1, fn {key, value}, conn -> put_session(conn, key, value) end))
   end
 
   defp maybe_write_remember_me_cookie(conn, token, %{"remember_me" => "true"}, _),

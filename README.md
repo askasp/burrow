@@ -20,6 +20,10 @@ A change flows like this, with no queue in front of main:
 6. **Promote** sends a healthy staging changeset to prod the same way (or set the project setting `auto_promote: true`).
 7. Errors from staging and prod arrive through the attacher with stacktraces and become incidents. A new incident opens a chat that is asked to fix it (`auto_fix`, default on); the incident resolves when that fix is deployed.
 
+**Secrets** (API keys, tokens, the shared site password) live in Peon, never in the code: `ctrl+b k`, or the box that shows in a chat when the agent asks for one (MCP tool `request_secret`). The preview, staging and prod get them as environment variables and restart when one changes; the agent sees names only, and checks and tests get none.
+
+**Who can see an app** is one line in the template: `<App>.SiteAccess.mode/0` is `:login` (default), `:shared_password` (the secret `SITE_PASSWORD`, asked at `/unlock`) or `:public`. Ask in the chat to switch.
+
 Keyboard: `ctrl+b`, then a key (tmux style, from Beamcode). `ctrl+b ?` lists them.
 
 ```

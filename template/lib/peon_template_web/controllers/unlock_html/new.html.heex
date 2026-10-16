@@ -1,0 +1,23 @@
+<Layouts.app flash={@flash} current_scope={@current_scope}>
+  <div class="mx-auto max-w-sm space-y-6">
+    <h1 class="text-2xl font-semibold">Password</h1>
+    <%= if @set? do %>
+      <.form for={%{}} as={:unlock} action={~p"/unlock"} id="unlock-form">
+        <.input
+          type="password"
+          id="password"
+          name="password"
+          value=""
+          label="This site needs a password"
+          autocomplete="current-password"
+          errors={List.wrap(@error)}
+          required
+          autofocus
+        />
+        <.button class="btn btn-primary w-full">Enter</.button>
+      </.form>
+    <% else %>
+      <p>This site isn't open yet: its password hasn't been set.</p>
+    <% end %>
+  </div>
+</Layouts.app>
