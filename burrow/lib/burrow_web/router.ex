@@ -31,8 +31,14 @@ defmodule BurrowWeb.Router do
 
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:burrow, :dev_routes) do
+    pipeline :local_only do
+      # The mailbox holds everyone's login links: only for this computer,
+      # never through a tunnel.
+      plug :only_this_computer
+    end
+
     scope "/dev" do
-      pipe_through :browser
+      pipe_through [:local_only, :browser]
 
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
@@ -69,5 +75,16 @@ defmodule BurrowWeb.Router do
 
     post "/users/log-in", UserSessionController, :create
     delete "/users/log-out", UserSessionController, :delete
+  end
+
+  if Application.compile_env(:burrow, :dev_routes) do
+    defp only_this_computer(conn, _opts) do
+      if conn.host in ["localhost", "127.0.0.1"] and
+           Plug.Conn.get_req_header(conn, "cf-connecting-ip") == [] do
+        conn
+      else
+        conn |> Plug.Conn.send_resp(404, "Not Found") |> Plug.Conn.halt()
+      end
+    end
   end
 end

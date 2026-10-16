@@ -48,6 +48,9 @@ defmodule BurrowWeb.UserLive.Login do
         >
           Log in
         </.button>
+        <button type="submit" name="magic" value="true" class="btn btn-ghost w-full mt-2">
+          Email me a login link
+        </button>
       </.form>
 
       <div
@@ -72,6 +75,15 @@ defmodule BurrowWeb.UserLive.Login do
   end
 
   @impl true
+  def handle_event("submit_password", %{"magic" => "true", "user" => %{"email" => email}}, socket) do
+    if user = Burrow.Accounts.get_user_by_email(email) do
+      Burrow.Accounts.deliver_login_instructions(user, &url(~p"/users/log-in/#{&1}"))
+    end
+
+    info = "If your email is in our system, you will receive a login link shortly."
+    {:noreply, socket |> put_flash(:info, info) |> push_navigate(to: ~p"/users/log-in")}
+  end
+
   def handle_event("submit_password", _params, socket) do
     {:noreply, assign(socket, :trigger_submit, true)}
   end

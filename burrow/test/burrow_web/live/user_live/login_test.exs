@@ -46,6 +46,34 @@ defmodule BurrowWeb.UserLive.LoginTest do
     end
   end
 
+  describe "user login - magic link" do
+    test "sends a login link to a forgotten password's email", %{conn: conn} do
+      user = user_fixture()
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+
+      {:ok, _lv, html} =
+        form(lv, "#login_form_password", user: %{email: user.email})
+        |> render_submit(%{magic: "true"})
+        |> follow_redirect(conn, ~p"/users/log-in")
+
+      assert html =~ "you will receive a login link"
+
+      assert Burrow.Repo.get_by!(Burrow.Accounts.UserToken, user_id: user.id).context ==
+               "login"
+    end
+
+    test "says the same for an unknown email", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+
+      {:ok, _lv, html} =
+        form(lv, "#login_form_password", user: %{email: "nobody@example.com"})
+        |> render_submit(%{magic: "true"})
+        |> follow_redirect(conn, ~p"/users/log-in")
+
+      assert html =~ "you will receive a login link"
+    end
+  end
+
   describe "login navigation" do
     test "redirects to registration page when the Register button is clicked", %{conn: conn} do
       {:ok, lv, _html} = live(conn, ~p"/users/log-in")
