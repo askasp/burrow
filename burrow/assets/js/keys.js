@@ -4,6 +4,7 @@
 //
 //   1–9  sidebar item               n p  next / previous item ↻
 //   [ ]  previous / next tab ↻      l    last place
+//   b    back: the page's back button, else the browser's
 //   w    switch to…                 g    go to… (then a letter)
 //   :    all commands               /    search box
 //   o    next focus region          ←↑→  focus sidebar / tabs / main
@@ -26,15 +27,19 @@
 //                       data-kb-focus="#id" focuses that box after.
 //   data-kb-go="p"      a link prefix g p follows
 //   data-kb-esc         esc clicks it (when not typing)
+//   data-kb-back        the back button (found without it too: "← …",
+//                       "Back …", or a left arrow or chevron icon)
 //   data-kb-zoom-hide   hidden while zoomed
 //   data-kb-skip        never gets a letter
 //
 // The same file is in Burrow, Peon and the app template; keep them alike.
 
+// The prefix by key position (any layout's B key) or by letter (Dvorak, Colemak…).
 const PREFIX_CODES = {"ctrl+b": "KeyB", "ctrl+space": "Space", "ctrl+a": "KeyA"}
-const RESERVED = new Set([..."123456789npl[]wgoz/:?"])
+const PREFIX_KEYS = {"ctrl+b": "b", "ctrl+space": " ", "ctrl+a": "a"}
+const RESERVED = new Set([..."123456789nplb[]wgoz/:?"])
 const REPEATABLE = new Set(["n", "p", "[", "]"])
-const LETTERS = [..."sdfjehtyuqvxbakmcri"]
+const LETTERS = [..."sdfjehtyuqvxakmcri"]
 const HINT_TARGETS =
   'a[href], button, [role="button"], summary, input:not([type="hidden"]), textarea, select, [data-kb], [data-kb-key], [data-kb-go]'
 const MODIFIERS = ["Shift", "Control", "Alt", "Meta", "CapsLock", "AltGraph"]
@@ -197,6 +202,7 @@ function whichGroups() {
   const navigate = [
     ...(items().length ? [[["1–9"], "Sidebar item"], [["n", "p"], "Next / previous ↻"]] : []),
     [["l"], "Last place"],
+    [["b"], (b => (b ? `Back: ${nameOf(b)}` : "Back"))(backButton())],
     [["w"], "Switch to…"],
     ...(goKeys().size ? [[["g"], "Go to…"]] : []),
   ]
@@ -307,6 +313,25 @@ function focusSearch() {
   box ? box.focus() : openPalette("all")
 }
 
+// The page's own back button, else the browser's back.
+const BACK_ICON = '[class*="hero-arrow-left"], [class*="hero-chevron-left"], [class*="hero-arrow-uturn-left"]'
+
+function backButton() {
+  const marked = shown("[data-kb-back]")[0]
+  if (marked) return marked
+  return shown('a[href], button, [role="button"]').find(el => {
+    const text = el.textContent.trim()
+    const label = el.getAttribute("aria-label") || ""
+    return /^(←|‹|<|back\b|go back\b)/i.test(text) || /^(back|go back)\b/i.test(label) || !!el.querySelector(BACK_ICON)
+  })
+}
+
+function back() {
+  const el = backButton()
+  if (el) return el.click()
+  history.length > 1 ? history.back() : toast("Nowhere to go back to")
+}
+
 function toggleZoom() {
   document.body.classList.toggle("kb-zoom")
 }
@@ -402,6 +427,7 @@ function entries(mode) {
     add("View", "Next focus region", [p, "o"], cycleFocus)
     add("View", "Keyboard shortcuts", ["?"], () => setHelp(true))
     if (lastPath) add("Navigate", "Last place", [p, "l"], () => go(lastPath))
+    add("Navigate", "Back", [p, "b"], back)
   }
   return list
 }
@@ -607,6 +633,7 @@ function prefixKey(e) {
     case "]": return rep(() => cycle(tabs(), 1))
     case "[": return rep(() => cycle(tabs(), -1))
     case "l": return once(() => (lastPath ? go(lastPath) : toast("No last place yet")))
+    case "b": return once(back)
     case "w": return once(() => openPalette("switch"))
     case ":": return once(() => openPalette("all"))
     case "g": return goKeys().size ? arm("g") : once(() => toast("No places to go to here"))
@@ -629,7 +656,9 @@ const mod = e => (isMac ? e.metaKey : e.ctrlKey)
 function onKey(e) {
   if (e.defaultPrevented || e.isComposing || MODIFIERS.includes(e.key)) return
   const typing = editable(e.target)
-  const isPrefix = e.ctrlKey && !e.metaKey && !e.altKey && e.code === PREFIX_CODES[opts.prefix]
+  const isPrefix =
+    e.ctrlKey && !e.metaKey && !e.altKey &&
+    (e.code === PREFIX_CODES[opts.prefix] || e.key.toLowerCase() === PREFIX_KEYS[opts.prefix])
   const stop = () => e.preventDefault()
 
   if (state.palette) return paletteKey(e)

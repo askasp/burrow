@@ -4,6 +4,7 @@ defmodule Burrow.ProjectsTest do
   import Burrow.AccountsFixtures
 
   alias Burrow.{Projects, Teams}
+  alias Burrow.Projects.Project
 
   test "create assigns a unique slug and its own ports" do
     scope = user_scope_fixture()
@@ -39,6 +40,23 @@ defmodule Burrow.ProjectsTest do
     # 5060 and 5061 are blocked (SIP); the range end is fine, previews skip them in Peon.
     assert Burrow.Cell.split_ports("5060-5069") == {"5060-5067", 5068, 5069}
     assert Burrow.Cell.split_ports("6660-6669") == {"6660-6662", 6663, 6664}
+  end
+
+  test "a project from a git repo has no envs, so its whole range is previews" do
+    scope = user_scope_fixture()
+
+    assert {:error, changeset} =
+             Projects.create(scope, %{"name" => "Amino", "repo_url" => "git@github.com:a/b"})
+
+    assert %{repo_url: [_]} = errors_on(changeset)
+
+    {:ok, project} =
+      Projects.create(scope, %{"name" => "Amino", "repo_url" => " https://github.com/a/b.git "})
+
+    assert project.repo_url == "https://github.com/a/b.git"
+    assert Project.repo?(project)
+    refute Project.live_only?(project)
+    assert Burrow.Cell.split_ports(project) == {project.preview_ports, "", ""}
   end
 
   test "projects are only visible to their owner" do

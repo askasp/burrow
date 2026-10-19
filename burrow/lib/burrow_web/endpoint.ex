@@ -24,6 +24,9 @@ defmodule BurrowWeb.Endpoint do
     at: "/",
     from: :burrow,
     gzip: not code_reloading?,
+    # In dev the files keep their names (no digests), so browsers and the
+    # tunnel's cache must ask every time or they keep old JS for hours.
+    cache_control_for_etags: if(code_reloading?, do: "no-cache", else: "public"),
     only: BurrowWeb.static_paths(),
     raise_on_missing_only: code_reloading?
 

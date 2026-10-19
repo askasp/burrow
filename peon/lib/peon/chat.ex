@@ -17,13 +17,18 @@ defmodule Peon.Chat do
 
   When main moves, the workspace is rebased onto it. Containers stop after
   `@idle_timeout` without activity; the next use starts them again.
+
+  In a repo project (`Peon.Source`) the workspace is a git checkout instead
+  (`Peon.Git`), and the preview is the repo's preview pack run on the host
+  (`Peon.HostPreview`), up once its framed port answers.
   """
 
   use GenServer, restart: :temporary
 
   require Logger
 
-  alias Peon.{Chats, Incidents, Sandbox, Secrets, Store, Workspace}
+  alias Peon.{Chats, Git, HostPreview, Incidents, PreviewPack, Sandbox, Secrets, Source, Store}
+  alias Peon.Workspace
   alias Peon.Agent.{MCP, Prompt}
   alias Peon.OpenCode.Client
 
@@ -32,6 +37,9 @@ defmodule Peon.Chat do
   @boot_timeout :timer.seconds(90)
   @poll_interval 1_500
   @log_lines 400
+  @probe_interval 2_000
+  # How long a detached preview (its start command exited 0) gets to answer.
+  @detached_timeout :timer.minutes(5)
 
   ## API
 
@@ -64,6 +72,12 @@ defmodule Peon.Chat do
 
   def restart_preview(id), do: call(id, :restart_preview)
 
+  @doc "A repo chat's preview pack and its commands' environment: `{:ok, pack, env}`."
+  def preview_pack(id), do: call(id, :preview_pack)
+
+  @doc "Records a repo chat's pull request and shows it."
+  def pr_opened(id, url), do: call(id, {:pr_opened, url})
+
   def logs(id), do: call(id, :logs)
 
   def subscribe(id), do: Phoenix.PubSub.subscribe(Peon.PubSub, "chat:#{id}")
@@ -92,7 +106,8 @@ defmodule Peon.Chat do
     Store.subscribe()
     Secrets.subscribe()
 
-    with {:ok, preview_port} <- claim_preview_port(id) do
+    # A repo chat claims its ports once its checkout says how many (load_pack/1).
+    with {:ok, preview_port} <- if(Source.repo?(), do: {:ok, nil}, else: claim_preview_port(id)) do
       slug = Application.fetch_env!(:peon, :project_slug)
       base = Path.join([Application.fetch_env!(:peon, :data_dir), "chats", id])
 
@@ -100,13 +115,21 @@ defmodule Peon.Chat do
         id: id,
         dir: workspace_dir(id),
         base: base,
+        repo: Source.repo?(),
         network: "peon-#{slug}-#{id}",
         preview: %{
           name: "peon-preview-#{slug}-#{id}",
           port: preview_port,
           container: nil,
           status: :starting,
-          secrets: nil
+          secrets: nil,
+          # repo chats: the preview pack, its ports by name, its env
+          pack: nil,
+          ports: %{},
+          env: %{},
+          probe: nil,
+          exited_at: nil,
+          restart: nil
         },
         agent: %{
           name: "peon-agent-#{slug}-#{id}",
@@ -118,6 +141,7 @@ defmodule Peon.Chat do
         logs: :queue.new(),
         log_count: 0,
         session_id: nil,
+        pr_url: if(chat = Chats.get(id), do: chat.pr_url),
         busy?: false,
         prompted_at: 0,
         messages: [],
@@ -132,6 +156,18 @@ defmodule Peon.Chat do
   end
 
   @impl true
+  def handle_continue(:boot, %{repo: true} = state) do
+    with :ok <- if(Git.checked_out?(state.dir), do: :ok, else: Git.checkout(state.dir, state.id)),
+         {:ok, state} <- load_pack(state) do
+      Sandbox.create_network(state.network)
+      state = state |> start_preview() |> start_agent() |> touch()
+      send(self(), :wait_agent)
+      {:noreply, state}
+    else
+      {:error, reason} -> fail_boot(state, reason)
+    end
+  end
+
   def handle_continue(:boot, state) do
     unless Workspace.checked_out?(state.dir) do
       File.mkdir_p!(state.dir)
@@ -169,9 +205,20 @@ defmodule Peon.Chat do
     {:reply, :ok, state}
   end
 
+  def handle_call(:restart_preview, _from, %{repo: true} = state),
+    do: {:reply, :ok, state |> restart_repo_preview() |> broadcast_status()}
+
   def handle_call(:restart_preview, _from, state) do
     Sandbox.stop(state.preview.name)
     {:reply, :ok, state |> start_preview() |> broadcast_status()}
+  end
+
+  def handle_call(:preview_pack, _from, state),
+    do: {:reply, {:ok, state.preview.pack, state.preview.env}, state}
+
+  def handle_call({:pr_opened, url}, _from, state) do
+    Chats.set_pr_url(state.id, url)
+    {:reply, :ok, broadcast_status(%{state | pr_url: url})}
   end
 
   def handle_call(:logs, _from, state),
@@ -232,6 +279,43 @@ defmodule Peon.Chat do
     {:noreply, broadcast(%{state | conflicts: conflicts}, {:conflicts, conflicts})}
   end
 
+  def handle_info({port, {:data, data}}, %{repo: true, preview: %{container: port}} = state) do
+    File.write(preview_log(state), data, [:append])
+    {:noreply, append_logs(state, data)}
+  end
+
+  # A start command that exits 0 has detached (e.g. `docker compose up -d`).
+  def handle_info(
+        {port, {:exit_status, code}},
+        %{repo: true, preview: %{container: port}} = state
+      ) do
+    preview = %{
+      state.preview
+      | container: nil,
+        exited_at: System.monotonic_time(:millisecond),
+        status: if(code == 0, do: state.preview.status, else: {:crashed, code})
+    }
+
+    {:noreply, broadcast_status(%{state | preview: preview})}
+  end
+
+  def handle_info({:probe, ref}, %{preview: %{probe: ref, status: :starting} = preview} = state) do
+    cond do
+      HostPreview.up?(preview.port, preview.pack.ready) ->
+        {:noreply, broadcast_status(put_in(state.preview.status, :running))}
+
+      preview.exited_at &&
+          System.monotonic_time(:millisecond) - preview.exited_at > @detached_timeout ->
+        {:noreply, broadcast_status(put_in(state.preview.status, {:crashed, 0}))}
+
+      true ->
+        Process.send_after(self(), {:probe, ref}, @probe_interval)
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:probe, _ref}, state), do: {:noreply, state}
+
   def handle_info({container, {:data, data}}, %{preview: %{container: container}} = state) do
     state = append_logs(state, data)
 
@@ -256,6 +340,20 @@ defmodule Peon.Chat do
   end
 
   # The preview gets secrets as env vars when it starts, so new values restart it.
+  def handle_info({:secrets, _list}, %{repo: true, preview: %{pack: %PreviewPack{}}} = state) do
+    if state.preview.secrets == Secrets.fingerprint(),
+      do: {:noreply, state},
+      else: {:noreply, state |> restart_repo_preview() |> broadcast_status()}
+  end
+
+  def handle_info({ref, output}, %{preview: %{restart: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, restarted(state, output)}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{preview: %{restart: ref}} = state),
+    do: {:noreply, restarted(state, "stop failed: #{inspect(reason)}")}
+
   def handle_info({:secrets, _list}, %{preview: %{container: container} = preview} = state)
       when container != nil do
     if preview.secrets == Secrets.fingerprint() do
@@ -267,10 +365,24 @@ defmodule Peon.Chat do
   end
 
   def handle_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
-  def handle_info(:idle, state), do: {:stop, :normal, state}
+
+  # The inline chat's preview is the dev version Burrow shows while its
+  # changeset is open, so it stays up until that is merged or discarded.
+  def handle_info(:idle, state) do
+    if Peon.Inline.keep_alive?(state.id),
+      do: {:noreply, touch(state)},
+      else: {:stop, :normal, state}
+  end
+
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
+  def terminate(_reason, %{repo: true} = state) do
+    Sandbox.stop(state.agent.name)
+    stop_preview(state)
+    Sandbox.remove_network(state.network)
+  end
+
   def terminate(_reason, state) do
     Sandbox.stop(state.agent.name)
     Sandbox.stop(state.preview.name)
@@ -278,6 +390,42 @@ defmodule Peon.Chat do
   end
 
   ## Containers
+
+  defp start_preview(%{repo: true, preview: %{pack: %PreviewPack{} = pack}} = state) do
+    env =
+      Map.merge(
+        Secrets.env(),
+        PreviewPack.env(pack, state.preview.ports, &Peon.Ports.url/1, state.preview.name)
+      )
+
+    File.write(preview_log(state), "\n[peon] $ #{pack.start}\n", [:append])
+    port = HostPreview.start(state.dir, pack.start, env)
+    ref = make_ref()
+    send(self(), {:probe, ref})
+
+    preview = %{
+      state.preview
+      | container: port,
+        status: :starting,
+        env: env,
+        probe: ref,
+        exited_at: nil,
+        secrets: Secrets.fingerprint()
+    }
+
+    %{state | preview: preview}
+  end
+
+  # No pack, or one that doesn't parse: the chat works, the pane says why.
+  defp start_preview(%{repo: true} = state) do
+    status =
+      case state.preview.pack do
+        {:error, message} -> {:pack_error, message}
+        _ -> :no_pack
+      end
+
+    put_in(state.preview.status, status)
+  end
 
   defp start_preview(state) do
     script =
@@ -326,13 +474,15 @@ defmodule Peon.Chat do
           "XDG_DATA_HOME" => "/opencode/data",
           "OPENCODE_SERVER_PASSWORD" => state.agent.password
         },
-        mounts: [
-          {Path.expand(bin) |> resolve_link(), "/usr/local/bin/opencode", :ro},
-          {config_dir, "/opencode/config", :ro},
-          {data_dir, "/opencode/data", :rw},
-          {MCP.socket_path(), "/peon/mcp.sock", :rw},
-          {Application.app_dir(:peon, "priv/mcp_bridge.exs"), "/peon/mcp_bridge.exs", :ro}
-        ],
+        mounts:
+          [
+            {Path.expand(bin) |> resolve_link(), "/usr/local/bin/opencode", :ro},
+            {config_dir, "/opencode/config", :ro},
+            {data_dir, "/opencode/data", :rw},
+            {MCP.socket_path(), "/peon/mcp.sock", :rw},
+            {Application.app_dir(:peon, "priv/mcp_bridge.exs"), "/peon/mcp_bridge.exs", :ro}
+          ] ++ repo_mounts(state),
+        hosts: if(state.repo, do: [{"host.docker.internal", "host-gateway"}], else: []),
         ports: [{state.agent.port, 4096}]
       )
 
@@ -344,16 +494,18 @@ defmodule Peon.Chat do
   defp write_agent_config(state, config_dir) do
     dir = Path.join(config_dir, "opencode")
     File.mkdir_p!(dir)
-    File.write!(Path.join([state.dir, ".peon", "instructions.md"]), Prompt.instructions())
+    instructions = write_instructions(state, dir)
 
     allow = ~w(read edit glob grep list bash task todowrite webfetch websearch lsp skill)
+    chat = Chats.get(state.id)
+    model = (chat && chat.model) || Application.fetch_env!(:peon, :opencode)[:model]
 
     config = %{
       "$schema" => "https://opencode.ai/config.json",
-      "model" => Application.fetch_env!(:peon, :opencode)[:model],
+      "model" => model,
       "autoupdate" => false,
       "share" => "disabled",
-      "instructions" => [".peon/instructions.md"],
+      "instructions" => [instructions],
       "permission" =>
         allow
         |> Map.new(&{&1, "allow"})
@@ -374,8 +526,137 @@ defmodule Peon.Chat do
       }
     }
 
+    config = Map.merge(config, effort_config(model, chat && chat.effort))
     File.write!(Path.join(dir, "opencode.json"), Jason.encode!(config, pretty: true))
   end
+
+  # Peon's instructions as a file opencode reads: in the workspace's own .peon
+  # for the template app, next to the opencode config for a repo, whose .peon
+  # is the repo's.
+  defp write_instructions(%{repo: true} = state, config_dir) do
+    File.write!(Path.join(config_dir, "peon.md"), Prompt.repo_instructions(prompt_facts(state)))
+    "/opencode/config/opencode/peon.md"
+  end
+
+  defp write_instructions(state, _config_dir) do
+    File.write!(Path.join([state.dir, ".peon", "instructions.md"]), Prompt.instructions())
+    ".peon/instructions.md"
+  end
+
+  defp prompt_facts(state) do
+    %{
+      branch: "peon/#{state.id}",
+      pack: state.preview.pack,
+      ports: state.preview.ports,
+      url: &Peon.Ports.url/1
+    }
+  end
+
+  # The repo's preview log, readable by the agent at /peon/preview.log.
+  defp repo_mounts(%{repo: true} = state) do
+    File.mkdir_p!(state.base)
+    File.touch!(preview_log(state))
+    [{preview_log(state), "/peon/preview.log", :ro}]
+  end
+
+  defp repo_mounts(_state), do: []
+
+  defp preview_log(state), do: Path.join(state.base, "preview.log")
+
+  # Loads the checkout's preview pack and claims the ports it names: its
+  # tunneled `ports` from the project's range, `local_ports` anywhere.
+  defp load_pack(state) do
+    case PreviewPack.load(state.dir) do
+      {:ok, pack} ->
+        with {:ok, claimed} <- claim_preview_ports(state.id, PreviewPack.port_count(pack)) do
+          tunneled = Enum.zip(pack.ports, claimed) |> Map.new()
+          local = Map.new(pack.local_ports, &{&1, free_port()})
+
+          preview = %{
+            state.preview
+            | pack: pack,
+              ports: Map.merge(tunneled, local),
+              port: tunneled[pack.frame]
+          }
+
+          {:ok, %{state | preview: preview}}
+        end
+
+      other ->
+        {:ok, %{state | preview: %{state.preview | pack: other, ports: %{}, port: nil}}}
+    end
+  end
+
+  defp stop_preview(%{preview: %{pack: %PreviewPack{} = pack} = preview} = state) do
+    output = HostPreview.stop(state.dir, preview.container, pack.stop, preview.env)
+    if output, do: File.write(preview_log(state), "[peon] $ #{pack.stop}\n#{output}", [:append])
+    %{state | preview: %{preview | container: nil, status: :stopped, probe: nil}}
+  end
+
+  defp stop_preview(state), do: state
+
+  # Stopping can take a while (e.g. `docker compose down`), so a restart stops
+  # the preview in a task and starts it again when that is done (restarted/2).
+  defp restart_repo_preview(%{preview: %{restart: ref}} = state) when ref != nil, do: state
+
+  defp restart_repo_preview(%{preview: preview} = state) do
+    %{dir: dir} = state
+
+    task =
+      Task.Supervisor.async_nolink(Peon.TaskSupervisor, fn ->
+        with %PreviewPack{} = pack <- preview.pack,
+             do: HostPreview.stop(dir, preview.container, pack.stop, preview.env)
+      end)
+
+    %{
+      state
+      | preview: %{preview | container: nil, status: :starting, probe: nil, restart: task.ref}
+    }
+  end
+
+  defp restarted(state, output) do
+    if is_binary(output),
+      do: File.write(preview_log(state), "[peon] stopped\n#{output}", [:append])
+
+    state = put_in(state.preview.restart, nil)
+
+    case load_pack(state) do
+      {:ok, state} ->
+        state |> start_preview() |> broadcast_status()
+
+      {:error, :no_free_preview_port} ->
+        message = "every preview port is in use by other chats"
+        broadcast_status(put_in(state.preview.status, {:pack_error, message}))
+    end
+  end
+
+  @doc false
+  # The chat's effort as the provider's model options. Medium (or none) keeps
+  # the model's defaults; providers without such an option ignore it.
+  def effort_config(model, effort) when effort in ["low", "high"] do
+    case String.split(model || "", "/", parts: 2) do
+      ["openai", id] ->
+        %{
+          "provider" => %{
+            "openai" => %{"models" => %{id => %{"options" => %{"reasoningEffort" => effort}}}}
+          }
+        }
+
+      ["anthropic", id] when effort == "high" ->
+        thinking = %{"type" => "enabled", "budgetTokens" => 16_000}
+
+        %{
+          "provider" => %{
+            "anthropic" => %{"models" => %{id => %{"options" => %{"thinking" => thinking}}}}
+          }
+        }
+
+      _ ->
+        %{}
+    end
+  end
+
+  def effort_config(_model, _effort), do: %{}
 
   defp ensure_session(state) do
     chat = Chats.get(state.id)
@@ -421,8 +702,10 @@ defmodule Peon.Chat do
 
   defp info_map(state) do
     %{
-      preview_url: Peon.Ports.url(state.preview.port),
+      preview_url: state.preview.port && Peon.Ports.url(state.preview.port),
+      preview_links: preview_links(state),
       preview_status: state.preview.status,
+      pr_url: state.pr_url,
       agent_status: state.agent.status,
       busy?: state.busy?,
       attach:
@@ -431,6 +714,13 @@ defmodule Peon.Chat do
       messages: state.messages
     }
   end
+
+  # A repo preview's other public ports, by name, for links next to the frame.
+  defp preview_links(%{preview: %{pack: %PreviewPack{} = pack, ports: ports}}) do
+    for name <- pack.ports, name != pack.frame, do: {name, Peon.Ports.url(ports[name])}
+  end
+
+  defp preview_links(_state), do: []
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Peon.PubSub, "chat:#{state.id}", message)
@@ -568,7 +858,7 @@ defmodule Peon.Chat do
   # Preview ports come from the configured range; the registry value marks a
   # port as taken, so two chats never share one.
   defp claim_preview_port(id) do
-    used = Registry.select(@registry, [{{:_, :_, :"$1"}, [], [:"$1"]}]) |> MapSet.new()
+    used = used_ports()
 
     free = &(Peon.Ports.browser_safe?(&1) and not MapSet.member?(used, &1))
 
@@ -580,6 +870,30 @@ defmodule Peon.Chat do
         Registry.update_value(@registry, id, fn _ -> port end)
         {:ok, port}
     end
+  end
+
+  # A repo chat's preview may need several ports; it holds them as a list.
+  defp claim_preview_ports(id, count) do
+    Registry.update_value(@registry, id, fn _ -> [] end)
+    used = used_ports()
+
+    free =
+      Application.fetch_env!(:peon, :preview_ports)
+      |> Enum.filter(&(Peon.Ports.browser_safe?(&1) and not MapSet.member?(used, &1)))
+      |> Enum.take(count)
+
+    if length(free) == count do
+      Registry.update_value(@registry, id, fn _ -> free end)
+      {:ok, free}
+    else
+      {:error, :no_free_preview_port}
+    end
+  end
+
+  defp used_ports do
+    Registry.select(@registry, [{{:_, :_, :"$1"}, [], [:"$1"]}])
+    |> List.flatten()
+    |> MapSet.new()
   end
 
   defp free_port do

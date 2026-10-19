@@ -4,8 +4,6 @@ defmodule PeonTemplateWeb.Router do
   import PeonTemplateWeb.UserAuth
   import PeonTemplateWeb.SiteAccess, only: [require_site_password: 2, require_app_access: 2]
 
-  @frame_ancestors Application.compile_env!(:peon_template, :frame_ancestors)
-
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -13,9 +11,7 @@ defmodule PeonTemplateWeb.Router do
     plug :put_root_layout, html: {PeonTemplateWeb.Layouts, :root}
     plug :protect_from_forgery
 
-    plug :put_secure_browser_headers, %{
-      "content-security-policy" => "frame-ancestors #{@frame_ancestors}"
-    }
+    plug :put_secure_headers
 
     plug :fetch_current_scope_for_user
     plug :require_site_password
@@ -86,5 +82,15 @@ defmodule PeonTemplateWeb.Router do
 
     post "/users/log-in", UserSessionController, :create
     delete "/users/log-out", UserSessionController, :delete
+  end
+
+  # Who may show the app in a frame is set at runtime: Peon passes its own and
+  # Burrow's origins (FRAME_ANCESTORS, see config/runtime.exs).
+  defp put_secure_headers(conn, _opts) do
+    frame_ancestors = Application.get_env(:peon_template, :frame_ancestors, "'self'")
+
+    put_secure_browser_headers(conn, %{
+      "content-security-policy" => "base-uri 'self'; frame-ancestors #{frame_ancestors};"
+    })
   end
 end

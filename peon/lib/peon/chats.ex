@@ -2,7 +2,8 @@ defmodule Peon.Chats do
   @moduledoc """
   Chats with the AI. The conversation itself lives in an opencode session
   (see `Peon.Chat`); Peon stores only the chat's title, its session id and
-  the changesets it produced (`changesets.conversation_id`).
+  the changesets it produced (`changesets.conversation_id`), or for a repo
+  chat its pull request.
 
   Broadcasts `{:chat_created, chat}` on topic `"chats"`.
   """
@@ -20,16 +21,40 @@ defmodule Peon.Chats do
       field :title, :string
       field :created_by, :string
       field :session_id, :string
+      # The agent's model (provider/model) and effort; nil for the defaults.
+      field :model, :string
+      field :effort, :string
+      # A repo chat's pull request (`Peon.PullRequest`).
+      field :pr_url, :string
       timestamps(type: :utc_datetime)
     end
   end
 
   def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "chats")
 
-  def create(title, created_by) do
+  @efforts ~w(low medium high)
+
+  def efforts, do: @efforts
+
+  @doc "Creates a chat. Options: `:model` (provider/model) and `:effort` (#{Enum.join(@efforts, ", ")})."
+  def create(title, created_by, opts \\ []) do
     id = :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower, padding: false)
     title = title |> String.trim() |> String.slice(0, 80)
-    chat = Repo.insert!(%Chat{id: id, title: title, created_by: created_by})
+
+    model =
+      if is_binary(opts[:model]) and opts[:model] =~ ~r"\A[\w.-]+/[\w.:-]+\z", do: opts[:model]
+
+    effort = if opts[:effort] in @efforts, do: opts[:effort]
+
+    chat =
+      Repo.insert!(%Chat{
+        id: id,
+        title: title,
+        created_by: created_by,
+        model: model,
+        effort: effort
+      })
+
     Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_created, chat})
     chat
   end
@@ -40,6 +65,10 @@ defmodule Peon.Chats do
 
   def set_session(id, session_id) do
     Repo.update_all(from(c in Chat, where: c.id == ^id), set: [session_id: session_id])
+  end
+
+  def set_pr_url(id, url) do
+    Repo.update_all(from(c in Chat, where: c.id == ^id), set: [pr_url: url])
   end
 
   @doc "The chat's newest changeset, if any."

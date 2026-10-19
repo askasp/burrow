@@ -34,10 +34,16 @@ defmodule PeonWeb.Router do
     end
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", PeonWeb do
-  #   pipe_through :api
-  # end
+  # Burrow, with the token it shares with this Peon.
+  scope "/api/inline", PeonWeb do
+    pipe_through :api
+
+    get "/", InlineController, :show
+    post "/send", InlineController, :send_message
+    post "/merge", InlineController, :merge
+    post "/discard", InlineController, :discard
+    post "/add-envs", InlineController, :add_envs
+  end
 
   # Enable LiveDashboard in development
   if Application.compile_env(:peon, :dev_routes) do

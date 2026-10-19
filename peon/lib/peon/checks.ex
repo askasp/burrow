@@ -7,7 +7,8 @@ defmodule Peon.Checks do
   (`Peon.Verifier`).
 
   Steps stop at the first failure: deps, compile (warnings as errors), format
-  (of the files the changeset touches, so older files never block a change).
+  (of the files the changeset touches, so older files never block a change),
+  and on a live-only project test (`Peon.Ship.live_only?/0`).
   Results are stored on the changeset as
   `%{"steps" => [%{"name", "status", "duration_ms", "output"}]}`.
 
@@ -23,7 +24,7 @@ defmodule Peon.Checks do
 
   import Ecto.Query
 
-  alias Peon.{Code, Repo, Sandbox, Ship, Store, Workspace}
+  alias Peon.{Code, Repo, Sandbox, Ship, Store, Verifier, Workspace}
   alias Peon.Store.Changeset
 
   @topic "checks"
@@ -161,6 +162,9 @@ defmodule Peon.Checks do
       {"compile", "mix compile --warnings-as-errors"},
       {"format", if(format == "", do: "true", else: "mix format --check-formatted " <> format)}
     ]
+
+    # Live-only projects have no staging to catch a failing suite after landing.
+    steps = if Ship.live_only?(), do: steps ++ [Verifier.test_step()], else: steps
 
     {status, steps} = run_steps(dir, id, steps)
     {id, status, %{"steps" => steps}}

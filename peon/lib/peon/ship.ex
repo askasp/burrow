@@ -13,11 +13,16 @@ defmodule Peon.Ship do
 
   Peon reaches an agent by prompting its chat (`tell_chat/2`): failed tests,
   failed deploys and incidents from a running environment.
+
+  A live-only project (setting `"envs" => "live"`, how new projects start)
+  has no staging: the checks run the tests too, a human merges each passed
+  changeset (`merge/2`), and main is what's live, so merging moves prod.
+  `add_envs/1` turns it into a pipeline project, for good.
   """
 
   require Logger
 
-  alias Peon.{Chat, Code, Project, Store}
+  alias Peon.{Chat, Code, Env, Project, Store}
   alias Peon.Store.Changeset
   alias PeonCore.Policy
 
@@ -28,11 +33,26 @@ defmodule Peon.Ship do
 
   def default_review_paths, do: @review_paths
 
+  @doc "Whether the project is live-only: main is live, there is no staging."
+  def live_only?, do: Project.settings()["envs"] == "live"
+
+  @doc "The environments the project uses: prod alone when it is live-only."
+  def env_names do
+    if live_only?(), do: Enum.reject(Env.names(), &(&1 == "staging")), else: Env.names()
+  end
+
   @doc "Why a passed changeset needs a human to land it; `[]` means it lands by itself."
   def review_reasons(%{author_kind: "human"}), do: []
 
   def review_reasons(cs) do
     settings = Project.settings()
+
+    if settings["envs"] == "live",
+      do: ["merging it puts it live"],
+      else: pipeline_reasons(cs, settings)
+  end
+
+  defp pipeline_reasons(cs, settings) do
     globs = settings["review_paths"] || @review_paths
     paths = for %{"path" => path} <- cs.files, Policy.matches?(path, globs), do: path
 
@@ -47,7 +67,11 @@ defmodule Peon.Ship do
   def after_checks(cs) do
     case review_reasons(cs) do
       [] ->
-        case Store.land(cs.id, "peon") do
+        # Only a human's changeset lands by itself on a live-only project; it
+        # goes live on their say-so.
+        actor = if live_only?(), do: cs.author_id, else: "peon"
+
+        case merge(cs.id, actor) do
           {:ok, landed} -> {:landed, landed.id}
           {:error, reason} -> {:not_landed, reason}
         end
@@ -55,6 +79,51 @@ defmodule Peon.Ship do
       reasons ->
         {:held, reasons}
     end
+  end
+
+  @doc """
+  Lands passed changeset `id` on main as `actor`. On a live-only project that
+  puts it live: prod moves to it, approved by `actor`. Returns the changeset
+  now at main.
+  """
+  def merge(id, actor) do
+    with {:ok, landed} <- Store.land(id, actor) do
+      if live_only?(), do: put_live(id, landed, actor)
+      {:ok, landed}
+    end
+  end
+
+  defp put_live(id, landed, actor) do
+    prod = Code.ref("prod")
+
+    # Its tests ran in the checks. A rebased copy is a new tree: main's tests run on it.
+    test = Enum.find((landed.checks || %{})["steps"] || [], &(&1["name"] == "test"))
+
+    if (landed.id == id and test) && test["status"] == "passed",
+      do: Store.set_verify(landed.id, %{"status" => "passed", "steps" => [test]})
+
+    case Store.move_ref("prod", landed.id, (prod && prod.version) || 0, actor, approved_by: actor) do
+      {:ok, _} -> :ok
+      error -> Logger.warning("could not put ##{landed.id} live: #{inspect(error)}")
+    end
+  end
+
+  @doc """
+  Turns a live-only project into one with staging and prod. Both start at
+  what is live now; from then on main's tested tip goes to staging first.
+  """
+  def add_envs(actor) do
+    if live_only?() do
+      Project.put_settings(%{"envs" => "pipeline", "envs_by" => actor})
+      staging = Code.ref("staging")
+
+      with %{changeset_id: live} <- Code.ref("prod"),
+           true <- staging == nil or staging.changeset_id != live do
+        Store.move_ref("staging", live, (staging && staging.version) || 0, actor)
+      end
+    end
+
+    :ok
   end
 
   @doc "Submits the inverse of changeset `id` as `actor`; it lands once its checks pass."

@@ -50,10 +50,25 @@ defmodule Peon.Secrets do
     Repo.all(query) |> Enum.map(&public/1)
   end
 
+  # Peon's own credentials, e.g. a repo project's GitHub token (Peon.Git):
+  # kept here like any secret, but never given to the app.
+  @peon_only ~w(GITHUB_TOKEN)
+
   @doc "The environment variables for the app's containers: every set secret."
   def env do
-    Repo.all(from s in __MODULE__, where: not is_nil(s.value), select: {s.name, s.value})
+    Repo.all(
+      from s in __MODULE__,
+        where: not is_nil(s.value) and s.name not in @peon_only,
+        select: {s.name, s.value}
+    )
     |> Map.new()
+  end
+
+  @doc "One secret's value, or nil when it is not set."
+  def env_value(name) do
+    Repo.one(
+      from s in __MODULE__, where: s.name == ^name and not is_nil(s.value), select: s.value
+    )
   end
 
   @doc "A short hash of `env/0`, to tell whether a container has the current values."
@@ -151,6 +166,9 @@ defmodule Peon.Secrets do
   end
 
   # Wakes the chat that asked, so the agent carries on.
+  defp notify(chat_id, name) when name in @peon_only,
+    do: Ship.tell_chat(chat_id, "The user set #{name}. Carry on.")
+
   defp notify(chat_id, name) do
     Ship.tell_chat(
       chat_id,

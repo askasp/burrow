@@ -137,6 +137,21 @@ defmodule BurrowWeb.Layouts do
     """
   end
 
+  @doc """
+  An asset's path. In dev the files keep their names, and the tunnel tells
+  browsers to cache them for hours, so the path carries the file's build time.
+  """
+  def asset(path) do
+    file = Application.app_dir(:burrow, Path.join("priv/static", path))
+
+    with true <- BurrowWeb.Endpoint.config(:code_reloader) == true,
+         {:ok, %{mtime: mtime}} <- File.stat(file, time: :posix) do
+      "#{path}?v=#{mtime}"
+    else
+      _ -> path
+    end
+  end
+
   @doc "The Peon mark: a peon's face on the accent green."
   attr :size, :integer, default: 24
   attr :label, :string, default: nil

@@ -41,4 +41,6 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :burrow, start_cells: false
+config :burrow, inline_req: [plug: {Req.Test, Burrow.Inline}]
+config :burrow, opencode_model: "openai/gpt-test"
 config :burrow, peon_host: "localhost"

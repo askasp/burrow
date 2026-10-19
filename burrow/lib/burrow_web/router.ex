@@ -24,10 +24,12 @@ defmodule BurrowWeb.Router do
     get "/manifest.webmanifest", ManifestController, :show
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", BurrowWeb do
-  #   pipe_through :api
-  # end
+  # Each project's Peon, with the token it shares with Burrow.
+  scope "/api/peon", BurrowWeb do
+    pipe_through :api
+
+    post "/:id/inline", PeonController, :inline
+  end
 
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:burrow, :dev_routes) do

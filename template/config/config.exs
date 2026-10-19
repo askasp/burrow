@@ -80,7 +80,7 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # Who may embed the app in a frame. Dev allows any origin so Peon can show
-# previews in its UI.
+# previews in its UI; in prod Peon sets FRAME_ANCESTORS (config/runtime.exs).
 config :peon_template, :frame_ancestors, "'self'"
 
 # Import environment specific config. This must remain at the bottom

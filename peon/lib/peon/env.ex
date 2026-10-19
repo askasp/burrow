@@ -284,6 +284,24 @@ defmodule Peon.Env do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  @doc """
+  The origins that may show the app in a frame: Burrow's project page and this
+  Peon's workspace, and nobody else.
+  """
+  def frame_ancestors do
+    [Application.get_env(:peon, :burrow_url), PeonWeb.Endpoint.url()]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&origin/1)
+    |> Enum.uniq()
+    |> Enum.join(" ")
+  end
+
+  defp origin(url) do
+    uri = URI.parse(url)
+    default? = {uri.scheme, uri.port} in [{"https", 443}, {"http", 80}]
+    "#{uri.scheme}://#{uri.host}" <> if(default? or uri.port == nil, do: "", else: ":#{uri.port}")
+  end
+
   ## Deploying
 
   defp start_deploy(state, target, opts) do
@@ -360,7 +378,8 @@ defmodule Peon.Env do
             "PHX_HOST" => Peon.Ports.host(state.port),
             "PORT" => "4000",
             "PEON_COOKIE" => state.cookie,
-            "PEON_SECRETS" => Secrets.fingerprint(secrets)
+            "PEON_SECRETS" => Secrets.fingerprint(secrets),
+            "FRAME_ANCESTORS" => frame_ancestors()
           }),
         mounts: [{Path.join(state.base, "data"), "/data", :rw}],
         ports: [{state.port, 4000}]

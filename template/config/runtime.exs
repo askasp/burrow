@@ -39,6 +39,11 @@ if config_env() == :dev do
 end
 
 if config_env() == :prod do
+  # The Peon and Burrow pages that show the app inline, and only those.
+  if frame_ancestors = System.get_env("FRAME_ANCESTORS") do
+    config :peon_template, :frame_ancestors, "'self' " <> frame_ancestors
+  end
+
   database_path =
     System.get_env("DATABASE_PATH") ||
       raise """

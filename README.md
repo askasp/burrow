@@ -22,6 +22,14 @@ A change flows like this, with no queue in front of main:
 
 **Secrets** (API keys, tokens, the shared site password) live in Peon, never in the code: `ctrl+b k`, or the box that shows in a chat when the agent asks for one (MCP tool `request_secret`). The preview, staging and prod get them as environment variables and restart when one changes; the agent sees names only, and checks and tests get none.
 
+**Projects from a git repo.** Give a project an https git URL when you create it and its Peon works on that repo instead of the template. Each chat gets a clone on branch `peon/<chat id>`. The repo's preview pack, `.peon/preview.json`, runs its own dev stack **on the host**, in that clone, so file-watching dev servers reload as the agent edits and nothing needs committing. There are no checks, envs or store: when the agent calls `submit_changeset`, Peon commits the clone, merges the repo's main branch in, runs the pack's optional `check` command, pushes `peon/<chat id>` and opens the chat's pull request (later submits update it); the PR shows next to the preview. Pushing and PRs need the secret `GITHUB_TOKEN`, a fine-grained token for that repo (Contents and Pull requests, read and write). Peon asks for it, keeps it from the preview and the agent, and runs git without the host's credentials. Pack format: `Peon.PreviewPack`.
+
+```json
+{"ports": ["app", "api"], "local_ports": ["db"], "frame": "app",
+ "env": {"WEB_PORT": "{port.app}", "API_URL": "{url.api}", "COMPOSE_PROJECT_NAME": "{name}"},
+ "start": "docker compose up -d --build", "stop": "docker compose down -v", "ready": "/"}
+```
+
 **Who can see an app** is one line in the template: `<App>.SiteAccess.mode/0` is `:login` (default), `:shared_password` (the secret `SITE_PASSWORD`, asked at `/unlock`) or `:public`. Ask in the chat to switch.
 
 Keyboard: `ctrl+b`, then a key (tmux style, from Beamcode). `ctrl+b ?` lists them.

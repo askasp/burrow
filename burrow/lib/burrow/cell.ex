@@ -114,7 +114,7 @@ defmodule Burrow.Cell do
     project = state.project
     data_dir = Path.join(state.dir, "peon")
     File.mkdir_p!(data_dir)
-    {previews, staging, prod} = split_ports(project.preview_ports)
+    {previews, staging, prod} = split_ports(project)
 
     env = %{
       "PHX_SERVER" => "true",
@@ -134,10 +134,14 @@ defmodule Burrow.Cell do
       "PEON_PROD_PORT" => to_string(prod),
       "PEON_PORT_URL" => Burrow.Ports.url_template(),
       "PEON_BURROW_URL" => BurrowWeb.Endpoint.url() <> "/projects",
+      "PEON_BURROW_API" => Burrow.Inline.push_url(project),
+      "PEON_API_TOKEN" => Burrow.Inline.token(project),
+      "PEON_ENVS" => project.envs,
       "PEON_SSO_SECRET" => Projects.secret(project, "sso"),
       "PEON_OPENCODE_BIN" => Application.fetch_env!(:burrow, :opencode_bin),
       "PEON_OPENCODE_DATA_DIR" => Burrow.OpenCode.data_dir(project.user_id),
-      "PEON_OPENCODE_MODEL" => Burrow.OpenCode.model(project.user_id)
+      "PEON_OPENCODE_MODEL" => Burrow.OpenCode.model(project.user_id),
+      "PEON_REPO_URL" => project.repo_url || ""
     }
 
     port =
@@ -183,8 +187,13 @@ defmodule Burrow.Cell do
   end
 
   # The project's port range: chat previews, then the last two ports a browser
-  # will open for staging and prod (Peon skips blocked ones for previews).
+  # will open for staging and prod (Peon skips blocked ones for previews). A
+  # repo project has no envs, so its whole range is previews.
   @doc false
+  def split_ports(%Projects.Project{preview_ports: range} = project) do
+    if Projects.Project.repo?(project), do: {range, "", ""}, else: split_ports(range)
+  end
+
   def split_ports(range) do
     [first, last] = range |> String.split("-") |> Enum.map(&String.to_integer/1)
     [prod, staging | _] = last..first//-1 |> Enum.filter(&Burrow.Ports.browser_safe?/1)

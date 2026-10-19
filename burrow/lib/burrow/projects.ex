@@ -190,9 +190,36 @@ defmodule Burrow.Projects do
        else: peon_port(port + 1)
   end
 
-  @doc "A short-lived link that signs the user into the project's Peon."
-  def peon_url(project, email) do
+  @doc """
+  Turns a live-only project into one with staging and prod, for good. Its
+  Peon does the work (`Burrow.Inline.add_envs/2`); this records it.
+  """
+  def add_envs(%Scope{} = scope, %Project{} = project) do
+    cond do
+      not owner?(scope, project) ->
+        {:error, :not_owner}
+
+      not Project.live_only?(project) ->
+        {:ok, project}
+
+      true ->
+        with {:ok, _state} <- Burrow.Inline.add_envs(project, scope.user.email) do
+          {1, _} =
+            Repo.update_all(from(p in Project, where: p.id == ^project.id),
+              set: [envs: "pipeline"]
+            )
+
+          project = %{project | envs: "pipeline"}
+          Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
+          {:ok, project}
+        end
+    end
+  end
+
+  @doc "A short-lived link that signs the user into the project's Peon, then opens `to` there."
+  def peon_url(project, email, to \\ nil) do
     token = Phoenix.Token.sign(secret(project, "sso"), "peon sso", email)
-    Burrow.Ports.url(project.port) <> "/sso?token=#{token}"
+    query = URI.encode_query(Enum.reject([token: token, to: to], &(elem(&1, 1) == nil)))
+    Burrow.Ports.url(project.port) <> "/sso?" <> query
   end
 end

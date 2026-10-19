@@ -33,13 +33,20 @@ defmodule Peon.Application do
   end
 
   # Bootstrap, checks, environments and previews touch Docker and the
-  # template; tests start them explicitly when needed.
+  # template; tests start them explicitly when needed. A repo project has no
+  # store to check, land or deploy: just its repo and the agent's tools.
   defp workers do
-    if Application.get_env(:peon, :start_workers, true),
-      do:
+    cond do
+      not Application.get_env(:peon, :start_workers, true) ->
+        []
+
+      Peon.Source.repo?() ->
+        [Peon.Git, Peon.Agent.MCP]
+
+      true ->
         [Peon.Bootstrap, Peon.Checks, Peon.Verifier, Peon.Agent.MCP] ++
-          Enum.map(Peon.Env.names(), &{Peon.Env, &1}),
-      else: []
+          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [Peon.Inline]
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration

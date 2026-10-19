@@ -9,6 +9,15 @@ defmodule PeonTemplateWeb.PageControllerTest do
       else: assert(html_response(conn, 200))
   end
 
+  test "only the configured origins may show the app in a frame", %{conn: conn} do
+    previous = Application.get_env(:peon_template, :frame_ancestors)
+    Application.put_env(:peon_template, :frame_ancestors, "'self' https://burrow.example")
+    on_exit(fn -> Application.put_env(:peon_template, :frame_ancestors, previous) end)
+
+    [csp] = conn |> get(~p"/") |> get_resp_header("content-security-policy")
+    assert csp =~ "frame-ancestors 'self' https://burrow.example;"
+  end
+
   describe "logged in" do
     setup :register_and_log_in_user
 

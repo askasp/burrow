@@ -6,7 +6,7 @@ defmodule Peon.Bootstrap do
 
   require Logger
 
-  alias Peon.{Code, Sandbox, Store, Template}
+  alias Peon.{Code, Project, Sandbox, Store, Template}
 
   def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
 
@@ -26,6 +26,8 @@ defmodule Peon.Bootstrap do
       {tree, blobs} = Template.instantiate(Application.fetch_env!(:peon, :template_dir), otp_app)
       {tree, blobs} = formatted(tree, blobs)
       {:ok, cs} = Store.import_tree(tree, blobs, slug, name, %{kind: :human, id: "burrow"})
+      # Burrow starts new projects live-only ("live"); see Peon.Ship.
+      Project.put_settings(%{"envs" => Application.get_env(:peon, :envs, "pipeline")})
       Logger.info("created #{slug} from the template as changeset #{cs.id}")
     end
   end

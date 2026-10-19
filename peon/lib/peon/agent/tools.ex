@@ -7,11 +7,67 @@ defmodule Peon.Agent.Tools do
   `call/3` returns `{text, failed?}`.
   """
 
-  alias Peon.{Chat, Chats, Checks, Env, Secrets, Store, Workspace}
+  alias Peon.{Chat, Chats, Checks, Env, PreviewPack, PullRequest, Secrets, Store, Workspace}
 
   @check_timeout :timer.minutes(15)
 
+  # A repo project has no store, checks or envs (`Peon.Source`).
+  @repo_tools ~w(submit_changeset restart_preview secrets request_secret)
+
   def specs do
+    if Peon.Source.repo?(),
+      do: for(spec <- all_specs(), spec.name in @repo_tools, do: repo_spec(spec)),
+      else: all_specs()
+  end
+
+  defp repo_spec(%{name: "submit_changeset"} = spec),
+    do: %{
+      spec
+      | description: """
+        Submit your changes in /app as a pull request, only when the user asks for it. \
+        Peon commits them, merges the repo's main branch in, runs the preview pack's \
+        check if it has one, pushes your branch and opens its PR, or updates the PR an \
+        earlier submit opened. On failure, fix the problem and submit again.\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{
+            intent: %{
+              type: "string",
+              description: "The PR's title and commit message: one line, what this changes"
+            },
+            description: %{
+              type: "string",
+              description: "The PR's description: what changed, why, and how you checked it"
+            }
+          },
+          required: ["intent"]
+        }
+    }
+
+  defp repo_spec(%{name: "restart_preview"} = spec),
+    do: %{
+      spec
+      | description: """
+        Restart the preview: run the preview pack's stop and start commands again, \
+        re-reading .peon/preview.json. Use it after changing that file or anything the \
+        dev servers only read when they start.\
+        """
+    }
+
+  defp repo_spec(%{name: "secrets"} = spec),
+    do: %{
+      spec
+      | description: """
+        List the project's secrets: API keys, tokens and passwords the user keeps in Peon. \
+        You see names only. Every set secret is an environment variable for the preview's \
+        commands. Your shell doesn't have them.\
+        """
+    }
+
+  defp repo_spec(spec), do: spec
+
+  defp all_specs do
     [
       %{
         name: "submit_changeset",
@@ -111,18 +167,26 @@ defmodule Peon.Agent.Tools do
     ]
   end
 
-  def call("submit_changeset", %{"intent" => intent}, chat_id) when is_binary(intent) do
-    submit(chat_id, intent)
+  def call(name, args, chat_id) do
+    if Enum.any?(specs(), &(&1.name == name)),
+      do: run(name, args, chat_id),
+      else: {"Unknown tool or missing arguments: #{name}", true}
   end
 
-  def call("restart_preview", _args, chat_id) do
+  defp run("submit_changeset", %{"intent" => intent} = args, chat_id) when is_binary(intent) do
+    if Peon.Source.repo?(),
+      do: submit_pr(chat_id, intent, args["description"]),
+      else: submit(chat_id, intent)
+  end
+
+  defp run("restart_preview", _args, chat_id) do
     case Chat.restart_preview(chat_id) do
       :ok -> {"The preview is restarting. Check it with curl in a minute.", false}
       {:error, reason} -> {"Could not restart the preview: #{inspect(reason)}", true}
     end
   end
 
-  def call("restore", %{"paths" => paths}, chat_id) when is_list(paths) do
+  defp run("restore", %{"paths" => paths}, chat_id) when is_list(paths) do
     {_base, changes} = Workspace.changes(Chat.workspace_dir(chat_id))
     changed = MapSet.new(changes, &elem(&1, 0))
     {known, unknown} = Enum.split_with(paths, &MapSet.member?(changed, &1))
@@ -135,7 +199,7 @@ defmodule Peon.Agent.Tools do
     {text, false}
   end
 
-  def call("runtime", %{"env" => env, "what" => what} = args, _chat_id) do
+  defp run("runtime", %{"env" => env, "what" => what} = args, _chat_id) do
     if env in Env.names() do
       case Env.runtime(env, what, Map.take(args, ["sort", "limit"])) do
         {:ok, result} -> {Jason.encode!(result, pretty: true), false}
@@ -146,7 +210,7 @@ defmodule Peon.Agent.Tools do
     end
   end
 
-  def call("secrets", _args, _chat_id) do
+  defp run("secrets", _args, _chat_id) do
     case Secrets.list() do
       [] ->
         {"No secrets yet. Ask the user for one with request_secret.", false}
@@ -158,8 +222,8 @@ defmodule Peon.Agent.Tools do
     end
   end
 
-  def call("request_secret", %{"name" => name, "why" => why}, chat_id)
-      when is_binary(name) and is_binary(why) do
+  defp run("request_secret", %{"name" => name, "why" => why}, chat_id)
+       when is_binary(name) and is_binary(why) do
     case Secrets.request(name, String.slice(why, 0, 300), chat_id) do
       {:ok, :already_set} ->
         {"#{name} is already set. Read it with System.get_env(\"#{name}\").", false}
@@ -173,7 +237,7 @@ defmodule Peon.Agent.Tools do
     end
   end
 
-  def call(name, _args, _chat_id), do: {"Unknown tool or missing arguments: #{name}", true}
+  defp run(name, _args, _chat_id), do: {"Unknown tool or missing arguments: #{name}", true}
 
   defp submit(chat_id, intent) do
     {base_id, changes} = Workspace.changes(Chat.workspace_dir(chat_id))
@@ -211,6 +275,65 @@ defmodule Peon.Agent.Tools do
         end
     end
   end
+
+  defp submit_pr(chat_id, intent, description) do
+    check =
+      case Chat.preview_pack(chat_id) do
+        {:ok, %PreviewPack{check: command}, env} when command != nil -> {command, env}
+        _ -> nil
+      end
+
+    title = intent |> String.trim() |> String.split("\n") |> hd()
+    chat = Chats.get(chat_id)
+    body = String.trim("#{description}\n\nMade in Peon, chat \"#{chat.title}\".")
+
+    case PullRequest.submit(chat_id, Chat.workspace_dir(chat_id), title, body, check) do
+      {:ok, nil} ->
+        {"Pushed branch peon/#{chat_id}. The repo is not on GitHub, so there is no PR; " <>
+           "tell the user the branch.", false}
+
+      {:ok, url} ->
+        Chat.pr_opened(chat_id, url)
+
+        {"Pushed branch peon/#{chat_id}; its pull request is #{url}. Give the user that " <>
+           "link. Submit again after more changes: it updates the same PR.", false}
+
+      {:error, reason} ->
+        {pr_error(reason), true}
+    end
+  end
+
+  defp pr_error(:no_changes), do: "There are no changes in /app to submit."
+
+  defp pr_error(:no_token),
+    do:
+      "Peon needs the GITHUB_TOKEN secret to push and asked the user for it. Tell them, " <>
+        "and submit again when you get the message that it is set."
+
+  defp pr_error({:conflict, paths}) do
+    """
+    The repo's main branch changed the same lines as you in #{Enum.join(paths, ", ")}. \
+    The merge is in progress in /app: resolve the conflict markers in those files, keeping \
+    both sides' intent, check the preview, and submit again. Don't commit; Peon does.\
+    """
+  end
+
+  defp pr_error({:unresolved, paths}),
+    do:
+      "These files still have conflict markers: #{Enum.join(paths, ", ")}. Resolve them " <>
+        "and submit again."
+
+  defp pr_error({:check_failed, output}) do
+    """
+    The preview pack's check failed, so nothing was pushed:
+
+    #{String.slice(output, -4000, 4000)}
+
+    Fix it and submit again.\
+    """
+  end
+
+  defp pr_error(message), do: "Could not submit: #{message}"
 
   defp await_checks(id) do
     receive do

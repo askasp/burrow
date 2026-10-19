@@ -19,10 +19,11 @@ defmodule Peon.Verifier do
 
   alias Peon.{Checks, Code, Env, Ship, Store}
 
-  @steps [
-    {"deps", "mix deps.get"},
-    {"test", "rm -f *_test.db *_test.db-*; mix test --warnings-as-errors"}
-  ]
+  @test {"test", "rm -f *_test.db *_test.db-*; mix test --warnings-as-errors"}
+  @steps [{"deps", "mix deps.get"}, @test]
+
+  @doc "The step that runs the suite, for `Peon.Checks` on live-only projects."
+  def test_step, do: @test
 
   # How far back from main's tip to look for the last passing changeset.
   @max_chain 200
@@ -161,10 +162,14 @@ defmodule Peon.Verifier do
   end
 
   # Main's tip passed: deploy it to staging, unless it already failed there.
+  # A live-only project has no staging; merging moved prod already.
   defp stage(tip) do
     staging = Code.ref("staging")
 
     cond do
+      Ship.live_only?() ->
+        :ok
+
       staging && staging.changeset_id == tip ->
         :ok
 

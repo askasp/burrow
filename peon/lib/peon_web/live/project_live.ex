@@ -26,15 +26,16 @@ defmodule PeonWeb.ProjectLive do
      socket
      |> assign(project: Project.get(), chat: nil, info: nil, preview_env: "dev")
      |> assign(burrow_url: Application.get_env(:peon, :burrow_url))
+     |> assign(repo?: Peon.Source.repo?())
      |> load_chats()
      |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
      |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
      |> assign(changeset: nil, main_id: nil, form: to_form(%{"text" => ""}))
-     |> assign(landed?: false, held: nil, env_names: Env.names(), show_ship: false)
+     |> assign(landed?: false, held: nil, env_names: Ship.env_names(), show_ship: false)
      |> assign(secrets: Secrets.list(), show_secrets: false, secrets_key: 0)
      # Phones: one pane at a time, chats in a drawer
      |> assign(pane: "chat", drawer: false)
-     |> assign(envs: Map.new(Env.names(), &{&1, Env.info(&1)}))
+     |> assign(envs: Map.new(Ship.env_names(), &{&1, Env.info(&1)}))
      |> load_ship()}
   end
 
@@ -116,9 +117,14 @@ defmodule PeonWeb.ProjectLive do
   end
 
   def handle_event("land", %{"id" => id}, socket) do
-    case Store.land(String.to_integer(id), socket.assigns.user) do
+    case Ship.merge(String.to_integer(id), socket.assigns.user) do
       {:ok, cs} ->
-        {:noreply, socket |> info("Changeset #{cs.id} is now on main.") |> load_changeset()}
+        text =
+          if Ship.live_only?(),
+            do: "Changeset #{cs.id} is on main and going live.",
+            else: "Changeset #{cs.id} is now on main."
+
+        {:noreply, socket |> info(text) |> load_changeset()}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Could not land: #{inspect(reason)}")}
@@ -321,7 +327,7 @@ defmodule PeonWeb.ProjectLive do
   defp load_changeset(%{assigns: %{chat: nil}} = socket), do: socket
 
   defp load_changeset(socket) do
-    main_id = Code.ref("main").changeset_id
+    main_id = with(%{changeset_id: id} <- Code.ref("main"), do: id)
     changeset = Chats.latest_changeset(socket.assigns.chat.id)
 
     assign(socket,
@@ -358,6 +364,9 @@ defmodule PeonWeb.ProjectLive do
   defp start_error(:no_free_preview_port),
     do:
       "Every preview slot is in use by another chat. Close one, or wait for an idle chat to stop."
+
+  defp start_error("git " <> _ = output),
+    do: "Could not check out the repo: #{output}"
 
   defp start_error(reason), do: "The agent could not start: #{inspect(reason)}"
 
@@ -444,6 +453,7 @@ defmodule PeonWeb.ProjectLive do
         </nav>
 
         <.ship_status
+          :if={not @repo?}
           main={@main}
           culprit={@culprit}
           envs={@envs}
@@ -592,6 +602,26 @@ defmodule PeonWeb.ProjectLive do
             <span class="truncate">{@preview.url || "no preview yet"}</span>
           </div>
           <span :if={@preview.ref} class="tag mono" title="Version shown in the preview">{@preview.ref}</span>
+          <a
+            :for={{name, url} <- @preview[:links] || []}
+            href={url}
+            target="_blank"
+            rel="noopener"
+            class="tag mono"
+            title={"Open #{name} in a new tab"}
+          >
+            {name} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
+          </a>
+          <a
+            :if={@preview[:pr]}
+            href={@preview.pr}
+            target="_blank"
+            rel="noopener"
+            class="tag mono"
+            title="The chat's pull request"
+          >
+            PR {pr_number(@preview.pr)} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
+          </a>
           <button
             :if={@preview.url}
             type="button"
@@ -720,6 +750,8 @@ defmodule PeonWeb.ProjectLive do
     """
   end
 
+  defp pr_number(url), do: "#" <> (url |> String.split("/") |> List.last())
+
   # What the preview pane shows: the chat's dev preview, or staging or prod.
   defp preview(%{preview_env: "dev", info: nil, chat: chat, starting: starting}) do
     message =
@@ -732,6 +764,8 @@ defmodule PeonWeb.ProjectLive do
 
   defp preview(%{preview_env: "dev", info: info, changeset: cs}) do
     %{
+      links: info[:preview_links] || [],
+      pr: info[:pr_url],
       url: info.preview_url,
       status: info.preview_status,
       ref: cs && "##{cs.id}",
@@ -1366,10 +1400,12 @@ defmodule PeonWeb.ProjectLive do
   defp st_tone(status) when status in [:starting, :loading, :booting, :watching, :attaching],
     do: "warn"
 
-  defp st_tone(status) when status in [nil, :stopped], do: "idle"
+  defp st_tone(status) when status in [nil, :stopped, :no_pack], do: "idle"
   defp st_tone(_), do: "err"
 
   defp preview_word({:crashed, _}), do: "stopped"
+  defp preview_word(:no_pack), do: "no preview"
+  defp preview_word({:pack_error, _}), do: "pack error"
   defp preview_word(status), do: to_string(status)
 
   defp deploy_tone("healthy"), do: "ok"
@@ -1384,6 +1420,12 @@ defmodule PeonWeb.ProjectLive do
 
   defp preview_message({:crashed, code}),
     do: "The preview stopped (exit #{code}). Check the logs or restart it."
+
+  defp preview_message(:no_pack),
+    do: "This repo has no .peon/preview.json yet. Ask the agent to add one for a preview."
+
+  defp preview_message({:pack_error, message}),
+    do: "The preview pack (.peon/preview.json) needs fixing: #{message}"
 
   defp preview_message(_), do: ""
 

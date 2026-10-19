@@ -64,7 +64,19 @@ if config_env() != :test do
         "http://#{System.get_env("PEON_PREVIEW_HOST", "localhost")}:{port}",
     # Burrow's address, for the workspace's link back to the project list
     burrow_url: System.get_env("PEON_BURROW_URL"),
+    # Where Peon pushes the inline chat's state (Peon.Inline), and the token
+    # both ways between Burrow and this Peon
+    burrow_api: System.get_env("PEON_BURROW_API"),
+    api_token: System.get_env("PEON_API_TOKEN"),
+    # What a new project starts as: "live" (main is live) or "pipeline"
+    envs: System.get_env("PEON_ENVS", "pipeline"),
     sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
+    # An existing git repo to work on instead of the template (Peon.Source)
+    repo:
+      (case System.get_env("PEON_REPO_URL", "") do
+         "" -> nil
+         url -> %{url: url, branch: System.get_env("PEON_REPO_BRANCH", "main")}
+       end),
     sso_secret: System.get_env("PEON_SSO_SECRET"),
     # The agent: opencode, run per chat in the sandbox with the user's login.
     opencode: [
