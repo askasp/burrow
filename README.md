@@ -74,8 +74,10 @@ To work in the terminal instead, **Open in opencode** in a chat shows the comman
 |---|---|
 | Burrow | 4000 |
 | Peon for project N | 4100 + N |
-| Previews for project N | 5000 + 10·N … +7 |
-| Staging, prod for project N | 5000 + 10·N + 8, + 9 |
+| Previews for project N | 21000 + 50·N … +47 (a repo project: all 50) |
+| Staging, prod for project N | 21000 + 50·N + 48, + 49 |
+
+Projects made before 2026-10-20 keep their 5000 + 10·N block. On the public tunnel, `peon-<port>.<domain>` reaches any of these ports through a small host-to-port router (ansible role `burrow`).
 
 Data lives in `data/` (gitignored); each user's opencode logins are in `data/burrow/users/<id>/opencode`. Delete `data/` to start over.
 

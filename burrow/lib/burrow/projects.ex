@@ -18,8 +18,11 @@ defmodule Burrow.Projects do
   alias Burrow.Teams
 
   @peon_port_base 4100
-  @preview_port_base 5000
-  @previews_per_project 10
+  # Project N gets ports 21000 + 50·N … +49. Projects made before keep the
+  # 5000 + 10·N block they were given (`preview_ports` is stored). The tunnel
+  # routes peon-<port>.<domain> to any of them, so a block can be this big.
+  @preview_port_base 21000
+  @previews_per_project 50
 
   def subscribe, do: Phoenix.PubSub.subscribe(Burrow.PubSub, "projects")
 
