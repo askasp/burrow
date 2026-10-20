@@ -43,6 +43,9 @@ defmodule Burrow.Projects do
       where: p.user_id == ^user.id or p.team_id in subquery(Teams.ids_query(user.id))
   end
 
+  @doc "Whether `port` is a project's Peon (`BurrowWeb.PeonProxy` passes only those on)."
+  def peon_port?(port), do: Repo.exists?(from p in Project, where: p.port == ^port)
+
   def visible?(%Scope{} = scope, id),
     do: Repo.exists?(from p in visible(scope), where: p.id == ^id)
 

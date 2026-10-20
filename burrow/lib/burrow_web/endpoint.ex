@@ -42,6 +42,10 @@ defmodule BurrowWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # Workspaces at /w/<port>/: on to that project's Peon, before Burrow reads
+  # the body or its session.
+  plug BurrowWeb.PeonProxy
+
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

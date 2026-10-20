@@ -181,36 +181,28 @@ defmodule Burrow.ProjectsTest do
              Phoenix.Token.verify(Projects.secret(project, "sso"), "peon sso", token, max_age: 60)
   end
 
-  test "behind a tunnel the Peon link uses the port's public address" do
-    Application.put_env(:burrow, :port_url, "https://burrow-{port}.example.com")
-    on_exit(fn -> Application.delete_env(:burrow, :port_url) end)
-    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Tunnel"})
-
-    assert Projects.peon_url(project, "a@b.no") =~
-             "https://burrow-#{project.port}.example.com/sso?token="
-
-    assert Burrow.Ports.host(project.port) == "burrow-#{project.port}.example.com"
-  end
-
-  test "workspaces can open under Burrow's own site, at /w/<port>" do
+  test "workspaces open under Burrow's own site, at /w/<port>" do
     Application.put_env(:burrow, :port_url, "https://peon-{port}.example.com")
-    Application.put_env(:burrow, :peon_url, "https://example.com/w/{port}")
-
-    on_exit(fn ->
-      Application.delete_env(:burrow, :port_url)
-      Application.delete_env(:burrow, :peon_url)
-    end)
-
+    on_exit(fn -> Application.delete_env(:burrow, :port_url) end)
     {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Home"})
 
     assert Projects.peon_url(project, "a@b.no", nil, "dark") =~
-             ~r"^https://example.com/w/#{project.port}/sso\?token=.+&theme=dark$"
+             ~r"^#{BurrowWeb.Endpoint.url()}/w/#{project.port}/sso\?token=.+&theme=dark$"
 
     assert Burrow.Ports.peon_path(project.port) == "/w/#{project.port}"
     # Previews keep their own hosts.
     assert Burrow.Ports.url(project.port) == "https://peon-#{project.port}.example.com"
+    assert Burrow.Ports.host(project.port) == "peon-#{project.port}.example.com"
+  end
 
-    Application.delete_env(:burrow, :peon_url)
+  test "BURROW_PEON_URL can give workspaces their port's own address instead" do
+    Application.put_env(:burrow, :peon_url, "https://peon-{port}.example.com")
+    on_exit(fn -> Application.delete_env(:burrow, :peon_url) end)
+    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Own host"})
+
+    assert Projects.peon_url(project, "a@b.no") =~
+             "https://peon-#{project.port}.example.com/sso?token="
+
     assert Burrow.Ports.peon_path(project.port) == nil
   end
 end
