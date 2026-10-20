@@ -134,8 +134,8 @@ defmodule Burrow.Cell do
       "PEON_PROD_PORT" => to_string(prod),
       "PEON_PORT_URL" => Burrow.Ports.url_template(),
       "PEON_BURROW_URL" => BurrowWeb.Endpoint.url() <> "/projects",
-      "PEON_BURROW_API" => Burrow.Inline.push_url(project),
-      "PEON_API_TOKEN" => Burrow.Inline.token(project),
+      "PEON_BURROW_API" => Burrow.PeonAPI.api_url(project),
+      "PEON_API_TOKEN" => Burrow.PeonAPI.token(project),
       "PEON_ENVS" => project.envs,
       "PEON_SSO_SECRET" => Projects.secret(project, "sso"),
       "PEON_OPENCODE_BIN" => Application.fetch_env!(:burrow, :opencode_bin),
@@ -143,6 +143,8 @@ defmodule Burrow.Cell do
       "PEON_OPENCODE_MODEL" => Burrow.OpenCode.model(project.user_id),
       "PEON_REPO_URL" => project.repo_url || ""
     }
+
+    env = Map.merge(env, auth_env(project))
 
     port =
       Port.open({:spawn_executable, Application.fetch_env!(:burrow, :peon_release)}, [
@@ -156,6 +158,24 @@ defmodule Burrow.Cell do
     {:os_pid, os_pid} = Port.info(port, :os_pid)
     File.write!(pid_file(state.dir), to_string(os_pid))
     set_status(%{state | port: port, os_pid: os_pid}, :starting)
+  end
+
+  @doc false
+  # The login the new app starts with. A "basic" login is only on the project
+  # `Burrow.Projects.create/2` just made (it isn't stored), so it reaches Peon
+  # on the first start alone; Peon keeps it as the app's secrets.
+  def auth_env(project) do
+    case Projects.Project.basic_login(project) do
+      {user, pw} ->
+        %{
+          "PEON_AUTH" => project.auth,
+          "PEON_BASIC_AUTH_USERNAME" => user,
+          "PEON_BASIC_AUTH_PASSWORD" => pw
+        }
+
+      nil ->
+        %{"PEON_AUTH" => project.auth}
+    end
   end
 
   defp stop_peon(%{os_pid: nil}), do: :ok

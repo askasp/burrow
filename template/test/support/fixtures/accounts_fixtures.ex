@@ -1,3 +1,4 @@
+# peon:accounts-only: Peon leaves this file out of apps made without accounts.
 defmodule PeonTemplate.AccountsFixtures do
   @moduledoc """
   This module defines test helpers for creating

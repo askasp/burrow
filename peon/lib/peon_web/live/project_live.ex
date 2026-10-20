@@ -26,11 +26,18 @@ defmodule PeonWeb.ProjectLive do
      socket
      |> assign(project: Project.get(), chat: nil, info: nil, preview_env: "dev")
      |> assign(burrow_url: Application.get_env(:peon, :burrow_url))
+     # The project rail: the user's projects in Burrow; the chats column can fold away
+     |> assign(rail: [], left_open: true)
+     |> load_rail()
      |> assign(repo?: Peon.Source.repo?())
      |> load_chats()
      |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
+     # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
+     |> assign(stopped: nil)
      |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
      |> assign(changeset: nil, main_id: nil, form: to_form(%{"text" => ""}))
+     # The "/" menu: the chat's commands and skills, and those matching the box
+     |> assign(slash_items: [], slash: [])
      |> assign(landed?: false, held: nil, env_names: Ship.env_names(), show_ship: false)
      |> assign(secrets: Secrets.list(), show_secrets: false, secrets_key: 0)
      # Phones: one pane at a time, chats in a drawer
@@ -54,14 +61,11 @@ defmodule PeonWeb.ProjectLive do
         socket =
           socket
           |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, drawer: false)
+          |> assign(slash_items: [], slash: [], stopped: nil)
           |> load_changeset()
 
         if connected?(socket),
-          do:
-            {:noreply,
-             socket
-             |> assign(starting: true)
-             |> start_async(:chat, fn -> Chat.ensure_started(id) end)},
+          do: {:noreply, start_chat(socket)},
           else: {:noreply, socket}
     end
   end
@@ -71,6 +75,14 @@ defmodule PeonWeb.ProjectLive do
 
     {:noreply,
      assign(socket, chat: nil, info: nil, changeset: nil, starting: false, drawer: false)}
+  end
+
+  defp start_chat(socket) do
+    id = socket.assigns.chat.id
+
+    socket
+    |> assign(starting: true, stopped: nil, start_error: nil)
+    |> start_async(:chat, fn -> Chat.ensure_started(id) end)
   end
 
   @impl true
@@ -87,6 +99,9 @@ defmodule PeonWeb.ProjectLive do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
 
+  def handle_async(:rail, {:ok, rail}, socket), do: {:noreply, assign(socket, rail: rail)}
+  def handle_async(:rail, {:exit, _}, socket), do: {:noreply, socket}
+
   def handle_async(:chat, {:exit, reason}, socket) do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
@@ -99,8 +114,12 @@ defmodule PeonWeb.ProjectLive do
       text == "" ->
         {:noreply, socket}
 
+      socket.assigns.chat && socket.assigns.stopped ->
+        {:noreply,
+         socket |> assign(pending: text, form: to_form(%{"text" => ""})) |> start_chat()}
+
       socket.assigns.chat && socket.assigns.info ->
-        {:noreply, socket |> assign(form: to_form(%{"text" => ""})) |> prompt(text)}
+        {:noreply, socket |> assign(form: to_form(%{"text" => ""}), slash: []) |> prompt(text)}
 
       socket.assigns.chat ->
         {:noreply, assign(socket, pending: text)}
@@ -109,6 +128,39 @@ defmodule PeonWeb.ProjectLive do
         chat = Chats.create(text, socket.assigns.user)
         {:noreply, socket |> assign(pending: text) |> push_patch(to: ~p"/c/#{chat.id}")}
     end
+  end
+
+  def handle_event("typing", %{"text" => text}, socket), do: {:noreply, slash_menu(socket, text)}
+
+  def handle_event("wake", _params, socket), do: {:noreply, start_chat(socket)}
+
+  def handle_event("toggle_left", _params, socket),
+    do: {:noreply, update(socket, :left_open, &(!&1))}
+
+  def handle_event("keep_running", %{"hours" => hours}, socket) do
+    chat = socket.assigns.chat
+
+    case Integer.parse(hours) do
+      {hours, ""} ->
+        until = Chats.keep_running(chat.id, hours)
+        socket = assign(socket, chat: %{chat | keep_until: until})
+        {:noreply, if(socket.assigns.stopped, do: start_chat(socket), else: socket)}
+
+      _ ->
+        Chats.keep_running(chat.id, nil)
+        {:noreply, assign(socket, chat: %{chat | keep_until: nil})}
+    end
+  end
+
+  # Stopping a repo preview can take minutes, so deleting runs on its own.
+  def handle_event("delete_chat", _params, socket) do
+    id = socket.assigns.chat.id
+    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Chat.delete(id) end)
+    {:noreply, socket |> info("Chat deleted.") |> push_patch(to: ~p"/")}
+  end
+
+  def handle_event("pick_slash", %{"name" => name}, socket) do
+    {:noreply, socket |> assign(slash: []) |> push_event("slash:pick", %{text: "/#{name} "})}
   end
 
   def handle_event("interrupt", _params, socket) do
@@ -248,6 +300,25 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_info({:chat_created, _}, socket), do: {:noreply, load_chats(socket)}
 
+  def handle_info({:chat_deleted, id}, socket) do
+    socket = load_chats(socket)
+
+    if socket.assigns.chat && socket.assigns.chat.id == id,
+      do: {:noreply, push_patch(socket, to: ~p"/")},
+      else: {:noreply, socket}
+  end
+
+  # The open chat stopped; the thread stays, the next message starts it again.
+  def handle_info({:stopped, reason}, %{assigns: %{info: info}} = socket)
+      when info != nil and reason != :deleted do
+    {:noreply,
+     socket
+     |> update_info(preview_status: :stopped, busy?: false)
+     |> assign(stopped: reason, slash_items: [], slash: [])}
+  end
+
+  def handle_info({:stopped, _reason}, socket), do: {:noreply, socket}
+
   def handle_info({:env, name, info}, socket) do
     socket = update(socket, :envs, &Map.put(&1, name, info))
     # Stats arrive every few seconds; only reload the lists when something moved.
@@ -271,6 +342,36 @@ defmodule PeonWeb.ProjectLive do
   defp info(socket, text) do
     Process.send_after(self(), :clear_info, 4_000)
     put_flash(socket, :info, text)
+  end
+
+  # While the box holds just "/name", the commands and skills it matches,
+  # names starting with it first. A bare "/" reloads them: the agent may have
+  # added one to the workspace.
+  defp slash_menu(%{assigns: %{info: nil}} = socket, _text), do: assign(socket, slash: [])
+
+  defp slash_menu(socket, text) do
+    case Regex.run(~r{\A/(\S*)\z}, text) do
+      [_, typed] ->
+        socket = if typed == "", do: load_slash(socket), else: socket
+
+        matches =
+          socket.assigns.slash_items
+          |> Enum.filter(&String.contains?(&1.name, typed))
+          |> Enum.sort_by(&(not String.starts_with?(&1.name, typed)))
+          |> Enum.take(8)
+
+        assign(socket, slash: matches)
+
+      nil ->
+        assign(socket, slash: [])
+    end
+  end
+
+  defp load_slash(socket) do
+    case Chat.slash_commands(socket.assigns.chat.id) do
+      {:ok, items} -> assign(socket, slash_items: items)
+      _ -> socket
+    end
   end
 
   defp prompt(socket, text) do
@@ -406,7 +507,46 @@ defmodule PeonWeb.ProjectLive do
         </div>
       </header>
       <div :if={@drawer} class="ws-scrim" phx-click="drawer" aria-hidden="true"></div>
-      <aside class="ws-left" data-kb-zoom-hide aria-label="Project and chats">
+      <nav class="ws-rail" data-kb-zoom-hide aria-label="Projects">
+        <a href={@burrow_url || ~p"/"} class="ws-rail-home" title="All projects">
+          <Layouts.mark size={26} />
+        </a>
+        <div class="ws-rail-list">
+          <%= for p <- @rail do %>
+            <span
+              :if={p.current}
+              class="ws-tile current"
+              title={p.name}
+              aria-current="page"
+            >
+              {tile_initials(p.name)}<i class={["dot", rail_tone(p.status)]}></i>
+            </span>
+            <a :if={!p.current} href={p.url} class="ws-tile" title={"#{p.name} · #{p.status}"}>
+              {tile_initials(p.name)}<i class={["dot", rail_tone(p.status)]}></i>
+            </a>
+          <% end %>
+        </div>
+        <button
+          type="button"
+          phx-click="toggle_left"
+          class="ws-tile ws-rail-fold"
+          data-kb-key="b"
+          data-kb-label={if @left_open, do: "Hide chats", else: "Show chats"}
+          data-kb-group="Chats"
+          aria-pressed={to_string(!@left_open)}
+          title={if @left_open, do: "Hide chats", else: "Show chats"}
+        >
+          <.icon
+            name={if @left_open, do: "hero-chevron-double-left", else: "hero-chevron-double-right"}
+            class="size-4"
+          />
+        </button>
+      </nav>
+      <aside
+        class={["ws-left", !@left_open && "folded"]}
+        data-kb-zoom-hide
+        aria-label="Project and chats"
+      >
         <div class="ws-left-top">
           <a href={@burrow_url || ~p"/"} class="ws-brand" aria-label="Peon, back to projects">
             <Layouts.mark size={26} /> <span>peon</span>
@@ -487,6 +627,39 @@ defmodule PeonWeb.ProjectLive do
           <span :if={@changeset} class="mono muted text-xs shrink-0">
             {if(@landed?, do: "##{@changeset.id} on main", else: "##{@changeset.id}")}
           </span>
+          <form :if={@chat} id="keep-running-form" phx-change="keep_running" class="ml-auto shrink-0">
+            <label class="sr-only" for="keep-running">Keep running</label>
+            <select
+              id="keep-running"
+              name="hours"
+              class="field keep"
+              title="How long the agent and preview stay up without use, e.g. while others test the preview"
+            >
+              <option :if={Chats.kept_running?(@chat)} value="kept" selected>
+                Running until {Calendar.strftime(@chat.keep_until, "%b %-d, %H:%M UTC")}
+              </option>
+              <option value="">Stops after 30 min idle</option>
+              <option value="4">Keep running 4 hours</option>
+              <option value="24">Keep running 1 day</option>
+              <option value="168">Keep running 7 days</option>
+            </select>
+          </form>
+          <button
+            :if={@chat}
+            type="button"
+            phx-click="delete_chat"
+            data-confirm={
+              if @repo?,
+                do:
+                  "Delete this chat? Its agent, preview and checkout go; a pull request it opened stays open.",
+                else: "Delete this chat? Its agent, preview and workspace go; landed changesets stay."
+            }
+            class="icon-btn sm shrink-0"
+            aria-label="Delete chat"
+            title="Delete chat"
+          >
+            <.icon name="hero-trash" class="size-4" />
+          </button>
         </header>
 
         <div class="ws-scroll" id="messages" phx-hook=".ScrollBottom">
@@ -557,7 +730,28 @@ defmodule PeonWeb.ProjectLive do
             step={@step}
             envs={@envs}
           />
-          <.form for={@form} id="composer" phx-submit="send" class="composer">
+          <.form for={@form} id="composer" phx-submit="send" phx-change="typing" class="composer">
+            <div
+              :if={@slash != []}
+              id="slash-menu"
+              class="slash"
+              role="listbox"
+              aria-label="Commands and skills"
+            >
+              <button
+                :for={{item, i} <- Enum.with_index(@slash)}
+                type="button"
+                role="option"
+                aria-selected={to_string(i == 0)}
+                phx-click="pick_slash"
+                phx-value-name={item.name}
+                class="slash-item"
+              >
+                <span class="mono shrink-0">/{item.name}</span>
+                <span class="tag shrink-0">{item.kind}</span>
+                <span class="muted truncate">{item.description}</span>
+              </button>
+            </div>
             <label class="sr-only" for="chat-input">Message Peon</label>
             <textarea
               name="text"
@@ -566,7 +760,9 @@ defmodule PeonWeb.ProjectLive do
               data-kb="search"
               data-kb-label="Chat box"
               phx-hook=".SubmitOnEnter"
-              placeholder={if @chat, do: "Describe a change…", else: "Describe your app…"}
+              placeholder={
+                if @chat, do: "Describe a change… (/ for commands)", else: "Describe your app…"
+              }
             >{@form[:text].value}</textarea>
             <div class="cbar">
               <button :if={@info} type="button" phx-click="toggle_attach" data-kb="row" class="xlink">
@@ -685,6 +881,15 @@ defmodule PeonWeb.ProjectLive do
               class="size-8 spin text-[var(--accent-text)]"
             />
             <div class="ws-prev-title">{@preview.message}</div>
+            <button
+              :if={@preview[:wake]}
+              type="button"
+              phx-click="wake"
+              data-kb="row"
+              class="btn btn-primary"
+            >
+              Start again
+            </button>
             <a
               :if={@preview[:open] && @preview.url}
               href={@preview.url}
@@ -737,7 +942,26 @@ defmodule PeonWeb.ProjectLive do
     <script :type={Phoenix.LiveView.ColocatedHook} name=".SubmitOnEnter">
       export default {
         mounted() {
+          this.handleEvent("slash:pick", ({text}) => {
+            this.el.value = text
+            this.el.focus()
+            this.el.setSelectionRange(text.length, text.length)
+          })
           this.el.addEventListener("keydown", e => {
+            // The "/" menu: arrows move, Tab or Enter picks
+            const items = [...document.querySelectorAll("#slash-menu [role=option]")]
+            const at = items.findIndex(b => b.getAttribute("aria-selected") === "true")
+            if (items.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault()
+              const next = (at + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length
+              items.forEach((b, i) => b.setAttribute("aria-selected", String(i === next)))
+              return
+            }
+            if (items.length && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+              e.preventDefault()
+              items[Math.max(at, 0)].click()
+              return
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               this.el.form.requestSubmit()
@@ -752,6 +976,28 @@ defmodule PeonWeb.ProjectLive do
 
   defp pr_number(url), do: "#" <> (url |> String.split("/") |> List.last())
 
+  defp load_rail(socket) do
+    user = socket.assigns.user
+
+    if connected?(socket),
+      do: start_async(socket, :rail, fn -> Peon.Burrow.projects(user) end),
+      else: socket
+  end
+
+  # A project's tile in the rail: "Sauna Booking" -> "SB", "watchtower" -> "Wa".
+  defp tile_initials(name) do
+    case String.split(name || "?", ~r/[\s_-]+/, trim: true) do
+      [a, b | _] -> String.upcase(String.first(a) <> String.first(b))
+      [one] -> String.capitalize(String.slice(one, 0, 2))
+      [] -> "?"
+    end
+  end
+
+  defp rail_tone("running"), do: "ok"
+  defp rail_tone("starting"), do: "warn"
+  defp rail_tone("exited"), do: "err"
+  defp rail_tone(_), do: "idle"
+
   # What the preview pane shows: the chat's dev preview, or staging or prod.
   defp preview(%{preview_env: "dev", info: nil, chat: chat, starting: starting}) do
     message =
@@ -762,7 +1008,7 @@ defmodule PeonWeb.ProjectLive do
     %{url: nil, status: if(chat, do: :starting), ref: nil, live?: false, message: message}
   end
 
-  defp preview(%{preview_env: "dev", info: info, changeset: cs}) do
+  defp preview(%{preview_env: "dev", info: info, changeset: cs, stopped: stopped}) do
     %{
       links: info[:preview_links] || [],
       pr: info[:pr_url],
@@ -770,7 +1016,9 @@ defmodule PeonWeb.ProjectLive do
       status: info.preview_status,
       ref: cs && "##{cs.id}",
       live?: info.preview_status == :running,
-      message: preview_message(info.preview_status)
+      message:
+        if(stopped, do: stopped_message(stopped), else: preview_message(info.preview_status)),
+      wake: stopped != nil
     }
   end
 
@@ -1428,6 +1676,17 @@ defmodule PeonWeb.ProjectLive do
     do: "The preview pack (.peon/preview.json) needs fixing: #{message}"
 
   defp preview_message(_), do: ""
+
+  defp stopped_message(:idle),
+    do:
+      "The agent and preview stopped after 30 minutes without use. Send a message or start them again."
+
+  defp stopped_message(:room),
+    do:
+      "Stopped to make room: at most #{Application.get_env(:peon, :max_running_chats, 3)} chats run at once. Send a message or start it again."
+
+  defp stopped_message(_),
+    do: "The agent and preview stopped. Send a message or start them again."
 
   defp env_message(env, %{status: {:crashed, _}}),
     do: "#{String.capitalize(env)} stopped. Check its logs."

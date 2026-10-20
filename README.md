@@ -30,12 +30,14 @@ A change flows like this, with no queue in front of main:
  "start": "docker compose up -d --build", "stop": "docker compose down -v", "ready": "/"}
 ```
 
-**Who can see an app** is one line in the template: `<App>.SiteAccess.mode/0` is `:login` (default), `:shared_password` (the secret `SITE_PASSWORD`, asked at `/unlock`) or `:public`. Ask in the chat to switch.
+**Login.** A new project picks its app's login: user accounts (phx.gen.auth, email and password), one username and password for everyone (HTTP basic auth; Burrow hands them to Peon once and they become the secrets `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`), or open. Basic and open apps are made without the accounts code at all: `Peon.Template` leaves out what the template marks `peon:accounts-only` / `peon:if-accounts`.
+
+**Who can see an app** is one line in it: `<App>.SiteAccess.mode/0` is `:login` (with accounts), `:basic_auth`, `:shared_password` (the secret `SITE_PASSWORD`, asked at `/unlock`) or `:public`. Ask in the chat to switch.
 
 Keyboard: `ctrl+b`, then a key (tmux style, from Beamcode). `ctrl+b ?` lists them.
 
 ```
-template/       the app every project starts from (Phoenix + LiveView + SQLite + email/password auth)
+template/       the app every project starts from (Phoenix + LiveView + SQLite, with or without email/password auth)
 peon_core/      shared pure code: blobs, trees, diffs, policy rules, ignore rules
 images/         sandbox image for checks, previews and agents
 tools/          generator for Phoenix apps with email/password auth

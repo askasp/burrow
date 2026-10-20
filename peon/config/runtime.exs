@@ -57,6 +57,8 @@ if config_env() != :test do
     preview_ports: ports,
     env_ports: env_ports,
     check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
+    # Chats running at once (agent and preview); see Peon.Chat
+    max_running_chats: String.to_integer(System.get_env("PEON_MAX_RUNNING_CHATS", "3")),
     health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
     # Where a browser reaches a preview or env port (see Peon.Ports.url/1)
     port_url:
@@ -64,12 +66,16 @@ if config_env() != :test do
         "http://#{System.get_env("PEON_PREVIEW_HOST", "localhost")}:{port}",
     # Burrow's address, for the workspace's link back to the project list
     burrow_url: System.get_env("PEON_BURROW_URL"),
-    # Where Peon pushes the inline chat's state (Peon.Inline), and the token
-    # both ways between Burrow and this Peon
+    # Burrow's API for this Peon (Peon.Burrow), and the token both ways
+    # between Burrow and this Peon
     burrow_api: System.get_env("PEON_BURROW_API"),
     api_token: System.get_env("PEON_API_TOKEN"),
     # What a new project starts as: "live" (main is live) or "pipeline"
     envs: System.get_env("PEON_ENVS", "pipeline"),
+    # The login a new app starts with: "accounts", "basic" or "open" (see
+    # Peon.Template). For "basic", Peon.Bootstrap itself reads the username and
+    # password from PEON_BASIC_AUTH_USERNAME/_PASSWORD, so they stay out of config.
+    auth: System.get_env("PEON_AUTH", "accounts"),
     sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
     # An existing git repo to work on instead of the template (Peon.Source)
     repo:

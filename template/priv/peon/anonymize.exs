@@ -2,6 +2,7 @@
 # phone numbers with fake values. Only humans edit this file.
 #
 # Invoked by Peon as: mix run priv/peon/anonymize.exs
+# peon:if-accounts
 alias PeonTemplate.Repo
 import Ecto.Query
 
@@ -9,3 +10,4 @@ Repo.update_all(
   from(u in "users", update: [set: [email: fragment("'user' || id || '@example.com'")]]),
   []
 )
+# peon:end

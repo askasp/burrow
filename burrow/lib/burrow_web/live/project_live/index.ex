@@ -1,19 +1,16 @@
 defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
   The projects screen: your projects and those shared with your teams on the
-  left, the selected one (`?p=<id>`) on the right.
-
-  A live-only project shows its running app with a chat to Peon under it
-  (`BurrowWeb.ProjectLive.Inline`), so a change can be asked for, checked,
-  previewed and merged right here. A project with staging and prod shows
-  its Peon. Share, hand over and adding staging and prod are in the ⋯ menu.
+  left, the selected one (`?p=<id>`) on the right. The work happens in each
+  project's workspace (its Peon), which has a rail back to all of them. New
+  project opens the form; share, hand over and adding staging and prod are
+  in the ⋯ menu.
   """
 
   use BurrowWeb, :live_view
 
-  alias Burrow.{Cell, Inline, Projects, Teams}
+  alias Burrow.{Cell, Projects, Teams}
   alias Burrow.Projects.Project
-  alias BurrowWeb.ProjectLive.Inline, as: InlineView
 
   @impl true
   def mount(_params, _session, socket) do
@@ -21,7 +18,6 @@ defmodule BurrowWeb.ProjectLive.Index do
       Cell.subscribe()
       Projects.subscribe()
       Teams.subscribe()
-      Inline.subscribe()
     end
 
     scope = socket.assigns.current_scope
@@ -29,10 +25,10 @@ defmodule BurrowWeb.ProjectLive.Index do
     {:ok,
      socket
      |> assign(page_title: "Projects", ai_connected: nil)
-     |> assign(form: new_form(), slug: nil, inline: %{}, models: %{})
-     |> assign(view: "live", frame_key: 0, msg: "", model: nil, effort: "medium")
+     |> assign(form: new_form(), slug: nil)
      |> assign(menu_open: false, panel: nil)
      |> load()
+     |> then(&assign(&1, creating: &1.assigns.projects == []))
      |> start_async(:ai, fn -> Burrow.OpenCode.connected?(scope.user.id) end)}
   end
 
@@ -44,42 +40,17 @@ defmodule BurrowWeb.ProjectLive.Index do
 
     if was && now && was.id == now.id,
       do: {:noreply, socket},
-      else:
-        {:noreply,
-         assign(socket,
-           view: "live",
-           msg: "",
-           model: nil,
-           effort: "medium",
-           menu_open: false,
-           panel: nil
-         )}
+      else: {:noreply, assign(socket, menu_open: false, panel: nil)}
   end
 
   defp load(socket) do
     scope = socket.assigns.current_scope
     projects = Projects.list(scope)
-    live = Enum.filter(projects, &Project.live_only?/1)
 
     socket
     |> assign(projects: projects, teams: Teams.list(scope))
     |> assign(statuses: Map.new(projects, &{&1.id, Cell.status(&1.id)}))
-    |> assign(inline: Map.new(live, &{&1.id, Inline.get(&1.id)}))
-    |> fetch_inline(live)
     |> select()
-  end
-
-  # Peons push their state; ask only those Burrow has not heard from yet.
-  defp fetch_inline(socket, projects) do
-    if connected?(socket) do
-      Enum.reduce(projects, socket, fn project, socket ->
-        if socket.assigns.inline[project.id],
-          do: socket,
-          else: start_async(socket, {:inline, project.id}, fn -> Inline.fetch(project) end)
-      end)
-    else
-      socket
-    end
   end
 
   defp select(socket) do
@@ -91,26 +62,7 @@ defmodule BurrowWeb.ProjectLive.Index do
     |> assign(selected: selected)
     |> assign(share_form: to_form(%{"team_id" => selected && selected.team_id}, as: "share"))
     |> assign(teammates: teammates(selected))
-    |> load_models()
   end
-
-  # The models the project's owner can pick for a new chat, from their AI login.
-  defp load_models(%{assigns: %{selected: %Project{envs: "live", user_id: owner}}} = socket) do
-    if connected?(socket) and not Map.has_key?(socket.assigns.models, owner) do
-      default = Burrow.OpenCode.model(owner)
-
-      socket
-      |> update(:models, &Map.put(&1, owner, [default]))
-      |> start_async({:models, owner}, fn ->
-        {:ok, models} = Burrow.OpenCode.models(owner)
-        [default | List.delete(models, default)]
-      end)
-    else
-      socket
-    end
-  end
-
-  defp load_models(socket), do: socket
 
   # Who the owner can hand the project to: the others in its team.
   defp teammates(%Project{team: %Burrow.Teams.Team{} = team, user_id: owner_id}),
@@ -130,6 +82,11 @@ defmodule BurrowWeb.ProjectLive.Index do
   end
 
   @impl true
+  def handle_event("new_project", _params, socket), do: {:noreply, assign(socket, creating: true)}
+
+  def handle_event("cancel_new", _params, socket),
+    do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil)}
+
   def handle_event("validate", %{"project" => attrs}, socket) do
     form = attrs |> Projects.change() |> Map.put(:action, :validate) |> to_form(as: "project")
     slug = if String.trim(attrs["name"] || "") != "", do: Projects.slug_base(attrs["name"])
@@ -142,7 +99,7 @@ defmodule BurrowWeb.ProjectLive.Index do
         {:noreply,
          socket
          |> put_flash(:info, "Creating #{project.name}. Its Peon starts in a few seconds.")
-         |> assign(form: new_form(), slug: nil)
+         |> assign(form: new_form(), slug: nil, creating: false)
          |> load()
          |> push_patch(to: ~p"/projects?p=#{project.id}")}
 
@@ -207,11 +164,10 @@ defmodule BurrowWeb.ProjectLive.Index do
 
     case Projects.add_envs(socket.assigns.current_scope, socket.assigns.selected) do
       {:ok, project} ->
-        live = get_in(socket.assigns.inline, [project.id, "live", "tip"])
-        at = if live, do: " Both run ##{live}.", else: ""
-
         {:noreply,
-         socket |> put_flash(:info, "#{project.name} has staging and prod now.#{at}") |> load()}
+         socket
+         |> put_flash(:info, "#{project.name} has staging and prod now. Both run what is live.")
+         |> load()}
 
       {:error, :not_owner} ->
         {:noreply,
@@ -222,72 +178,11 @@ defmodule BurrowWeb.ProjectLive.Index do
     end
   end
 
-  # The inline chat (live-only projects)
-
-  def handle_event("view", %{"view" => view}, socket) when view in ["live", "dev"],
-    do: {:noreply, assign(socket, view: view)}
-
-  def handle_event("reload", _params, socket),
-    do: {:noreply, update(socket, :frame_key, &(&1 + 1))}
-
-  def handle_event("typing", params, socket),
-    do:
-      {:noreply,
-       assign(socket, msg: params["text"] || "", model: params["model"] || socket.assigns.model)}
-
-  def handle_event("effort", %{"effort" => effort}, socket) do
-    if effort in InlineView.efforts(),
-      do: {:noreply, assign(socket, effort: effort)},
-      else: {:noreply, socket}
-  end
-
-  def handle_event("send", %{"text" => text} = params, socket) do
-    project = socket.assigns.selected
-    params = %{"text" => text, "model" => params["model"], "effort" => socket.assigns.effort}
-
-    if String.trim(text) == "" do
-      {:noreply, socket}
-    else
-      case Inline.send_message(project, socket.assigns.current_scope.user.email, params) do
-        {:ok, state} -> {:noreply, socket |> assign(msg: "") |> put_inline(project.id, state)}
-        {:error, message} -> {:noreply, put_flash(socket, :error, "Could not send: #{message}")}
-      end
-    end
-  end
-
-  def handle_event("merge", _params, socket) do
-    project = socket.assigns.selected
-
-    case Inline.merge(project, socket.assigns.current_scope.user.email) do
-      {:ok, state} -> {:noreply, put_inline(socket, project.id, state)}
-      {:error, message} -> {:noreply, put_flash(socket, :error, "Could not merge: #{message}")}
-    end
-  end
-
-  def handle_event("discard", _params, socket) do
-    project = socket.assigns.selected
-
-    case Inline.discard(project) do
-      {:ok, state} -> {:noreply, put_inline(socket, project.id, state)}
-      {:error, message} -> {:noreply, put_flash(socket, :error, "Could not discard: #{message}")}
-    end
-  end
-
   @impl true
   def handle_async(:ai, {:ok, connected?}, socket),
     do: {:noreply, assign(socket, ai_connected: connected?)}
 
   def handle_async(:ai, {:exit, _}, socket), do: {:noreply, assign(socket, ai_connected: false)}
-
-  def handle_async({:inline, id}, {:ok, {:ok, state}}, socket),
-    do: {:noreply, put_inline(socket, id, state)}
-
-  def handle_async({:inline, _id}, _result, socket), do: {:noreply, socket}
-
-  def handle_async({:models, owner}, {:ok, models}, socket),
-    do: {:noreply, update(socket, :models, &Map.put(&1, owner, models))}
-
-  def handle_async({:models, _owner}, _result, socket), do: {:noreply, socket}
 
   @impl true
   def handle_info({:cell, id, status}, socket) do
@@ -296,93 +191,107 @@ defmodule BurrowWeb.ProjectLive.Index do
       else: {:noreply, socket}
   end
 
-  def handle_info({:inline, id, state}, socket) do
-    if Map.has_key?(socket.assigns.inline, id),
-      do: {:noreply, put_inline(socket, id, state)},
-      else: {:noreply, socket}
-  end
-
   def handle_info({event, _}, socket)
       when event in [:project_created, :project_updated, :team_changed],
       do: {:noreply, load(socket)}
-
-  # A new state for project `id`. For the selected project the viewer follows
-  # the change: to dev when its checks pass, back to live once it is live.
-  defp put_inline(socket, id, state) do
-    was = socket.assigns.inline[id]
-    socket = update(socket, :inline, &Map.put(&1, id, state))
-
-    if socket.assigns.selected && socket.assigns.selected.id == id do
-      before = get_in(was || %{}, ["changeset", "phase"])
-      now = get_in(state, ["changeset", "phase"])
-
-      cond do
-        now == "ready" and before != "ready" ->
-          assign(socket, view: "dev")
-
-        now == "live" and before != "live" ->
-          socket |> assign(view: "live") |> update(:frame_key, &(&1 + 1))
-
-        not InlineView.has_dev?(state) ->
-          assign(socket, view: "live")
-
-        true ->
-          socket
-      end
-    else
-      socket
-    end
-  end
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} active={:projects}>
-      <div class="flex items-start justify-between gap-5 flex-wrap">
+      <div class="flex items-center justify-between gap-5 flex-wrap">
         <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Projects</h1>
-        <.form
-          for={@form}
-          id="project_form"
-          phx-change="validate"
-          phx-submit="create"
-          class="flex gap-2 items-start flex-[0_1_520px] flex-wrap"
+        <button
+          :if={!@creating}
+          id="new-project"
+          type="button"
+          phx-click="new_project"
+          data-kb-key="c"
+          data-kb-label="New project"
+          data-kb-group="Project"
+          class="btn btn-secondary"
+        >
+          <.icon name="hero-plus" class="size-4" /> New project
+        </button>
+      </div>
+
+      <.form
+        :if={@creating}
+        for={@form}
+        id="project_form"
+        phx-change="validate"
+        phx-submit="create"
+        class="panel flex gap-2 items-start flex-wrap"
+      >
+        <div class="flex-1 min-w-[200px]">
+          <.input
+            field={@form[:name]}
+            label="Name"
+            class="field"
+            placeholder="Sauna booking"
+            autocomplete="off"
+            phx-mounted={JS.focus()}
+            hint={"slug: #{@slug || "…"}"}
+          />
+        </div>
+        <div class="flex-1 min-w-[200px]">
+          <.input
+            field={@form[:repo_url]}
+            label="From a git repo (optional)"
+            class="field"
+            placeholder="https://github.com/you/app.git"
+            autocomplete="off"
+            hint="needs .peon/preview.json for a preview"
+          />
+        </div>
+        <div :if={blank?(@form[:repo_url].value)} class="w-[230px]">
+          <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
+        </div>
+        <div
+          :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
+          class="w-full flex gap-2 flex-wrap"
         >
           <div class="flex-1 min-w-[200px]">
             <.input
-              field={@form[:name]}
-              label="New project name"
+              field={@form[:basic_username]}
+              label="Username"
               class="field"
-              placeholder="Sauna booking"
-              data-kb-key="c"
-              data-kb-label="New project"
-              data-kb-group="Project"
               autocomplete="off"
-              hint={"slug: #{@slug || "…"}"}
             />
           </div>
           <div class="flex-1 min-w-[200px]">
             <.input
-              field={@form[:repo_url]}
-              label="From a git repo (optional)"
+              field={@form[:basic_password]}
+              type="password"
+              label="Password"
               class="field"
-              placeholder="https://github.com/you/app.git"
-              autocomplete="off"
-              hint="needs .peon/preview.json for a preview"
+              autocomplete="new-password"
+              hint="at least 8 characters; kept as the app's secrets, not in Burrow"
             />
           </div>
-          <div :if={@teams != []} class="w-[160px]">
-            <.input
-              field={@form[:team_id]}
-              type="select"
-              label="Shared with"
-              options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
-            />
-          </div>
-          <.button variant="primary" class="btn btn-primary mt-[27px]" phx-disable-with="Creating…">
+        </div>
+        <div :if={@teams != []} class="w-[160px]">
+          <.input
+            field={@form[:team_id]}
+            type="select"
+            label="Shared with"
+            options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+          />
+        </div>
+        <div class="flex gap-2 mt-[27px]">
+          <.button variant="primary" class="btn btn-primary" phx-disable-with="Creating…">
             Create
           </.button>
-        </.form>
-      </div>
+          <button
+            :if={@projects != []}
+            type="button"
+            phx-click="cancel_new"
+            class="btn btn-ghost"
+          >
+            Cancel
+          </button>
+        </div>
+      </.form>
 
       <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
         <span class="st warn"><span class="dot"></span>No AI login</span>
@@ -400,36 +309,18 @@ defmodule BurrowWeb.ProjectLive.Index do
               class={["prow", @selected && @selected.id == p.id && "sel"]}
               aria-current={@selected && @selected.id == p.id && "true"}
             >
-              <%= if Project.live_only?(p) and @statuses[p.id] == :running do %>
-                <% {label, tone} = InlineView.row_status(@inline[p.id]) %>
-                <span class="r1">
-                  <span class="name">{p.name}</span>
-                  <span class={["lbl", tone]}>
-                    <span :if={tone == "working"} class="swing" aria-hidden="true">
-                      <InlineView.pickaxe />
-                    </span>
-                    {label}
-                  </span>
-                </span>
-                <span class="r2 mono">
-                  <span>dev <b>{InlineView.dev_tip(@inline[p.id])}</b></span>
-                  <span>live <b>{InlineView.live_tip(@inline[p.id])}</b></span>
-                  <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
-                </span>
-                <span class={["hp", tone]} aria-hidden="true"><i></i></span>
-              <% else %>
-                <span class="r1">
-                  <span class="name">{p.name}</span>
-                  <.status status={@statuses[p.id]} />
-                </span>
-                <span class="r2 mono">
-                  <span>{p.slug}</span>
-                  <span :if={p.team}>shared · <b>{p.team.name}</b></span>
-                  <span :if={!p.team}>private</span>
-                  <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
-                </span>
-                <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
-              <% end %>
+              <span class="r1">
+                <span class="name">{p.name}</span>
+                <.status status={@statuses[p.id]} />
+              </span>
+              <span class="r2 mono">
+                <span>{p.slug}</span>
+                <span>{if Project.live_only?(p), do: "live", else: "staging · prod"}</span>
+                <span :if={p.team}>shared · <b>{p.team.name}</b></span>
+                <span :if={!p.team}>private</span>
+                <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
+              </span>
+              <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
             </.link>
           </li>
         </ul>
@@ -438,10 +329,7 @@ defmodule BurrowWeb.ProjectLive.Index do
           :if={@selected}
           id="selected-project"
           aria-label="Selected project"
-          class={[
-            "flex-[999_1_560px] min-w-0 flex flex-col",
-            if(Project.live_only?(@selected), do: "gap-5", else: "gap-8")
-          ]}
+          class="flex-[999_1_560px] min-w-0 flex flex-col gap-8"
         >
           <% live? = Project.live_only?(@selected) %>
           <% owner? = Projects.owner?(@current_scope, @selected) %>
@@ -451,13 +339,7 @@ defmodule BurrowWeb.ProjectLive.Index do
                 {@selected.name}
               </h2>
               <span id="project-meta" class="mono text-[12.5px] text-[var(--text-3)]">
-                <%= if live? and InlineView.detail(@inline[@selected.id]) do %>
-                  {@selected.slug} · {InlineView.detail(@inline[@selected.id])} · {if @selected.team,
-                    do: "shared with #{@selected.team.name}",
-                    else: "private"}
-                <% else %>
-                  {@selected.slug} · Peon on port {@selected.port}
-                <% end %>
+                {@selected.slug} · {if live?, do: "live", else: "staging and prod"} · Peon on port {@selected.port}
               </span>
             </div>
             <div class="flex items-center gap-2">
@@ -467,17 +349,12 @@ defmodule BurrowWeb.ProjectLive.Index do
                 data-kb-key="e"
                 data-kb-label="Open workspace"
                 data-kb-group="Project"
-                href={workspace_path(@selected, @inline[@selected.id])}
-                target="_blank"
-                class={["btn", if(live?, do: "btn-secondary", else: "btn-primary")]}
+                href={~p"/projects/#{@selected.id}/open"}
+                class="btn btn-primary"
               >
                 Open workspace
               </.link>
-              <button
-                :if={@statuses[@selected.id] != :running}
-                class={["btn", if(live?, do: "btn-secondary", else: "btn-primary")]}
-                disabled
-              >
+              <button :if={@statuses[@selected.id] != :running} class="btn btn-primary" disabled>
                 Open workspace
               </button>
               <div :if={owner?} class="menuw" phx-click-away={@menu_open && "close_menu"}>
@@ -580,95 +457,61 @@ defmodule BurrowWeb.ProjectLive.Index do
             </.form>
           </div>
 
-          <%= if live? do %>
-            <div :if={@statuses[@selected.id] != :running} class="notice warn">
-              <.status status={@statuses[@selected.id]} />
-              <span class="text-[var(--text-2)]">
-                {if @statuses[@selected.id] == :starting,
-                  do: "Peon is starting. The app shows here in a few seconds.",
-                  else: "Peon isn't running."}
-              </span>
-              <button
-                :if={@statuses[@selected.id] != :starting}
-                type="button"
-                class="btn btn-secondary btn-sm ml-auto"
-                phx-click="restart"
-                phx-value-id={@selected.id}
-              >
-                Restart Peon
-              </button>
-            </div>
-            <InlineView.inline
-              project={@selected}
-              state={@inline[@selected.id]}
-              view={@view}
-              frame_key={@frame_key}
-              msg={@msg}
-              models={@models[@selected.user_id] || []}
-              model={@model}
-              effort={@effort}
-            />
-          <% else %>
-            <div>
-              <div class="cells">
-                <div class="cell">
-                  <div class="flex items-center gap-2.5">
-                    <span class="eyebrow">peon</span>
-                    <.status status={@statuses[@selected.id]} />
-                  </div>
-                  <div class="tip">:{@selected.port}<small>{@selected.preview_ports}</small></div>
-                  <button
-                    id="restart-peon"
-                    data-kb-key="R"
-                    data-kb-label="Restart Peon"
-                    data-kb-group="Project"
-                    type="button"
-                    class="xlink w-fit"
-                    phx-click="restart"
-                    phx-value-id={@selected.id}
-                  >
-                    Restart Peon <.icon name="hero-arrow-path" class="size-3.5" />
-                  </button>
+          <div>
+            <div class="cells">
+              <div class="cell">
+                <div class="flex items-center gap-2.5">
+                  <span class="eyebrow">peon</span>
+                  <.status status={@statuses[@selected.id]} />
                 </div>
-                <div class="cell">
-                  <span class="eyebrow">sharing</span>
-                  <div class="tip plain">
-                    {if @selected.team, do: @selected.team.name, else: "Private"}
-                  </div>
-                  <span class="meta">
-                    {if @selected.team,
-                      do: "Everyone in #{@selected.team.name} can open and restart it.",
-                      else: "Only you can see it."}
-                  </span>
-                </div>
+                <div class="tip">:{@selected.port}<small>{@selected.preview_ports}</small></div>
+                <button
+                  id="restart-peon"
+                  data-kb-key="R"
+                  data-kb-label="Restart Peon"
+                  data-kb-group="Project"
+                  type="button"
+                  class="xlink w-fit"
+                  phx-click="restart"
+                  phx-value-id={@selected.id}
+                >
+                  Restart Peon <.icon name="hero-arrow-path" class="size-3.5" />
+                </button>
               </div>
-              <p class="m-0 py-3 text-[13.5px] text-[var(--text-2)]">
-                <%= if owner? do %>
-                  Runs on your AI login{if @selected.team, do: ", also when teammates chat in it"}.
-                <% else %>
-                  Owned by {@selected.user.email}. Runs on their AI login.
-                <% end %>
-              </p>
+              <div class="cell">
+                <span class="eyebrow">sharing</span>
+                <div class="tip plain">
+                  {if @selected.team, do: @selected.team.name, else: "Private"}
+                </div>
+                <span class="meta">
+                  {if @selected.team,
+                    do: "Everyone in #{@selected.team.name} can open and restart it.",
+                    else: "Only you can see it."}
+                </span>
+              </div>
             </div>
-          <% end %>
+            <p class="m-0 py-3 text-[13.5px] text-[var(--text-2)]">
+              <%= if owner? do %>
+                Runs on your AI login{if @selected.team, do: ", also when teammates chat in it"}.
+              <% else %>
+                Owned by {@selected.user.email}. Runs on their AI login.
+              <% end %>
+            </p>
+          </div>
         </section>
 
         <section
           :if={!@selected}
           class="flex-[999_1_560px] min-w-0 pt-4 text-[15px] text-[var(--text-2)]"
         >
-          Name your first project above. Its Peon starts in a few seconds; then describe what to build.
+          Name your first project. Its Peon starts in a few seconds; then open its workspace and describe what to build.
         </section>
       </div>
     </Layouts.app>
     """
   end
 
-  # The workspace, at the inline chat when there is one.
-  defp workspace_path(project, %{"chat" => %{"id" => chat}}),
-    do: ~p"/projects/#{project.id}/open?chat=#{chat}"
-
-  defp workspace_path(project, _state), do: ~p"/projects/#{project.id}/open"
+  defp blank?(value), do: value in [nil, ""] or String.trim(to_string(value)) == ""
 
   attr :status, :any, required: true
 

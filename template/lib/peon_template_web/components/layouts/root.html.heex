@@ -38,6 +38,7 @@
     </script>
   </head>
   <body>
+    <%!-- peon:if-accounts --%>
     <ul
       :if={@current_scope || PeonTemplate.SiteAccess.accounts?()}
       class="menu menu-horizontal w-full relative z-10 flex items-center gap-4 px-4 sm:px-6 lg:px-8 justify-end"
@@ -61,6 +62,7 @@
         </li>
       <% end %>
     </ul>
+    <%!-- peon:end --%>
     {@inner_content}
   </body>
 </html>

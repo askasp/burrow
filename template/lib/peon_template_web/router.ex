@@ -1,7 +1,9 @@
 defmodule PeonTemplateWeb.Router do
   use PeonTemplateWeb, :router
 
+  # peon:if-accounts
   import PeonTemplateWeb.UserAuth
+  # peon:end
   import PeonTemplateWeb.SiteAccess, only: [require_site_password: 2, require_app_access: 2]
 
   pipeline :browser do
@@ -13,7 +15,9 @@ defmodule PeonTemplateWeb.Router do
 
     plug :put_secure_headers
 
+    # peon:if-accounts
     plug :fetch_current_scope_for_user
+    # peon:end
     plug :require_site_password
   end
 
@@ -27,7 +31,13 @@ defmodule PeonTemplateWeb.Router do
 
     get "/", PageController, :home
 
-    live_session :app, on_mount: [{PeonTemplateWeb.SiteAccess, :app}] do
+    live_session :app,
+      on_mount: [
+        # peon:if-accounts
+        {PeonTemplateWeb.UserAuth, :mount_current_scope},
+        # peon:end
+        {PeonTemplateWeb.SiteAccess, :app}
+      ] do
     end
   end
 
@@ -56,6 +66,7 @@ defmodule PeonTemplateWeb.Router do
     end
   end
 
+  # peon:if-accounts
   ## Authentication routes
 
   scope "/", PeonTemplateWeb do
@@ -83,6 +94,8 @@ defmodule PeonTemplateWeb.Router do
     post "/users/log-in", UserSessionController, :create
     delete "/users/log-out", UserSessionController, :delete
   end
+
+  # peon:end
 
   # Who may show the app in a frame is set at runtime: Peon passes its own and
   # Burrow's origins (FRAME_ANCESTORS, see config/runtime.exs).

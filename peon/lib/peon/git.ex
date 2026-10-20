@@ -10,7 +10,8 @@ defmodule Peon.Git do
   header, never written to disk. Public repos need no token.
 
   As a child of the application it records the project on first boot and
-  clears out containers a previous run left behind, like `Peon.Bootstrap`.
+  clears out containers and repo previews a previous run left behind, like
+  `Peon.Bootstrap`.
   """
 
   require Logger
@@ -23,6 +24,7 @@ defmodule Peon.Git do
 
   def start_link do
     Sandbox.remove_all()
+    Peon.Chat.stop_left_behind()
 
     if Project.get() == nil do
       Repo.insert!(%Project{

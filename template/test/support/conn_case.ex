@@ -36,6 +36,7 @@ defmodule PeonTemplateWeb.ConnCase do
     {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 
+  # peon:if-accounts
   @doc """
   Setup helper that registers and logs in users.
 
@@ -76,4 +77,6 @@ defmodule PeonTemplateWeb.ConnCase do
   defp maybe_set_token_authenticated_at(token, authenticated_at) do
     PeonTemplate.AccountsFixtures.override_token_authenticated_at(token, authenticated_at)
   end
+
+  # peon:end
 end

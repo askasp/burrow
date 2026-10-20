@@ -52,6 +52,10 @@ defmodule Burrow.Projects do
   @doc """
   Creates a project and starts its Peon. A `"team_id"` in `attrs` shares it
   with that team, which must be one of the user's.
+
+  `"auth"` picks the new app's login (`Project.auths/0`, default
+  `"accounts"`); `"basic"` needs `"basic_username"` and `"basic_password"`,
+  which go to the Peon and are not stored here.
   """
   def create(%Scope{user: user} = scope, attrs) do
     Repo.transaction(fn ->
@@ -78,7 +82,9 @@ defmodule Burrow.Projects do
     end)
     |> case do
       {:ok, project} ->
+        # Only the first Peon start gets a basic auth login (`Burrow.Cell.auth_env/1`).
         Burrow.Cell.ensure_started(project)
+        project = %{project | basic_username: nil, basic_password: nil}
         Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_created, project})
         {:ok, project}
 
@@ -195,7 +201,7 @@ defmodule Burrow.Projects do
 
   @doc """
   Turns a live-only project into one with staging and prod, for good. Its
-  Peon does the work (`Burrow.Inline.add_envs/2`); this records it.
+  Peon does the work (`Burrow.PeonAPI.add_envs/2`); this records it.
   """
   def add_envs(%Scope{} = scope, %Project{} = project) do
     cond do
@@ -206,7 +212,7 @@ defmodule Burrow.Projects do
         {:ok, project}
 
       true ->
-        with {:ok, _state} <- Burrow.Inline.add_envs(project, scope.user.email) do
+        with :ok <- Burrow.PeonAPI.add_envs(project, scope.user.email) do
           {1, _} =
             Repo.update_all(from(p in Project, where: p.id == ^project.id),
               set: [envs: "pipeline"]

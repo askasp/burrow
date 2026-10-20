@@ -5,7 +5,8 @@ defmodule Peon.Chats do
   the changesets it produced (`changesets.conversation_id`), or for a repo
   chat its pull request.
 
-  Broadcasts `{:chat_created, chat}` on topic `"chats"`.
+  Broadcasts `{:chat_created, chat}` and `{:chat_deleted, id}` on topic
+  `"chats"`.
   """
 
   import Ecto.Query
@@ -26,6 +27,8 @@ defmodule Peon.Chats do
       field :effort, :string
       # A repo chat's pull request (`Peon.PullRequest`).
       field :pr_url, :string
+      # The chat keeps running without use until then (`Peon.Chat`).
+      field :keep_until, :utc_datetime
       timestamps(type: :utc_datetime)
     end
   end
@@ -65,6 +68,28 @@ defmodule Peon.Chats do
 
   def set_session(id, session_id) do
     Repo.update_all(from(c in Chat, where: c.id == ^id), set: [session_id: session_id])
+  end
+
+  @doc "Keeps the chat running for `hours` from now; nil goes back to the idle stop."
+  def keep_running(id, hours) do
+    until =
+      if hours, do: DateTime.utc_now() |> DateTime.add(hours, :hour) |> DateTime.truncate(:second)
+
+    Repo.update_all(from(c in Chat, where: c.id == ^id), set: [keep_until: until])
+    until
+  end
+
+  def kept_running?(%Chat{keep_until: until}),
+    do: until != nil and DateTime.after?(until, DateTime.utc_now())
+
+  def kept_running?(nil), do: false
+
+  def list_kept_running, do: Enum.filter(list(), &kept_running?/1)
+
+  @doc "Deletes the chat's row; `Peon.Chat.delete/1` also stops it and removes its files."
+  def delete(id) do
+    Repo.delete_all(from c in Chat, where: c.id == ^id)
+    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_deleted, id})
   end
 
   def set_pr_url(id, url) do

@@ -1,18 +1,22 @@
 defmodule PeonTemplate.SiteAccess do
   @moduledoc """
   Who can see the app. Change `mode/0` to switch; nothing else has to change.
-
-    * `:login` - people log in with email and password. The app's pages (the
-      router's `:app` scope) need a logged-in user.
-    * `:shared_password` - one password for everyone, no accounts. The owner
-      sets it in Peon as the secret `SITE_PASSWORD`; until then nobody gets in.
-    * `:public` - anyone can see every page.
   """
 
-  @type mode :: :login | :shared_password | :public
-
-  @spec mode() :: mode()
+  # The modes:
+  # peon:if-accounts
+  #   * :login - people log in with email and password. The app's pages (the
+  #     router's :app scope) need a logged-in user.
+  # peon:end
+  #   * :basic_auth - the browser asks for one username and password, the
+  #     secrets BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD. Until both are
+  #     set, nobody gets in.
+  #   * :shared_password - one password for everyone, asked at /unlock. The
+  #     owner sets it in Peon as the secret SITE_PASSWORD; until then nobody
+  #     gets in.
+  #   * :public - anyone can see every page.
   def mode, do: :login
+  # peon:if-accounts
 
   @doc "Whether people have accounts, so the header offers log in and register."
   def accounts?, do: accounts?(mode())
@@ -22,4 +26,5 @@ defmodule PeonTemplate.SiteAccess do
   @doc false
   def accounts?(:login), do: true
   def accounts?(_mode), do: false
+  # peon:end
 end

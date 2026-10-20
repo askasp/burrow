@@ -8,7 +8,9 @@ defmodule Peon.Agent.Prompt do
 
   def instructions do
     project = Project.get()
-    module = project.slug |> Peon.Template.otp_app() |> Macro.camelize()
+    otp_app = Peon.Template.otp_app(project.slug)
+    module = Macro.camelize(otp_app)
+    accounts? = accounts?(otp_app)
 
     recent =
       Code.history_all(10)
@@ -76,19 +78,17 @@ defmodule Peon.Agent.Prompt do
       secret in the app with a plain message instead of a crash.
 
     ## Who can see the app
-    If the app has `#{module}.SiteAccess`, its `mode/0` decides: `:login` (accounts),
-    `:shared_password` (one password for everyone, the secret SITE_PASSWORD) or `:public`.
-    When the user asks to change who can see the app, change that one line; for
-    `:shared_password` also request SITE_PASSWORD. The app's pages go in the router's
-    `:app` scope and `live_session :app`, so the mode applies to them.
+    If the app has `#{module}.SiteAccess`, its `mode/0` decides: #{modes(accounts?)}
+    When the user asks to change who can see the app, change that one line, and request
+    the secrets the new mode needs. The app's pages go in the router's `:app` scope and
+    `live_session :app`, so the mode applies to them.
+    #{accounts_line(accounts?)}
 
     ## Policy (enforced by Peon, not negotiable)
     - Never change config/runtime.exs, AGENTS.md, rel/** or priv/peon/anonymize.exs.
     - Never edit an existing migration; add a new one with a later timestamp.
     - Migrations are additive: no remove, rename, drop, modify or execute.
-    - No secrets in code.
-    - The generated authentication (Accounts, User, UserAuth and their tests) works.
-      Change it only to add associations.
+    - No secrets in code.#{auth_policy(accounts?)}
 
     ## Recent changesets
     #{recent}
@@ -173,6 +173,45 @@ defmodule Peon.Agent.Prompt do
       without one, `start` may detach; commands also get PORT (the framed port).\
     """
   end
+
+  # Whether main has phx.gen.auth's accounts: apps made with the "basic" or
+  # "open" login (Peon.Template) have none.
+  defp accounts?(otp_app) do
+    case Code.resolve("main") do
+      {:ok, cs} -> Map.has_key?(Code.tree(cs.id), "lib/#{otp_app}/accounts.ex")
+      {:error, :not_found} -> false
+    end
+  end
+
+  defp modes(accounts?) do
+    login = if accounts?, do: "`:login` (accounts), ", else: ""
+
+    login <>
+      "`:basic_auth` (the browser asks for the secrets BASIC_AUTH_USERNAME and " <>
+      "BASIC_AUTH_PASSWORD), `:shared_password` (one password for everyone, the secret " <>
+      "SITE_PASSWORD) or `:public`."
+  end
+
+  defp accounts_line(true),
+    do: "Read the logged-in user from `@current_scope.user`."
+
+  defp accounts_line(false) do
+    """
+    The app has no user accounts: no users table, no log in pages, no `@current_scope`.
+    Don't link to or build on them. If the user wants people to have their own logins,
+    say that this adds accounts (phx.gen.auth) and ask before building it.\
+    """
+  end
+
+  defp auth_policy(true) do
+    """
+
+    - The generated authentication (Accounts, User, UserAuth and their tests) works.
+      Change it only to add associations.\
+    """
+  end
+
+  defp auth_policy(false), do: ""
 
   defp secrets_line do
     case Secrets.list() do

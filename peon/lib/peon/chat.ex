@@ -16,7 +16,11 @@ defmodule Peon.Chat do
     * `{:conflicts, paths}` - files changed both in the workspace and on main
 
   When main moves, the workspace is rebased onto it. Containers stop after
-  `@idle_timeout` without activity; the next use starts them again.
+  `@idle_timeout` without activity, unless the chat is kept running
+  (`Peon.Chats.keep_running/2`); the next use starts them again. At most
+  `:max_running_chats` chats run at once (see `make_room/1`). A chat that
+  stops broadcasts `{:stopped, reason}`: `:idle`, `:room`, `:deleted` or
+  `:exited`.
 
   In a repo project (`Peon.Source`) the workspace is a git checkout instead
   (`Peon.Git`), and the preview is the repo's preview pack run on the host
@@ -45,6 +49,8 @@ defmodule Peon.Chat do
 
   @doc "Starts the chat's containers if needed and waits until the agent is ready."
   def ensure_started(id) do
+    unless whereis(id), do: make_room(id)
+
     case DynamicSupervisor.start_child(Peon.ChatSupervisor, {__MODULE__, id}) do
       {:ok, pid} ->
         GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
@@ -70,6 +76,13 @@ defmodule Peon.Chat do
 
   def interrupt(id), do: call(id, :interrupt)
 
+  @doc """
+  What a message can start with: `/name` for one of opencode's commands or
+  skills, its own or the workspace's. `[%{name, description, kind}]`, kind
+  `:command` or `:skill`.
+  """
+  def slash_commands(id), do: call(id, :slash_commands)
+
   def restart_preview(id), do: call(id, :restart_preview)
 
   @doc "A repo chat's preview pack and its commands' environment: `{:ok, pack, env}`."
@@ -82,11 +95,110 @@ defmodule Peon.Chat do
 
   def subscribe(id), do: Phoenix.PubSub.subscribe(Peon.PubSub, "chat:#{id}")
 
-  def workspace_dir(id),
-    do: Path.join([Application.fetch_env!(:peon, :data_dir), "chats", id, "workspace"])
+  def workspace_dir(id), do: Path.join(base_dir(id), "workspace")
+
+  defp base_dir(id), do: Path.join([Application.fetch_env!(:peon, :data_dir), "chats", id])
+
+  @doc """
+  Deletes a chat: its opencode session (when it runs), its containers, its
+  files and its row. A repo chat's pull request stays open on GitHub.
+  """
+  def delete(id) do
+    Chats.delete(id)
+    Incidents.chat_deleted(id)
+
+    if pid = whereis(id) do
+      ref = Process.monitor(pid)
+
+      try do
+        GenServer.call(pid, :delete, 30_000)
+      catch
+        :exit, _ -> :ok
+      end
+
+      # A repo preview's stop command (e.g. `docker compose down`) can take a while.
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      after
+        :timer.minutes(3) -> :ok
+      end
+    end
+
+    File.rm_rf(base_dir(id))
+    :ok
+  end
+
+  @doc "Starts the chats kept running, e.g. after Peon restarted."
+  def start_kept_running do
+    for chat <- Chats.list_kept_running() do
+      Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> ensure_started(chat.id) end)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Runs the stop command (e.g. `docker compose down`) of every repo preview a
+  previous run of Peon left behind; its containers outlive Peon.
+  """
+  def stop_left_behind do
+    slug = Application.fetch_env!(:peon, :project_slug)
+
+    case File.ls(Path.join(Application.fetch_env!(:peon, :data_dir), "chats")) do
+      {:ok, ids} ->
+        ids
+        |> Task.async_stream(&stop_left_behind(&1, slug), timeout: :infinity, max_concurrency: 4)
+        |> Stream.run()
+
+      {:error, _} ->
+        :ok
+    end
+  end
+
+  defp stop_left_behind(id, slug) do
+    dir = workspace_dir(id)
+
+    with {:ok, %PreviewPack{stop: stop} = pack} when is_binary(stop) <- PreviewPack.load(dir) do
+      ports = Map.new(pack.ports ++ pack.local_ports, &{&1, 0})
+      name = "peon-preview-#{slug}-#{id}"
+      env = Map.merge(Secrets.env(), PreviewPack.env(pack, ports, &Peon.Ports.url/1, name))
+      HostPreview.run(dir, stop, env, :timer.minutes(2))
+    end
+  end
+
+  # At most `:max_running_chats` chats run at once: starting another stops
+  # the one used longest ago. Busy chats and chats kept running are never
+  # stopped for room, so with only those running the cap is exceeded rather
+  # than refusing the chat.
+  defp make_room(id) do
+    max = Application.get_env(:peon, :max_running_chats, 3)
+    running = Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+    running = for {other, pid} <- running, other != id, do: pid
+
+    if length(running) >= max do
+      running
+      |> Enum.flat_map(fn pid ->
+        case activity(pid) do
+          %{stoppable?: true, used_at: used_at} -> [{used_at, pid}]
+          _ -> []
+        end
+      end)
+      |> Enum.sort()
+      |> Enum.take(length(running) - max + 1)
+      |> Enum.each(fn {_, pid} -> send(pid, :make_room) end)
+    end
+  end
+
+  defp activity(pid) do
+    GenServer.call(pid, :activity, 5_000)
+  catch
+    :exit, _ -> nil
+  end
+
+  defp whereis(id), do: GenServer.whereis({:via, Registry, {@registry, id}})
 
   defp call(id, msg) do
-    case GenServer.whereis({:via, Registry, {@registry, id}}) do
+    case whereis(id) do
       nil -> {:error, :not_running}
       pid -> GenServer.call(pid, msg, 30_000)
     end
@@ -109,7 +221,7 @@ defmodule Peon.Chat do
     # A repo chat claims its ports once its checkout says how many (load_pack/1).
     with {:ok, preview_port} <- if(Source.repo?(), do: {:ok, nil}, else: claim_preview_port(id)) do
       slug = Application.fetch_env!(:peon, :project_slug)
-      base = Path.join([Application.fetch_env!(:peon, :data_dir), "chats", id])
+      base = base_dir(id)
 
       state = %{
         id: id,
@@ -144,11 +256,18 @@ defmodule Peon.Chat do
         pr_url: if(chat = Chats.get(id), do: chat.pr_url),
         busy?: false,
         prompted_at: 0,
+        # A command's message is its expanded template; the chat shows what
+        # was typed instead: `label` until the message appears, then `labels`.
+        label: nil,
+        labels: %{},
         messages: [],
         conflicts: [],
         waiting: [],
         booted_at: System.monotonic_time(:millisecond),
-        idle_ref: nil
+        idle_ref: nil,
+        used_at: System.monotonic_time(:millisecond),
+        # Why the chat stops, for `{:stopped, reason}`
+        stopped: :exited
       }
 
       {:ok, state, {:continue, :boot}}
@@ -187,9 +306,11 @@ defmodule Peon.Chat do
   def handle_call(:await_ready, _from, state), do: {:reply, ready_reply(state), touch(state)}
 
   def handle_call({:prompt, text}, _from, state) do
-    case Client.prompt(conn(state), state.session_id, text) do
-      {:ok, _} ->
-        state = %{state | busy?: true, prompted_at: System.system_time(:millisecond)}
+    prompted_at = System.system_time(:millisecond)
+
+    case run_prompt(state, text) do
+      {:ok, label} ->
+        state = %{state | busy?: true, prompted_at: prompted_at, label: label}
         send(self(), :poll)
         {:reply, :ok, state |> broadcast_status() |> touch()}
 
@@ -197,6 +318,22 @@ defmodule Peon.Chat do
         {:reply, {:error, reason}, state}
     end
   end
+
+  def handle_call(:activity, _from, state) do
+    stoppable? = not state.busy? and not Chats.kept_running?(Chats.get(state.id))
+
+    {:reply, %{used_at: state.used_at, stoppable?: stoppable?}, state}
+  end
+
+  def handle_call(:delete, _from, state) do
+    if state.session_id && state.agent.status == :ready,
+      do: Client.delete_session(conn(state), state.session_id)
+
+    {:stop, :normal, :ok, %{state | stopped: :deleted}}
+  end
+
+  def handle_call(:slash_commands, _from, state),
+    do: {:reply, {:ok, slash_commands_of(state)}, state}
 
   def handle_call(:info, _from, state), do: {:reply, {:ok, info_map(state)}, state}
 
@@ -252,7 +389,8 @@ defmodule Peon.Chat do
     state =
       case Client.messages(conn(state), state.session_id) do
         {:ok, raw} ->
-          messages = Enum.flat_map(raw, &normalize/1)
+          state = claim_label(state, raw)
+          messages = raw |> Enum.flat_map(&normalize/1) |> relabel(state.labels)
           busy? = state.busy? and not finished?(raw, state.prompted_at)
 
           state =
@@ -366,24 +504,28 @@ defmodule Peon.Chat do
 
   def handle_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
 
-  # The inline chat's preview is the dev version Burrow shows while its
-  # changeset is open, so it stays up until that is merged or discarded.
   def handle_info(:idle, state) do
-    if Peon.Inline.keep_alive?(state.id),
+    if Chats.kept_running?(Chats.get(state.id)),
       do: {:noreply, touch(state)},
-      else: {:stop, :normal, state}
+      else: {:stop, :normal, %{state | stopped: :idle}}
   end
+
+  # Another chat is starting and this one was used longest ago (make_room/1).
+  def handle_info(:make_room, %{busy?: true} = state), do: {:noreply, state}
+  def handle_info(:make_room, state), do: {:stop, :normal, %{state | stopped: :room}}
 
   def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, %{repo: true} = state) do
+    broadcast(state, {:stopped, state.stopped})
     Sandbox.stop(state.agent.name)
     stop_preview(state)
     Sandbox.remove_network(state.network)
   end
 
   def terminate(_reason, state) do
+    broadcast(state, {:stopped, state.stopped})
     Sandbox.stop(state.agent.name)
     Sandbox.stop(state.preview.name)
     Sandbox.remove_network(state.network)
@@ -732,7 +874,70 @@ defmodule Peon.Chat do
 
   defp touch(state) do
     if state.idle_ref, do: Process.cancel_timer(state.idle_ref)
-    %{state | idle_ref: Process.send_after(self(), :idle, @idle_timeout)}
+
+    %{
+      state
+      | idle_ref: Process.send_after(self(), :idle, @idle_timeout),
+        used_at: System.monotonic_time(:millisecond)
+    }
+  end
+
+  # "/name args" runs an opencode command or loads a skill with the message;
+  # anything else, or an unknown name, is sent as written. Returns the label
+  # for a command's message.
+  defp run_prompt(state, text) do
+    {name, args} =
+      case Regex.run(~r{\A/(\S+)\s*(.*)\z}s, text) do
+        [_, name, args] -> {name, args}
+        nil -> {nil, nil}
+      end
+
+    case name && Enum.find(slash_commands_of(state), &(&1.name == name)) do
+      %{kind: :command} ->
+        with :ok <- Client.command(conn(state), state.session_id, name, args), do: {:ok, text}
+
+      %{kind: :skill} ->
+        text = if args == "", do: text, else: args
+
+        with {:ok, _} <- Client.prompt(conn(state), state.session_id, text, [name]),
+             do: {:ok, nil}
+
+      nil ->
+        with {:ok, _} <- Client.prompt(conn(state), state.session_id, text), do: {:ok, nil}
+    end
+  end
+
+  # Commands win over skills of the same name, as in opencode's own UI.
+  defp slash_commands_of(state) do
+    commands = with({:ok, list} <- Client.commands(conn(state)), do: list, else: (_ -> []))
+    skills = with({:ok, list} <- Client.skills(conn(state)), do: list, else: (_ -> []))
+    taken = MapSet.new(commands, & &1.name)
+
+    Enum.map(commands, &Map.put(&1, :kind, :command)) ++
+      for skill <- skills,
+          not MapSet.member?(taken, skill.name),
+          do: Map.put(skill, :kind, :skill)
+  end
+
+  defp claim_label(%{label: nil} = state, _raw), do: state
+
+  defp claim_label(state, raw) do
+    case Enum.find(
+           raw,
+           &(&1["type"] == "user" and get_in(&1, ["time", "created"]) >= state.prompted_at)
+         ) do
+      nil -> state
+      message -> %{state | label: nil, labels: Map.put(state.labels, message["id"], state.label)}
+    end
+  end
+
+  defp relabel(messages, labels) when labels == %{}, do: messages
+
+  defp relabel(messages, labels) do
+    Enum.map(messages, fn
+      %{role: :user, id: id} = m when is_map_key(labels, id) -> %{m | text: labels[id]}
+      m -> m
+    end)
   end
 
   # The turn is over when opencode reports the session idle after our prompt.
@@ -742,8 +947,11 @@ defmodule Peon.Chat do
 
   @doc false
   # opencode session messages -> what the chat UI shows.
-  def normalize(%{"type" => "user"} = m),
-    do: [%{id: m["id"], role: :user, text: m["text"] || get_in(m, ["payload", "text"]) || ""}]
+  def normalize(%{"type" => "user"} = m) do
+    text = m["text"] || get_in(m, ["payload", "text"]) || ""
+    skills = m["skills"] || get_in(m, ["payload", "skills"]) || []
+    [%{id: m["id"], role: :user, text: with_skills(text, skills)}]
+  end
 
   def normalize(%{"type" => "assistant", "content" => content} = m) when is_list(content) do
     content
@@ -760,6 +968,11 @@ defmodule Peon.Chat do
     do: [%{id: m["id"], role: :error, text: "The agent stopped: #{outcome}"}]
 
   def normalize(_), do: []
+
+  # A message sent with skills shows them as typed: "/skill text".
+  defp with_skills(text, []), do: text
+  defp with_skills("/" <> _ = text, _skills), do: text
+  defp with_skills(text, skills), do: Enum.map_join(skills, "", &"/#{&1["id"]} ") <> text
 
   defp error_text(%{"message" => message}) when is_binary(message), do: message
   defp error_text(%{"data" => %{"message" => message}}) when is_binary(message), do: message

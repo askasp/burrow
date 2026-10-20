@@ -41,13 +41,16 @@ defmodule Peon.Application do
         []
 
       Peon.Source.repo?() ->
-        [Peon.Git, Peon.Agent.MCP]
+        [Peon.Git, Peon.Agent.MCP, kept_running()]
 
       true ->
         [Peon.Bootstrap, Peon.Checks, Peon.Verifier, Peon.Agent.MCP] ++
-          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [Peon.Inline]
+          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [kept_running()]
     end
   end
+
+  # Chats kept running come back up after a restart, e.g. a shared preview.
+  defp kept_running, do: {Task, &Peon.Chat.start_kept_running/0}
 
   # Tell Phoenix to update the endpoint configuration
   # whenever the application is updated.

@@ -7,6 +7,7 @@
 # General application configuration
 import Config
 
+# peon:if-accounts
 config :peon_template, :scopes,
   user: [
     default: true,
@@ -19,6 +20,8 @@ config :peon_template, :scopes,
     test_data_fixture: PeonTemplate.AccountsFixtures,
     test_setup_helper: :register_and_log_in_user
   ]
+
+# peon:end
 
 config :peon_template,
   ecto_repos: [PeonTemplate.Repo],

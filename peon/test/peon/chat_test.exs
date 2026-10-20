@@ -70,6 +70,13 @@ defmodule Peon.ChatTest do
              Chat.normalize(assistant([patch, failed]))
   end
 
+  test "a message sent with a skill shows it as typed" do
+    user = &%{"type" => "user", "id" => "u1", "text" => &1, "skills" => [%{"id" => "deploy"}]}
+
+    assert [%{role: :user, text: "/deploy to staging"}] = Chat.normalize(user.("to staging"))
+    assert [%{role: :user, text: "/deploy"}] = Chat.normalize(user.("/deploy"))
+  end
+
   test "ports browsers refuse are never used" do
     refute Peon.Ports.browser_safe?(5060)
     refute Peon.Ports.browser_safe?(5061)

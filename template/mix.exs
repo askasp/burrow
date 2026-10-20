@@ -40,7 +40,9 @@ defmodule PeonTemplate.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      # peon:if-accounts
       {:bcrypt_elixir, "~> 3.0"},
+      # peon:end
       {:phoenix, "~> 1.8.9"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},

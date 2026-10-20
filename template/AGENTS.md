@@ -6,12 +6,21 @@ runs `mix test` and shows the result in a live preview.
 
 ## Stack
 - Phoenix 1.8, LiveView, Ecto with SQLite (`ecto_sqlite3`), Tailwind v4 + daisyUI.
+<!-- peon:if-accounts -->
 - Authentication already exists (phx.gen.auth, email + password, `PeonTemplate.Accounts`).
   Read the user from `@current_scope.user`.
 - The app's pages go in the router's `:app` scope: controller routes next to
   `get "/"`, LiveViews in `live_session :app`. Who may see them is set in one
   place, `PeonTemplate.SiteAccess` (below). Pages that always need an account
   whatever the mode (like settings) go in `:require_authenticated_user`.
+<!-- peon:end -->
+<!-- peon:unless-accounts -->
+- There are no user accounts: no users table, no log in or register pages, no
+  `@current_scope`. Visitors are anonymous.
+- The app's pages go in the router's `:app` scope: controller routes next to
+  `get "/"`, LiveViews in `live_session :app`. Who may see them is set in one
+  place, `PeonTemplate.SiteAccess` (below).
+<!-- peon:end -->
 - `/health` returns 200 when the database answers. Keep it working.
 
 ## Data we provide ourselves is code, not tables
@@ -36,17 +45,31 @@ categories, opening hours, email texts, roles and permissions, settings.
 `PeonTemplate.SiteAccess.mode/0` (lib/peon_template/site_access.ex) is the
 switch. When the owner asks to change who can see the app, change that line:
 
+<!-- peon:if-accounts -->
 - `:login` (the default): people log in with email and password; the `:app`
   pages need a logged-in user.
-- `:shared_password`: one password for everyone, no accounts. The password is
-  the secret `SITE_PASSWORD`: request it from the user (`peon_request_secret`).
-  Until it is set, nobody gets in. The preview and the tests skip the
-  password so pages can be checked; staging and prod ask for it at `/unlock`.
+<!-- peon:end -->
+- `:basic_auth`: the browser asks for one username and password, the same for
+  everyone. They are the secrets `BASIC_AUTH_USERNAME` and
+  `BASIC_AUTH_PASSWORD`: request them from the user (`peon_request_secret`) if
+  they aren't set. Until both are set, nobody gets in.
+- `:shared_password`: one password for everyone, asked on a page of the app
+  (`/unlock`). The password is the secret `SITE_PASSWORD`: request it from the
+  user. Until it is set, nobody gets in.
 - `:public`: anyone can see every page.
 
-The account links in the header only show in `:login` mode (or when someone is
-logged in). Don't build other access checks around the mode; extend
+The preview and the tests skip the passwords so pages can be checked; staging
+and prod ask for them. Don't build other access checks around the mode; extend
 `PeonTemplateWeb.SiteAccess` if a page needs a different rule.
+
+<!-- peon:if-accounts -->
+The account links in the header only show in `:login` mode (or when someone is
+logged in).
+<!-- peon:end -->
+<!-- peon:unless-accounts -->
+The app has no user accounts. If the owner wants people to have their own
+logins, say that it adds accounts (phx.gen.auth) and ask before you build it.
+<!-- peon:end -->
 
 ## Secrets
 API keys, tokens and passwords are secrets. The owner keeps them in Peon; you
@@ -108,9 +131,11 @@ This is a web application written using the Phoenix web framework.
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
 - The `MyAppWeb.Layouts` module is aliased in the `my_app_web.ex` file, so you can use it without needing to alias it again
+<!-- peon:if-accounts -->
 - Anytime you run into errors with no `current_scope` assign:
   - You failed to follow the Authenticated Routes guidelines, or you failed to pass `current_scope` to `<Layouts.app>`
   - **Always** fix the `current_scope` error by moving your routes to the proper `live_session` and ensure you pass `current_scope` as needed
+<!-- peon:end -->
 - Phoenix v1.8 moved the `<.flash_group>` component to the `Layouts` module. You are **forbidden** from calling `<.flash_group>` outside of the `layouts.ex` module
 - Out of the box, `core_components.ex` imports an `<.icon name="hero-x-mark" class="w-5 h-5"/>` component for hero icons. **Always** use the `<.icon>` component for icons, **never** use `Heroicons` modules or similar
 - **Always** use the imported `<.input>` component for form inputs from `core_components.ex` when available. `<.input>` is imported and using it will save steps and prevent errors
@@ -143,6 +168,7 @@ custom classes must fully style the input
 - Focus on **delightful details** like hover effects, loading states, and smooth page transitions
 
 
+<!-- peon:if-accounts -->
 <!-- phoenix-gen-auth-start -->
 ## Authentication
 
@@ -207,6 +233,7 @@ LiveViews that can work with or without authentication, **always use the __exist
 Controllers automatically have the `current_scope` available if they use the `:browser` pipeline.
 
 <!-- phoenix-gen-auth-end -->
+<!-- peon:end -->
 
 <!-- usage-rules-start -->
 

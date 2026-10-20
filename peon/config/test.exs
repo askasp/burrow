@@ -36,3 +36,6 @@ config :peon,
   preview_ports: [],
   fix_retries: 0,
   port_url: "http://localhost:{port}"
+
+# Burrow's API (Peon.Burrow) answers from a stub in tests.
+config :peon, burrow_req: [plug: {Req.Test, Peon.Burrow}]

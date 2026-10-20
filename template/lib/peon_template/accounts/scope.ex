@@ -1,3 +1,4 @@
+# peon:accounts-only: Peon leaves this file out of apps made without accounts.
 defmodule PeonTemplate.Accounts.Scope do
   @moduledoc """
   Defines the scope of the caller to be used throughout the app.

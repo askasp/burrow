@@ -35,14 +35,10 @@ defmodule PeonWeb.Router do
   end
 
   # Burrow, with the token it shares with this Peon.
-  scope "/api/inline", PeonWeb do
+  scope "/api/burrow", PeonWeb do
     pipe_through :api
 
-    get "/", InlineController, :show
-    post "/send", InlineController, :send_message
-    post "/merge", InlineController, :merge
-    post "/discard", InlineController, :discard
-    post "/add-envs", InlineController, :add_envs
+    post "/add-envs", BurrowController, :add_envs
   end
 
   # Enable LiveDashboard in development

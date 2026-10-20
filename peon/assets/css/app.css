@@ -230,6 +230,18 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 
 .ws-left { flex: 0 0 256px; width: 256px; min-width: 0; overflow: hidden; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--border) }
 .ws-left-top { padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 16px }
+/* The project rail: every project as a tile, the workspace's way between them */
+.ws-rail { flex: 0 0 56px; width: 56px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 0 12px; background: var(--sunken); border-right: 1px solid var(--border) }
+.ws-rail-home { display: inline-flex; padding: 3px; border-radius: 8px }
+.ws-rail-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 2px 0 }
+.ws-tile { position: relative; width: 36px; height: 36px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); font-size: 13px; font-weight: 600; text-decoration: none; cursor: pointer; transition: border-color .12s, color .12s }
+.ws-tile:hover { border-color: var(--text-3); color: var(--text) }
+.ws-tile.current { background: var(--accent-soft); border-color: var(--accent-text); color: var(--accent-text); cursor: default }
+.ws-tile .dot { position: absolute; right: -3px; bottom: -3px; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--sunken); background: var(--text-3) }
+.ws-tile .dot.ok { background: var(--ok) } .ws-tile .dot.warn { background: var(--warn) } .ws-tile .dot.err { background: var(--err) }
+.ws-rail-fold { border-style: dashed; color: var(--text-3) }
+.ws-left.folded { display: none }
+.ws-rail ~ .ws-left .ws-brand, .ws-rail ~ .ws-left .ws-back { display: none }
 .ws-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: var(--text); font-size: 19px; font-weight: 700; letter-spacing: -0.03em }
 .ws-project { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border) }
 .ws-back { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--text-3); text-decoration: none }
@@ -252,6 +264,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-chat { flex: 1 1 520px; min-width: 0; overflow: hidden; min-height: 0; display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--border) }
 .ws-chat-head { height: 56px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 20px; border-bottom: 1px solid var(--border) }
 .ws-chat-head h1 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600 }
+.ws-chat-head select.keep { width: auto; height: 32px; font-size: 13px; background-position: calc(100% - 18px) 13px, calc(100% - 13px) 13px }
 .ws-scroll { flex: 1; min-height: 0; overflow-y: auto }
 .ws-thread { width: 100%; max-width: 760px; min-height: 100%; margin: 0 auto; padding: 24px 24px 12px; display: flex; flex-direction: column; gap: 22px }
 .ws-hello { margin: auto 0; padding: 40px 0; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px }
@@ -290,6 +303,9 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .composer textarea { flex: 1; min-width: 0; border: 0; background: transparent; resize: none; padding: 8px; font-family: inherit; font-size: 15px; line-height: 22px; color: var(--text) }
 .composer textarea:focus { outline: none }
 .composer textarea::placeholder { color: var(--text-3) }
+.slash { display: flex; flex-direction: column; gap: 1px; padding-bottom: 6px; border-bottom: 1px solid var(--border); max-height: 280px; overflow-y: auto }
+.slash-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border-radius: 6px; font-size: 13px; text-align: left; color: var(--text) }
+.slash-item:hover, .slash-item[aria-selected="true"] { background: var(--surface) }
 .cbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 0 2px }
 .ws-send { width: 36px; height: 36px; padding: 0; margin-left: auto }
 
@@ -321,6 +337,9 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .ws-mbar-menu:hover { background: var(--sunken) }
   .ws-mbar-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600 }
   .ws-mbar .seg button { height: 32px; padding: 0 12px }
+  .ws-rail { display: none }
+  .ws-rail ~ .ws-left .ws-brand { display: flex } .ws-rail ~ .ws-left .ws-back { display: inline-flex }
+  .ws-left.folded { display: flex }
   .ws-left { position: fixed; z-index: 50; top: 0; bottom: 0; left: 0; width: 90vw; max-width: 420px; transform: translateX(-100%); transition: transform .2s ease-out; box-shadow: 12px 0 32px var(--shadow) }
   .ws-root.drawer .ws-left { transform: none }
   .ws-scrim { display: block; position: fixed; inset: 0; z-index: 45; background: rgba(0, 0, 0, .35) }

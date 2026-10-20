@@ -10,30 +10,75 @@ defmodule BurrowWeb.ProjectLiveTest do
   import Ecto.Query
 
   alias Burrow.Accounts.Scope
-  alias Burrow.{Inline, Projects, Teams}
+  alias Burrow.{PeonAPI, Projects, Teams}
 
   setup :register_and_log_in_user
 
   setup do
-    # The cache outlives a test, and project ids repeat.
-    Inline.forget_all()
     # No Peon runs; one that is asked answers as a stopped one would.
-    Req.Test.stub(Inline, &Plug.Conn.send_resp(&1, 503, ""))
+    Req.Test.stub(PeonAPI, &Plug.Conn.send_resp(&1, 503, ""))
     :ok
   end
 
-  test "creates a project and shows the slug it gets", %{conn: conn} do
+  test "creates a project and shows the slug it gets", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
+    # With no projects yet the form is open.
+    refute has_element?(lv, "#new-project")
 
     assert lv |> form("#project_form", project: %{name: "Sauna Booking"}) |> render_change() =~
              "slug: sauna_booking"
 
     lv |> form("#project_form", project: %{name: "Sauna Booking"}) |> render_submit()
     assert has_element?(lv, "#selected-project h2", "Sauna Booking")
-    # New projects are live-only: the app shows inline, nothing built yet.
-    assert has_element?(lv, "#inline", "Nothing here yet")
-    assert has_element?(lv, "#inline-msg[placeholder='What should Sauna Booking do?']")
-    assert has_element?(lv, "#view-dev[disabled]")
+    assert has_element?(lv, "#project-meta", "sauna_booking · live")
+    refute has_element?(lv, "#project_form")
+
+    # With projects, New project opens the form.
+    lv |> element("#new-project") |> render_click()
+    assert has_element?(lv, "#project_form")
+    lv |> element("#project_form button", "Cancel") |> render_click()
+    refute has_element?(lv, "#project_form")
+    assert [_] = Projects.list(Scope.for_user(user))
+  end
+
+  test "a new app can use one basic-auth login instead of accounts", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/projects")
+    refute has_element?(lv, "#project_basic_password")
+
+    lv |> form("#project_form", project: %{name: "Stash", auth: "basic"}) |> render_change()
+    assert has_element?(lv, "#project_basic_password[type=password]")
+
+    html =
+      lv
+      |> form("#project_form",
+        project: %{name: "Stash", auth: "basic", basic_username: "team", basic_password: "short"}
+      )
+      |> render_submit()
+
+    assert html =~ "should be at least 8 character"
+
+    lv
+    |> form("#project_form",
+      project: %{
+        name: "Stash",
+        auth: "basic",
+        basic_username: "team",
+        basic_password: "long enough"
+      }
+    )
+    |> render_submit()
+
+    assert has_element?(lv, "#selected-project h2", "Stash")
+    assert [%{auth: "basic"}] = Burrow.Repo.all(Burrow.Projects.Project)
+
+    # A repo keeps its own login, so the choice goes away.
+    lv |> element("#new-project") |> render_click()
+
+    lv
+    |> form("#project_form", project: %{repo_url: "https://github.com/a/b.git"})
+    |> render_change()
+
+    refute has_element?(lv, "#project_auth")
   end
 
   test "the owner shares a project with a team; teammates see it", %{conn: conn, user: user} do
@@ -65,8 +110,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
     assert has_element?(lv, "#restart-peon")
     assert has_element?(lv, "#selected-project", "Only you can see it.")
-    assert has_element?(lv, "#project-meta", "Peon on port #{project.port}")
-    refute has_element?(lv, "#inline")
+    assert has_element?(lv, "#project-meta", "staging and prod · Peon on port #{project.port}")
 
     lv |> element("#project-menu-button") |> render_click()
     refute has_element?(lv, "#add-envs")
@@ -75,135 +119,66 @@ defmodule BurrowWeb.ProjectLiveTest do
   describe "a live-only project" do
     setup %{user: user} do
       {:ok, project} = Projects.create(Scope.for_user(user), %{"name" => "Watchtower"})
-      Inline.put(project.id, state(nil, nil, live: 8))
       %{project: project}
     end
 
-    test "the loop: ask, checks, dev preview, merge, live", %{conn: conn, project: project} do
+    test "opens in its workspace once its Peon runs", %{conn: conn, project: project} do
       {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
+      assert has_element?(lv, "button[disabled]", "Open workspace")
+
       running!(project)
-      assert has_element?(lv, "#project-meta", "watchtower · live #8 · private")
-      assert has_element?(lv, "#project-#{project.id} .lbl.live", "live")
-      assert has_element?(lv, "#project-#{project.id}", "dev —")
-      assert has_element?(lv, "iframe[src='http://localhost:5099']")
-      assert has_element?(lv, "#inline-msg[placeholder='Ask Peon to change Watchtower']")
-      assert has_element?(lv, "#inline-send[disabled]")
-
-      Req.Test.stub(Inline, fn conn ->
-        assert conn.request_path == "/api/inline/send"
-        {:ok, body, conn} = Plug.Conn.read_body(conn)
-        params = Jason.decode!(body)
-        assert params["text"] == "Put anything that's down at the top"
-        assert params["effort"] == "high"
-        assert params["user"] =~ "@"
-        Req.Test.json(conn, state("writing", nil, live: 8, busy: true, sent: params["text"]))
-      end)
-
-      lv |> element("button[aria-label='Effort high']") |> render_click()
-
-      lv
-      |> form("#inline-composer", text: "Put anything that's down at the top")
-      |> render_change()
-
-      refute has_element?(lv, "#inline-send[disabled]")
-
-      lv
-      |> form("#inline-composer", text: "Put anything that's down at the top")
-      |> render_submit()
-
-      assert has_element?(lv, "#thread .bubble-user", "Put anything that's down at the top")
-      assert has_element?(lv, "#thread .wk", "Peon is working…")
-      assert has_element?(lv, "#project-#{project.id} .lbl.working", "working")
-      assert has_element?(lv, "#merge[disabled]")
-      # The preview stays on live while Peon works.
-      assert has_element?(lv, "iframe[src='http://localhost:5099']")
-
-      Inline.put(project.id, state("checking", 9, live: 8, busy: true, running: "compile"))
-      assert has_element?(lv, "#project-meta", "#9 · compile")
-      assert has_element?(lv, "#changeset", "Changeset #9")
-      assert has_element?(lv, "#changeset .step.run", "compile")
-      assert has_element?(lv, "#project-#{project.id}", "dev #9")
-
-      # Checks pass: the viewer moves to the dev build by itself.
-      Inline.put(project.id, state("ready", 9, live: 8))
-      assert has_element?(lv, "#project-#{project.id} .lbl.waiting", "waiting on you")
-      assert has_element?(lv, "#view-dev[aria-pressed='true']", "dev #9")
-      assert has_element?(lv, "iframe[src='http://localhost:5091']")
-      assert has_element?(lv, "#changeset", "checks passed")
-      refute has_element?(lv, "#merge[disabled]")
-
-      Req.Test.stub(Inline, fn conn ->
-        assert conn.request_path == "/api/inline/merge"
-        Req.Test.json(conn, state("landing", 9, live: 9, good: 8, deploy: "watching"))
-      end)
-
-      lv |> element("#merge") |> render_click()
-      assert has_element?(lv, "#changeset .dep", "Going live")
-      assert has_element?(lv, "#thread .evt", "#9 merging to main…")
-
-      Inline.put(project.id, state("live", 9, live: 9))
-      assert has_element?(lv, "#changeset .live", "Live")
-      assert has_element?(lv, "#thread .evt.ok", "#9 on main · live")
-      assert has_element?(lv, "#view-dev[aria-pressed='false']")
-      assert has_element?(lv, "#changeset .flow", "dev #9")
-      assert has_element?(lv, "#project-meta", "live #9")
-      assert has_element?(lv, "#project-#{project.id} .lbl.live", "live")
-      assert has_element?(lv, "#open-workspace[href='/projects/#{project.id}/open?chat=c1']")
-    end
-
-    test "discard drops the changeset and the dev view", %{conn: conn, project: project} do
-      Inline.put(project.id, state("ready", 9, live: 8))
-      {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
-      running!(project)
-
-      Req.Test.stub(Inline, fn conn ->
-        assert conn.request_path == "/api/inline/discard"
-        Req.Test.json(conn, state(nil, nil, live: 8))
-      end)
-
-      lv |> element("#discard") |> render_click()
-      refute has_element?(lv, "#changeset")
-      assert has_element?(lv, "#view-dev[disabled]", "dev")
-      assert has_element?(lv, "iframe[src='http://localhost:5099']")
+      assert has_element?(lv, "#open-workspace[href='/projects/#{project.id}/open']")
+      refute has_element?(lv, "#open-workspace[target]")
     end
 
     test "add staging and prod turns it into a pipeline project", %{conn: conn, project: project} do
       {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
       running!(project)
 
-      Req.Test.stub(Inline, fn conn ->
-        assert conn.request_path == "/api/inline/add-envs"
-        Req.Test.json(conn, %{state(nil, nil, live: 8) | "mode" => "pipeline"})
+      Req.Test.stub(PeonAPI, fn conn ->
+        assert conn.request_path == "/api/burrow/add-envs"
+        Plug.Conn.send_resp(conn, 204, "")
       end)
 
       lv |> element("#project-menu-button") |> render_click()
       lv |> element("#add-envs") |> render_click()
-      assert render(lv) =~ "Watchtower has staging and prod now. Both run #8."
-      assert has_element?(lv, "#restart-peon")
-      refute has_element?(lv, "#inline")
+      assert render(lv) =~ "Watchtower has staging and prod now."
       assert Projects.get(project.id).envs == "pipeline"
     end
 
-    test "Peon pushes its state with the shared token", %{conn: conn, project: project} do
-      Inline.subscribe()
-      pushed = state("checking", 9, live: 8)
+    test "its Peon gets the projects the user can open, with the shared token", %{
+      project: project,
+      user: user
+    } do
+      {:ok, other} = Projects.create(Scope.for_user(user), %{"name" => "Stash"})
+      path = ~p"/api/peon/#{project.id}/projects?email=#{user.email}"
 
-      conn
-      |> put_req_header("authorization", "Bearer " <> Inline.token(project))
-      |> post(~p"/api/peon/#{project.id}/inline", pushed)
-      |> response(204)
+      assert %{"projects" => projects} =
+               build_conn()
+               |> put_req_header("authorization", "Bearer " <> PeonAPI.token(project))
+               |> get(path)
+               |> json_response(200)
 
-      assert_receive {:inline, id, %{"changeset" => %{"id" => 9}}}
-      assert id == project.id
+      assert [
+               %{"id" => other_id, "current" => false, "name" => "Stash"},
+               %{"id" => id, "current" => true, "url" => url}
+             ] = projects
+
+      assert {other_id, id} == {other.id, project.id}
+      assert url =~ "/projects/#{project.id}/open"
 
       assert build_conn()
              |> put_req_header("authorization", "Bearer nope")
-             |> post(~p"/api/peon/#{project.id}/inline", pushed)
+             |> get(path)
              |> json_response(401)
 
-      # A push that arrives late doesn't undo a newer one.
-      Inline.put(project.id, %{pushed | "seq" => 1})
-      assert Inline.get(project.id)["changeset"]["id"] == 9
+      # Someone who can't open this project gets nothing.
+      stranger = user_fixture()
+
+      assert build_conn()
+             |> put_req_header("authorization", "Bearer " <> PeonAPI.token(project))
+             |> get(~p"/api/peon/#{project.id}/projects?email=#{stranger.email}")
+             |> json_response(401)
     end
   end
 
@@ -216,62 +191,5 @@ defmodule BurrowWeb.ProjectLiveTest do
       from(p in Burrow.Projects.Project, where: p.id == ^project.id),
       set: [envs: "pipeline"]
     )
-  end
-
-  # A state as Peon pushes it (see Peon.Inline).
-  defp state(phase, id, opts) do
-    steps =
-      for name <- ~w(deps compile format test) do
-        status =
-          cond do
-            phase in [nil, "writing"] -> "waiting"
-            phase == "checking" and name == opts[:running] -> "running"
-            phase == "checking" and name in ~w(format test) -> "waiting"
-            true -> "passed"
-          end
-
-        %{"name" => name, "status" => status}
-      end
-
-    chat =
-      if phase do
-        %{
-          "id" => "c1",
-          "title" => "Down first",
-          "busy" => opts[:busy] == true,
-          "model" => nil,
-          "effort" => "high",
-          "messages" => [
-            %{"role" => "user", "text" => opts[:sent] || "Put anything that's down at the top"},
-            %{"role" => "tool", "text" => "edit lib/watchtower_web/live/status_live.ex"}
-          ],
-          "error" => nil,
-          "preview_url" => "http://localhost:5091",
-          "preview_status" => "running"
-        }
-      end
-
-    %{
-      "seq" => System.os_time(:microsecond),
-      "mode" => "live",
-      "main" => opts[:live],
-      "live" => %{
-        "tip" => opts[:live],
-        "good" => Keyword.get(opts, :good, opts[:live]),
-        "url" => "http://localhost:5099",
-        "status" => if(opts[:deploy], do: "building", else: "running")
-      },
-      "chat" => chat,
-      "changeset" =>
-        phase &&
-          %{
-            "id" => id,
-            "intent" => "Down checks first",
-            "status" => "passed",
-            "phase" => phase,
-            "steps" => steps,
-            "deploy" => opts[:deploy]
-          }
-    }
   end
 end

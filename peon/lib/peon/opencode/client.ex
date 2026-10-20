@@ -16,10 +16,46 @@ defmodule Peon.OpenCode.Client do
     match?({:ok, %{status: 200}}, Req.get(req(conn), url: "/api/session/#{session_id}"))
   end
 
-  def prompt(conn, session_id, text) do
-    case Req.post(req(conn), url: "/api/session/#{session_id}/prompt", json: %{text: text}) do
+  @doc "Sends a user message; `skills` are skill ids loaded with it."
+  def prompt(conn, session_id, text, skills \\ []) do
+    body = %{text: text, skills: Enum.map(skills, &%{id: &1})}
+
+    case Req.post(req(conn), url: "/api/session/#{session_id}/prompt", json: body) do
       {:ok, %{status: 200, body: %{"data" => data}}} -> {:ok, data}
       other -> {:error, other}
+    end
+  end
+
+  @doc "Runs a command (e.g. `review`) with its arguments as a user message."
+  def command(conn, session_id, name, arguments) do
+    case Req.post(req(conn),
+           url: "/api/session/#{session_id}/command",
+           json: %{name: name, text: arguments}
+         ) do
+      {:ok, %{status: status}} when status in [200, 204] -> :ok
+      other -> {:error, other}
+    end
+  end
+
+  @doc "The commands opencode found: its own and the workspace's `.opencode/commands`."
+  def commands(conn) do
+    case Req.get(req(conn), url: "/api/command") do
+      {:ok, %{status: 200, body: %{"data" => commands}}} ->
+        {:ok, for(c <- commands, do: %{name: c["name"], description: c["description"]})}
+
+      other ->
+        {:error, other}
+    end
+  end
+
+  @doc "The skills opencode found: its own and the workspace's `.opencode/skills` and the like."
+  def skills(conn) do
+    case Req.get(req(conn), url: "/api/skill") do
+      {:ok, %{status: 200, body: %{"data" => skills}}} ->
+        {:ok, for(s <- skills, do: %{name: s["id"], description: s["description"]})}
+
+      other ->
+        {:error, other}
     end
   end
 
@@ -35,6 +71,10 @@ defmodule Peon.OpenCode.Client do
       other ->
         {:error, other}
     end
+  end
+
+  def delete_session(conn, session_id) do
+    Req.delete(req(conn), url: "/api/session/#{session_id}")
   end
 
   def interrupt(conn, session_id) do

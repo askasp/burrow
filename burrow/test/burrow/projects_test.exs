@@ -59,6 +59,78 @@ defmodule Burrow.ProjectsTest do
     assert Burrow.Cell.split_ports(project) == {project.preview_ports, "", ""}
   end
 
+  describe "the new app's login" do
+    test "is user accounts unless picked" do
+      {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Default"})
+      assert project.auth == "accounts"
+      assert Burrow.Cell.auth_env(project) == %{"PEON_AUTH" => "accounts"}
+
+      {:ok, open} = Projects.create(user_scope_fixture(), %{"name" => "Open", "auth" => "open"})
+      assert Projects.get(open.id).auth == "open"
+
+      assert {:error, changeset} =
+               Projects.create(user_scope_fixture(), %{"name" => "Odd", "auth" => "sso"})
+
+      assert %{auth: [_]} = errors_on(changeset)
+    end
+
+    test "basic auth needs a username and password, which go to Peon and aren't stored" do
+      scope = user_scope_fixture()
+
+      assert {:error, changeset} =
+               Projects.create(scope, %{"name" => "Gate", "auth" => "basic"})
+
+      assert %{basic_username: [_], basic_password: [_]} = errors_on(changeset)
+
+      assert {:error, changeset} =
+               Projects.create(scope, %{
+                 "name" => "Gate",
+                 "auth" => "basic",
+                 "basic_username" => "a:b",
+                 "basic_password" => "short"
+               })
+
+      assert %{basic_username: [_], basic_password: [_]} = errors_on(changeset)
+
+      attrs = %{
+        "name" => "Gate",
+        "auth" => "basic",
+        "basic_username" => " ada ",
+        "basic_password" => "correct horse"
+      }
+
+      # What the Peon is started with.
+      {:ok, made} = attrs |> Projects.change() |> Ecto.Changeset.apply_action(:insert)
+
+      assert Burrow.Cell.auth_env(made) == %{
+               "PEON_AUTH" => "basic",
+               "PEON_BASIC_AUTH_USERNAME" => "ada",
+               "PEON_BASIC_AUTH_PASSWORD" => "correct horse"
+             }
+
+      refute inspect(made) =~ "correct horse"
+
+      {:ok, project} = Projects.create(scope, attrs)
+      assert project.auth == "basic"
+      assert project.basic_password == nil
+      stored = Projects.get(project.id)
+      assert stored.auth == "basic" and stored.basic_password == nil
+      # Restarts don't have it: Peon kept it as the app's secrets.
+      assert Burrow.Cell.auth_env(stored) == %{"PEON_AUTH" => "basic"}
+    end
+
+    test "doesn't apply to a repo project" do
+      {:ok, project} =
+        Projects.create(user_scope_fixture(), %{
+          "name" => "Repo",
+          "repo_url" => "https://github.com/a/b",
+          "auth" => "basic"
+        })
+
+      assert project.auth == "accounts"
+    end
+  end
+
   test "projects are only visible to their owner" do
     {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Mine"})
     other = user_scope_fixture()

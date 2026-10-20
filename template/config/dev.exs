@@ -1,6 +1,6 @@
 import Config
 
-# The preview doesn't ask for the shared password (PeonTemplate.SiteAccess),
+# The preview doesn't ask for the site's password (PeonTemplate.SiteAccess),
 # so its pages can be checked; staging and prod do.
 config :peon_template, :enforce_site_password, false
 

@@ -1,3 +1,4 @@
+# peon:accounts-only: Peon leaves this file out of apps made without accounts.
 defmodule PeonTemplateWeb.UserSessionControllerTest do
   use PeonTemplateWeb.ConnCase
 

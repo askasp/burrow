@@ -118,6 +118,19 @@ defmodule Peon.Incidents do
     :ok
   end
 
+  @doc "The fix chat was deleted: its incidents go back to open, without the link."
+  def chat_deleted(chat_id) do
+    for incident <-
+          Repo.all(from i in Incident, where: i.chat_id == ^chat_id and i.status == "fixing") do
+      incident
+      |> Ecto.Changeset.change(status: "open", chat_id: nil)
+      |> Repo.update!()
+      |> broadcast()
+    end
+
+    :ok
+  end
+
   def resolve(%Incident{} = incident),
     do: incident |> Ecto.Changeset.change(status: "resolved") |> Repo.update!() |> broadcast()
 

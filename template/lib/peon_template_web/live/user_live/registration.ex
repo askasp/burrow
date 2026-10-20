@@ -1,3 +1,4 @@
+# peon:accounts-only: Peon leaves this file out of apps made without accounts.
 defmodule PeonTemplateWeb.UserLive.Registration do
   use PeonTemplateWeb, :live_view
 
