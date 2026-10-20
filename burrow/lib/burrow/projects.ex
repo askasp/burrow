@@ -236,6 +236,6 @@ defmodule Burrow.Projects do
     token = Phoenix.Token.sign(secret(project, "sso"), "peon sso", email)
     params = [token: token, to: to, theme: theme]
     query = URI.encode_query(Enum.reject(params, &(elem(&1, 1) == nil)))
-    Burrow.Ports.url(project.port) <> "/sso?" <> query
+    Burrow.Ports.peon_url(project.port) <> "/sso?" <> query
   end
 end

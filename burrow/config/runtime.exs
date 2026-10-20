@@ -49,6 +49,10 @@ if config_env() != :test do
     peon_host: System.get_env("BURROW_PEON_HOST", "localhost"),
     # Public address per port behind a tunnel, e.g. https://burrow-{port}.example.com
     port_url: System.get_env("BURROW_PORT_URL"),
+    # Where a browser opens a project's workspace, e.g. https://example.com/w/{port}:
+    # under Burrow's own site, so an installed Burrow app keeps it in the same
+    # window. Unset, it is the port's address above.
+    peon_url: System.get_env("BURROW_PEON_URL"),
     # opencode runs every user's agents with the user's own AI logins.
     opencode_bin: System.get_env("BURROW_OPENCODE_BIN") || System.find_executable("opencode"),
     opencode_model: System.get_env("BURROW_OPENCODE_MODEL", "openai/gpt-6-sol"),

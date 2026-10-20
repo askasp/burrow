@@ -32,7 +32,7 @@ defmodule PeonWeb.ProjectLive.Components do
         <li :for={p <- @rail}>
           <a
             class="ritem"
-            href={if p.current, do: "/", else: p.url}
+            href={if p.current, do: ~p"/", else: p.url}
             aria-current={if p.current, do: "page"}
             data-kb-current={if p.current, do: "1"}
             data-kb="item"
@@ -131,8 +131,14 @@ defmodule PeonWeb.ProjectLive.Components do
   attr :secrets, :list, required: true
   attr :open_incidents, :integer, required: true
   attr :pane, :string, required: true
+  attr :preview, :map, required: true
+  attr :view, :string, required: true
+  attr :agent?, :boolean, required: true, doc: "the open chat's agent runs"
 
-  @doc "The project's name and versions, \"Deploys and usage\", and the ⋯ menu."
+  @doc """
+  The project's name and versions, \"Deploys and usage\", and the ⋯ menu.
+  On phones the menu also holds what the bars show on a wide screen.
+  """
   def project_bar(assigns) do
     ~H"""
     <div class="pbar">
@@ -198,6 +204,66 @@ defmodule PeonWeb.ProjectLive.Components do
             style="display: none"
             phx-click-away={hide_menu()}
           >
+            <div class="menu-meta phone-only mono">{@meta}</div>
+            <button
+              :if={!@repo?}
+              type="button"
+              role="menuitem"
+              class="phone-only"
+              phx-click={hide_menu() |> JS.push("toggle_overview")}
+            >
+              {if @overview, do: "Back to preview", else: "Deploys and usage"}<span
+                :if={@open_incidents > 0}
+                class="k text-[var(--err)]"
+              >{@open_incidents} incidents</span>
+            </button>
+            <button
+              :if={@preview.url && !@preview[:empty]}
+              type="button"
+              role="menuitem"
+              class="phone-only"
+              phx-click={hide_menu() |> JS.push("reload_preview")}
+            >
+              Reload preview
+            </button>
+            <a
+              :if={@preview.url && !@preview[:empty]}
+              href={@preview.url}
+              target="_blank"
+              rel="noopener"
+              role="menuitem"
+              class="phone-only"
+            >
+              Open {if @view == "dev", do: "the preview", else: "the app"} in a new tab
+            </a>
+            <button
+              :if={@preview.url && !@preview[:empty]}
+              type="button"
+              role="menuitem"
+              class="phone-only"
+              phx-click={hide_menu() |> JS.push("toggle_logs")}
+            >
+              Logs
+            </button>
+            <button
+              :if={@view == "dev" and @agent?}
+              type="button"
+              role="menuitem"
+              class="phone-only"
+              phx-click={hide_menu() |> JS.push("restart_preview")}
+            >
+              Restart the preview
+            </button>
+            <button
+              :if={@agent?}
+              type="button"
+              role="menuitem"
+              class="phone-only"
+              phx-click={hide_menu() |> JS.push("toggle_attach")}
+            >
+              Open in opencode
+            </button>
+            <div class="msep phone-only" role="separator"></div>
             <button
               :if={@sharing}
               type="button"

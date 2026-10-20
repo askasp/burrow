@@ -19,6 +19,29 @@ defmodule Burrow.Ports do
 
   def host(port), do: URI.parse(url(port)).host
 
+  @doc """
+  Where a browser opens the Peon on `port`: `BURROW_PEON_URL` with `{port}`
+  filled in (e.g. `https://example.com/w/{port}`, a path on Burrow's own
+  site that its router sends to the Peon), or `url/1`.
+  """
+  def peon_url(port) do
+    case Application.get_env(:burrow, :peon_url) do
+      nil ->
+        url(port)
+
+      template ->
+        template |> String.replace("{port}", to_string(port)) |> String.trim_trailing("/")
+    end
+  end
+
+  @doc "The path a Peon answers under (`PEON_PATH`), nil when it has its own host."
+  def peon_path(port) do
+    case URI.parse(peon_url(port)).path do
+      path when path in [nil, "", "/"] -> nil
+      path -> path
+    end
+  end
+
   def url_template,
     do:
       Application.get_env(:burrow, :port_url) ||

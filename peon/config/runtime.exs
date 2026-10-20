@@ -49,6 +49,13 @@ if config_env() != :test do
   config :peon, Peon.Repo,
     database: System.get_env("DATABASE_PATH") || Path.join(data_dir, "peon.db")
 
+  # Behind Burrow's router a Peon answers under a path of Burrow's site
+  # (e.g. /w/4112, PEON_PATH): the router strips it from requests, and every
+  # link, asset and the LiveView socket carry it.
+  with "/" <> _ = path <- System.get_env("PEON_PATH") do
+    config :peon, PeonWeb.Endpoint, url: [path: path]
+  end
+
   config :peon,
     data_dir: data_dir,
     project_slug: System.get_env("PEON_PROJECT_SLUG", "sauna_booking"),

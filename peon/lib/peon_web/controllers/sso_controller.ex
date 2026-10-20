@@ -7,7 +7,7 @@ defmodule PeonWeb.SSOController do
         # Only a chat's path: never a redirect off this Peon.
         to =
           if is_binary(params["to"]) and params["to"] =~ ~r"\A/c/[a-z0-9]+\z",
-            do: params["to"],
+            do: PeonWeb.Endpoint.path(params["to"]),
             else: ~p"/"
 
         conn

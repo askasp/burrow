@@ -33,7 +33,7 @@
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
-  src: url("/fonts/rubik-latin.woff2") format("woff2");
+  src: url("../../fonts/rubik-latin.woff2") format("woff2");
 }
 
 @font-face {
@@ -41,7 +41,7 @@
   font-style: normal;
   font-weight: 400 500;
   font-display: swap;
-  src: url("/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  src: url("../../fonts/jetbrains-mono-latin.woff2") format("woff2");
 }
 
 :root {
@@ -295,7 +295,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .menu button:hover { background: var(--sunken) }
 .menu button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px }
 .menu .k { font-size: 12.5px; color: var(--text-3) }
+.menu a[role="menuitem"] { display: flex; align-items: center; height: 36px; padding: 0 10px; border-radius: 6px; color: var(--text); font-size: 14px; text-decoration: none }
+.menu a[role="menuitem"]:hover { background: var(--sunken) }
 .msep { height: 1px; margin: 6px 4px; background: var(--border) }
+.menu-meta { padding: 4px 10px 8px; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere }
+.menu .phone-only, .menu-meta.phone-only { display: none }
 
 /* The chat column: tabs, thread, changeset, composer */
 .ws-chat { flex: 1 1 460px; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--border) }
@@ -456,7 +460,12 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .pbar-meta { font-size: 11.5px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100% }
   .pbar-acts { flex: none; gap: 2px }
   .pbar-long { display: none }
-  #overview-btn { width: 32px; padding: 0 }
+  /* What isn't needed right away goes in the ⋯ menu */
+  #overview-btn, .pbar-meta, .vbar .icon-btn, .vbar .btn, .vbar .ws-url, #keep-running-form, .cbar .xlink { display: none }
+  .menu .phone-only { display: flex }
+  .menu-meta.phone-only, .msep.phone-only { display: block }
+  .menu { position: fixed; top: 52px; right: 8px; left: auto; min-width: min(280px, calc(100vw - 16px)) }
+  .vbar { min-height: 44px; padding: 6px 12px }
   .seg.ws-panes { display: inline-flex }
   .ws-panes button { height: 28px; padding: 0 9px }
   .ws-chat, .ws-prev { flex: 1 1 auto; min-height: 0; border-right: 0 }

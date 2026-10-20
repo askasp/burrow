@@ -118,7 +118,8 @@ defmodule Burrow.Cell do
 
     env = %{
       "PHX_SERVER" => "true",
-      "PHX_HOST" => Burrow.Ports.host(project.port),
+      "PHX_HOST" => URI.parse(Burrow.Ports.peon_url(project.port)).host,
+      "PEON_PATH" => Burrow.Ports.peon_path(project.port) || "",
       "PORT" => to_string(project.port),
       "DATABASE_PATH" => Path.join(data_dir, "peon.db"),
       "SECRET_KEY_BASE" =>

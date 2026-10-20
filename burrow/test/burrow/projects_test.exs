@@ -191,4 +191,26 @@ defmodule Burrow.ProjectsTest do
 
     assert Burrow.Ports.host(project.port) == "burrow-#{project.port}.example.com"
   end
+
+  test "workspaces can open under Burrow's own site, at /w/<port>" do
+    Application.put_env(:burrow, :port_url, "https://peon-{port}.example.com")
+    Application.put_env(:burrow, :peon_url, "https://example.com/w/{port}")
+
+    on_exit(fn ->
+      Application.delete_env(:burrow, :port_url)
+      Application.delete_env(:burrow, :peon_url)
+    end)
+
+    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Home"})
+
+    assert Projects.peon_url(project, "a@b.no", nil, "dark") =~
+             ~r"^https://example.com/w/#{project.port}/sso\?token=.+&theme=dark$"
+
+    assert Burrow.Ports.peon_path(project.port) == "/w/#{project.port}"
+    # Previews keep their own hosts.
+    assert Burrow.Ports.url(project.port) == "https://peon-#{project.port}.example.com"
+
+    Application.delete_env(:burrow, :peon_url)
+    assert Burrow.Ports.peon_path(project.port) == nil
+  end
 end

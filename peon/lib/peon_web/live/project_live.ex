@@ -704,7 +704,7 @@ defmodule PeonWeb.ProjectLive do
         dev?: dev?(assigns),
         promote: promote_target(assigns),
         open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved")),
-        burrow: assigns.burrow_url && assigns.burrow_url <> "/projects"
+        burrow: assigns.burrow_url
       )
 
     assigns = assign(assigns, preview: preview(assigns))
@@ -724,7 +724,7 @@ defmodule PeonWeb.ProjectLive do
         burrow={@burrow}
         theme={@theme}
       />
-      <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
+      <div id="theme" phx-hook=".Theme" data-theme={@theme} data-url={~p"/theme"} hidden></div>
 
       <div class="ws-main">
         <.project_bar
@@ -737,6 +737,9 @@ defmodule PeonWeb.ProjectLive do
           secrets={@secrets}
           open_incidents={@open_incidents}
           pane={@pane}
+          preview={@preview}
+          view={@view}
+          agent?={@info != nil}
         />
 
         <div class="ws-split">
@@ -931,7 +934,7 @@ defmodule PeonWeb.ProjectLive do
           if (root.dataset.theme === theme) return
           root.dataset.theme = theme
           const csrf = document.querySelector("meta[name='csrf-token']")?.content
-          fetch("/theme", {
+          fetch(this.el.dataset.url, {
             method: "POST",
             headers: {"x-csrf-token": csrf},
             body: new URLSearchParams({theme})
@@ -996,7 +999,7 @@ defmodule PeonWeb.ProjectLive do
       %{
         id: project.id,
         name: project.name,
-        url: "/",
+        url: ~p"/",
         current: true,
         state: tile["state"],
         label: tile["label"],

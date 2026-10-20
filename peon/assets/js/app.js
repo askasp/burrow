@@ -27,7 +27,9 @@ import topbar from "../vendor/topbar"
 import {installKeys} from "./keys"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
-const liveSocket = new LiveSocket("/live", Socket, {
+// Behind Burrow a Peon runs under a path (/w/<port>); the layout says where.
+const livePath = document.querySelector("meta[name='live-path']")?.content || "/live"
+const liveSocket = new LiveSocket(livePath, Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks},
