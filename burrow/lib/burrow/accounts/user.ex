@@ -5,6 +5,10 @@ defmodule Burrow.Accounts.User do
   schema "users" do
     field :email, :string
     field :ai_model, :string
+    # The project opened last (`Burrow.Accounts.opened_project/2`), and
+    # whether the workspace's project rail shows names
+    field :last_project_id, :integer
+    field :rail_open, :boolean, default: false
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime

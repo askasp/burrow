@@ -26,6 +26,18 @@ defmodule Burrow.Accounts do
     Repo.get_by(User, email: email)
   end
 
+  @doc "Remembers the project the user opened, for the next login."
+  def opened_project(%User{id: id}, project_id) do
+    Repo.update_all(from(u in User, where: u.id == ^id), set: [last_project_id: project_id])
+    :ok
+  end
+
+  @doc "Whether the workspace's project rail shows project names, for this user."
+  def put_rail_open(%User{id: id}, open?) when is_boolean(open?) do
+    Repo.update_all(from(u in User, where: u.id == ^id), set: [rail_open: open?])
+    :ok
+  end
+
   @doc """
   Gets a user by email and password.
 

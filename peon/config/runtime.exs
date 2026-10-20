@@ -57,8 +57,9 @@ if config_env() != :test do
     preview_ports: ports,
     env_ports: env_ports,
     check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
-    # Chats running at once (agent and preview); see Peon.Chat
-    max_running_chats: String.to_integer(System.get_env("PEON_MAX_RUNNING_CHATS", "3")),
+    # Chats running at once (agent and preview), at most one per chat tab;
+    # see Peon.Chat and Peon.Chats.max/0
+    max_running_chats: String.to_integer(System.get_env("PEON_MAX_RUNNING_CHATS", "4")),
     health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
     # Where a browser reaches a preview or env port (see Peon.Ports.url/1)
     port_url:

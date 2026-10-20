@@ -7,8 +7,9 @@
 #                      @@peon {"event": "connected" | "error" | "stats", ...}
 #
 # It loads PeonProbe into the app node: a :logger handler that forwards errors
-# with their stacktraces, plus the code that deploys (hot reload, assets,
-# migrations) and observer-style inspection run there.
+# with their stacktraces, a :telemetry handler that counts requests and their
+# visitors, plus the code that deploys (hot reload, assets, migrations) and
+# observer-style inspection run there.
 #
 # Usage: elixir --sname attacher --cookie C --hidden attacher.exs APP_NODE OTP_APP ENDPOINT
 
@@ -26,6 +27,102 @@
         level: :error,
         config: %{sink: sink, otp_app: otp_app}
       })
+
+      install_usage()
+    end
+
+    # Requests since the last stats (count and durations) and today's
+    # visitors, in tables owned by a process of their own: they outlive the
+    # attacher, so a reconnect keeps today's visitors.
+    defp install_usage do
+      if :ets.whereis(:peon_usage) == :undefined do
+        me = self()
+
+        spawn(fn ->
+          :ets.new(:peon_usage, [:named_table, :public, :duplicate_bag])
+          :ets.new(:peon_visitors, [:named_table, :public, :set])
+          send(me, :usage_ready)
+          Process.sleep(:infinity)
+        end)
+
+        receive do
+          :usage_ready -> :ok
+        after
+          5_000 -> :ok
+        end
+      end
+
+      :telemetry.detach(:peon_usage)
+      :telemetry.attach(:peon_usage, [:phoenix, :endpoint, :stop], &__MODULE__.request/4, nil)
+    end
+
+    # :telemetry handler: runs in the request's process, never raises. Peon's
+    # own health checks don't count.
+    def request(_event, %{duration: duration}, %{conn: %{request_path: path} = conn}, _config)
+        when path != "/health" do
+      :ets.insert(:peon_usage, {:ms, System.convert_time_unit(duration, :native, :millisecond)})
+      :ets.insert(:peon_visitors, {{Date.utc_today(), visitor(conn)}})
+    rescue
+      _ -> :ok
+    end
+
+    def request(_event, _measurements, _metadata, _config), do: :ok
+
+    # The signed-in user when the app has accounts, else the browser.
+    defp visitor(conn) do
+      case conn.assigns[:current_scope] do
+        %{user: %{id: id}} ->
+          {:user, id}
+
+        _ ->
+          agent = conn |> Plug.Conn.get_req_header("user-agent") |> List.first("")
+          {:anon, :erlang.phash2({conn.remote_ip, agent})}
+      end
+    end
+
+    @doc """
+    Requests since the last call with their p95 in ms, LiveView sessions
+    connected now, and visitors today.
+    """
+    def usage do
+      ms = if :ets.whereis(:peon_usage) == :undefined, do: [], else: :ets.take(:peon_usage, :ms)
+      today = Date.utc_today()
+
+      visitors =
+        if :ets.whereis(:peon_visitors) == :undefined do
+          0
+        else
+          :ets.select_delete(:peon_visitors, [{{{:"$1", :_}}, [{:"/=", :"$1", {:const, today}}], [true]}])
+          :ets.info(:peon_visitors, :size)
+        end
+
+      %{
+        "requests" => length(ms),
+        "p95" => p95(Enum.map(ms, &elem(&1, 1))),
+        "sessions" => live_views(),
+        "visitors" => visitors
+      }
+    end
+
+    defp p95([]), do: nil
+
+    defp p95(ms) do
+      sorted = Enum.sort(ms)
+      Enum.at(sorted, min(length(sorted) - 1, trunc(length(sorted) * 0.95)))
+    end
+
+    # Each connected LiveView is a process whose initial call is its mount/3.
+    defp live_views do
+      Enum.count(Process.list(), fn pid ->
+        match?({:dictionary, %{"$initial_call": {_, :mount, 3}}}, dictionary(pid))
+      end)
+    end
+
+    defp dictionary(pid) do
+      case Process.info(pid, :dictionary) do
+        {:dictionary, dict} -> {:dictionary, Map.new(dict)}
+        nil -> nil
+      end
     end
 
     # :logger handler callback. Runs in the process that logged: cheap, never raises.
@@ -130,10 +227,10 @@
           do: version
     end
 
-    @doc "System figures, the ones observer shows on its first tab."
+    @doc "System figures, the ones observer shows on its first tab, and `usage/0`."
     def stats do
       info = :observer_backend.sys_info()
-      Map.new(@stats, &{&1, info[&1]})
+      @stats |> Map.new(&{&1, info[&1]}) |> Map.put(:usage, usage())
     end
 
     @doc "The top `limit` processes by memory, reductions or message queue length."

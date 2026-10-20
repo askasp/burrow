@@ -2,7 +2,7 @@ defmodule PeonWeb.BurrowController do
   @moduledoc """
   Burrow's way in, with the token Burrow and this Peon share
   (`PEON_API_TOKEN`): turning a live-only project into one with staging and
-  prod.
+  prod, and saying that a project in the rail changed (`Peon.Burrow`).
   """
 
   use PeonWeb, :controller
@@ -11,6 +11,11 @@ defmodule PeonWeb.BurrowController do
 
   def add_envs(conn, %{"user" => user}) do
     :ok = Peon.Ship.add_envs(user)
+    send_resp(conn, 204, "")
+  end
+
+  def rail(conn, _params) do
+    Peon.Burrow.rail_changed()
     send_resp(conn, 204, "")
   end
 

@@ -1,0 +1,19 @@
+<Layouts.auth flash={@flash} current_scope={@current_scope}>
+  <meta http-equiv="refresh" content="2" />
+  <div class="flex flex-col items-center gap-3 text-center" role="status">
+    <.icon
+      :if={!@exited?}
+      name="hero-arrow-path"
+      class="size-8 animate-spin text-[var(--accent-text)]"
+    />
+    <h1 class="m-0 text-xl font-semibold">
+      {if @exited?, do: "#{@project.name} stopped", else: "Starting #{@project.name}…"}
+    </h1>
+    <p class="m-0 text-[var(--text-2)]">
+      {if @exited?,
+        do: "Its Peon exited and is restarting. This page tries again by itself.",
+        else: "Its workspace opens as soon as its Peon is up."}
+    </p>
+    <.link navigate={~p"/projects"} class="xlink">All projects</.link>
+  </div>
+</Layouts.auth>

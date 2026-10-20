@@ -1,48 +1,60 @@
 defmodule PeonWeb.ProjectLive do
   @moduledoc """
-  The workspace, laid out as the Peon UI kit's "Peon workspace" board (the
-  Burrow design): the project and its chats on the left, the chat with its
-  current changeset in the middle, and the live preview on the right, which
-  switches between the chat's dev preview, staging and prod. Main's tests,
-  staging and prod sit under the chats; incidents and deploys open in a panel.
+  The workspace, Peon's home screen, laid out as the Peon UI kit's "4 ·
+  Peon: home" board: the project rail (every project the user can open, from
+  Burrow), then the project bar, the chat tabs with the open chat and its
+  changeset, and the preview. The preview switches between the chat's dev
+  preview and what is live (staging and prod in a pipeline project), or
+  gives way to "Deploys and usage".
+
+  A project has up to four chats (`Peon.Chats.max/0`), each one changeset;
+  `Peon.Activity` says where each stands. An empty chat starts its agent
+  and preview with its first message.
   """
 
   use PeonWeb, :live_view
 
-  alias Peon.{Chat, Chats, Checks, Code, Env, Incidents, Project, Secrets, Ship, Store, Verifier}
+  import PeonWeb.ProjectLive.Components
+
+  alias Peon.{Activity, Chat, Chats, Code, Env, Incidents, Project, Secrets, Ship, Store}
+  alias Peon.Verifier
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Chats.subscribe()
       Store.subscribe()
-      Checks.subscribe()
+      Peon.Checks.subscribe()
       Env.subscribe()
       Incidents.subscribe()
       Secrets.subscribe()
+      Peon.Burrow.subscribe()
     end
 
     {:ok,
      socket
-     |> assign(project: Project.get(), chat: nil, info: nil, preview_env: "dev")
+     |> assign(project: Project.get(), repo?: Peon.Source.repo?())
      |> assign(burrow_url: Application.get_env(:peon, :burrow_url))
-     # The project rail: the user's projects in Burrow; the chats column can fold away
-     |> assign(rail: [], left_open: true)
+     # The project rail and this project's sharing, from Burrow
+     |> assign(rail: [], sharing: nil, rail_open: false, rail_set?: false)
      |> load_rail()
-     |> assign(repo?: Peon.Source.repo?())
-     |> load_chats()
+     |> assign(busy: if(connected?(socket), do: Chat.busy_ids(), else: MapSet.new()))
+     |> assign(chat: nil, tab: nil, info: nil, view: "dev")
      |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
      # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
      |> assign(stopped: nil)
      |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
-     |> assign(changeset: nil, main_id: nil, form: to_form(%{"text" => ""}))
+     |> assign(changeset: nil, landed?: false, held: nil, form: to_form(%{"text" => ""}))
      # The "/" menu: the chat's commands and skills, and those matching the box
      |> assign(slash_items: [], slash: [])
-     |> assign(landed?: false, held: nil, env_names: Ship.env_names(), show_ship: false)
-     |> assign(secrets: Secrets.list(), show_secrets: false, secrets_key: 0)
-     # Phones: one pane at a time, chats in a drawer
-     |> assign(pane: "chat", drawer: false)
+     # "Deploys and usage" in place of the preview; one dialog at a time
+     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
+     |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
+     |> assign(secrets: Secrets.list(), secrets_key: 0)
+     # Phones: one pane at a time
+     |> assign(pane: "chat")
      |> assign(envs: Map.new(Ship.env_names(), &{&1, Env.info(&1)}))
+     |> load_tabs()
      |> load_ship()}
   end
 
@@ -50,7 +62,7 @@ defmodule PeonWeb.ProjectLive do
   def handle_params(%{"id" => id}, _uri, socket) do
     case Chats.get(id) do
       nil ->
-        {:noreply, push_navigate(socket, to: ~p"/")}
+        {:noreply, push_patch(socket, to: ~p"/")}
 
       chat ->
         if old = socket.assigns.chat,
@@ -60,21 +72,31 @@ defmodule PeonWeb.ProjectLive do
 
         socket =
           socket
-          |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, drawer: false)
-          |> assign(slash_items: [], slash: [], stopped: nil)
+          |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, pending: nil)
+          |> assign(slash_items: [], slash: [], stopped: nil, starting: false, step: nil)
+          |> select_tab()
           |> load_changeset()
+          |> default_view()
 
-        if connected?(socket),
+        # An empty chat starts its agent with its first message.
+        if connected?(socket) and chat.started_at,
           do: {:noreply, start_chat(socket)},
           else: {:noreply, socket}
     end
   end
 
+  # The workspace opens on the first chat, or a new empty one.
   def handle_params(_params, _uri, socket) do
-    if old = socket.assigns.chat, do: Phoenix.PubSub.unsubscribe(Peon.PubSub, "chat:#{old.id}")
+    case socket.assigns.tabs do
+      [first | _] ->
+        {:noreply, push_patch(socket, to: ~p"/c/#{first.chat.id}", replace: true)}
 
-    {:noreply,
-     assign(socket, chat: nil, info: nil, changeset: nil, starting: false, drawer: false)}
+      [] ->
+        case Chats.create_empty(socket.assigns.user) do
+          {:ok, chat} -> {:noreply, push_patch(socket, to: ~p"/c/#{chat.id}", replace: true)}
+          {:error, :full} -> {:noreply, socket}
+        end
+    end
   end
 
   defp start_chat(socket) do
@@ -87,7 +109,7 @@ defmodule PeonWeb.ProjectLive do
 
   @impl true
   def handle_async(:chat, {:ok, {:ok, info}}, socket) do
-    socket = assign(socket, info: info, starting: false)
+    socket = socket |> assign(info: info, starting: false) |> default_view()
 
     case socket.assigns.pending do
       nil -> {:noreply, socket}
@@ -99,34 +121,58 @@ defmodule PeonWeb.ProjectLive do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
 
-  def handle_async(:rail, {:ok, rail}, socket), do: {:noreply, assign(socket, rail: rail)}
-  def handle_async(:rail, {:exit, _}, socket), do: {:noreply, socket}
-
   def handle_async(:chat, {:exit, reason}, socket) do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
 
+  def handle_async(:rail, {:ok, rail}, socket) do
+    socket = assign(socket, rail: rail.projects, sharing: rail.project)
+
+    # The user's choice, until they toggle it here
+    if socket.assigns.rail_set?,
+      do: {:noreply, socket},
+      else: {:noreply, assign(socket, rail_open: rail.rail_open)}
+  end
+
+  def handle_async(:rail, {:exit, _}, socket), do: {:noreply, socket}
+
+  def handle_async(:create, {:ok, {:ok, url}}, socket),
+    do: {:noreply, redirect(socket, external: url)}
+
+  def handle_async(:create, {:ok, {:error, message}}, socket),
+    do: {:noreply, socket |> assign(creating: false) |> put_flash(:error, message)}
+
+  def handle_async(:create, {:exit, _}, socket),
+    do:
+      {:noreply, socket |> assign(creating: false) |> put_flash(:error, "Burrow did not answer.")}
+
+  def handle_async(:burrow, {:ok, {:ok, text}}, socket),
+    do: {:noreply, socket |> assign(dialog: nil) |> info(text) |> load_rail()}
+
+  def handle_async(:burrow, {:ok, {:error, message}}, socket),
+    do: {:noreply, put_flash(socket, :error, message)}
+
+  def handle_async(:burrow, {:exit, _}, socket),
+    do: {:noreply, put_flash(socket, :error, "Burrow did not answer.")}
+
   @impl true
   def handle_event("send", %{"text" => text}, socket) do
     text = String.trim(text)
+    %{chat: chat, tab: tab} = socket.assigns
 
     cond do
-      text == "" ->
+      text == "" or chat == nil or closed?(tab) ->
         {:noreply, socket}
 
-      socket.assigns.chat && socket.assigns.stopped ->
-        {:noreply,
-         socket |> assign(pending: text, form: to_form(%{"text" => ""})) |> start_chat()}
-
-      socket.assigns.chat && socket.assigns.info ->
+      socket.assigns.info && !socket.assigns.stopped ->
         {:noreply, socket |> assign(form: to_form(%{"text" => ""}), slash: []) |> prompt(text)}
 
-      socket.assigns.chat ->
-        {:noreply, assign(socket, pending: text)}
+      socket.assigns.starting ->
+        {:noreply, assign(socket, pending: text, form: to_form(%{"text" => ""}))}
 
       true ->
-        chat = Chats.create(text, socket.assigns.user)
-        {:noreply, socket |> assign(pending: text) |> push_patch(to: ~p"/c/#{chat.id}")}
+        {:noreply,
+         socket |> assign(pending: text, form: to_form(%{"text" => ""})) |> start_chat()}
     end
   end
 
@@ -134,8 +180,31 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("wake", _params, socket), do: {:noreply, start_chat(socket)}
 
-  def handle_event("toggle_left", _params, socket),
-    do: {:noreply, update(socket, :left_open, &(!&1))}
+  def handle_event("new_chat", _params, socket) do
+    case Chats.create_empty(socket.assigns.user) do
+      {:ok, chat} -> {:noreply, push_patch(socket, to: ~p"/c/#{chat.id}")}
+      {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
+    end
+  end
+
+  # Closing a chat deletes it (Peon.Chat.delete/1): its agent, preview and
+  # workspace go; what it merged stays. Stopping a repo preview can take
+  # minutes, so that runs on its own.
+  def handle_event("close_chat", %{"id" => id}, socket) do
+    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Chat.delete(id) end)
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_rail", _params, socket) do
+    open? = !socket.assigns.rail_open
+    user = socket.assigns.user
+
+    Task.Supervisor.start_child(Peon.TaskSupervisor, fn ->
+      Peon.Burrow.put_rail_open(user, open?)
+    end)
+
+    {:noreply, assign(socket, rail_open: open?, rail_set?: true)}
+  end
 
   def handle_event("keep_running", %{"hours" => hours}, socket) do
     chat = socket.assigns.chat
@@ -152,13 +221,6 @@ defmodule PeonWeb.ProjectLive do
     end
   end
 
-  # Stopping a repo preview can take minutes, so deleting runs on its own.
-  def handle_event("delete_chat", _params, socket) do
-    id = socket.assigns.chat.id
-    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Chat.delete(id) end)
-    {:noreply, socket |> info("Chat deleted.") |> push_patch(to: ~p"/")}
-  end
-
   def handle_event("pick_slash", %{"name" => name}, socket) do
     {:noreply, socket |> assign(slash: []) |> push_event("slash:pick", %{text: "/#{name} "})}
   end
@@ -170,16 +232,11 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("land", %{"id" => id}, socket) do
     case Ship.merge(String.to_integer(id), socket.assigns.user) do
-      {:ok, cs} ->
-        text =
-          if Ship.live_only?(),
-            do: "Changeset #{cs.id} is on main and going live.",
-            else: "Changeset #{cs.id} is now on main."
-
-        {:noreply, socket |> info(text) |> load_changeset()}
+      {:ok, _cs} ->
+        {:noreply, socket |> load_changeset() |> load_tabs()}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not land: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, "Could not merge: #{inspect(reason)}")}
     end
   end
 
@@ -200,7 +257,7 @@ defmodule PeonWeb.ProjectLive do
 
     case Store.move_ref("prod", String.to_integer(id), version, user, approved_by: user) do
       {:ok, _} ->
-        {:noreply, info(socket, "Deploying ##{id} to prod.")}
+        {:noreply, socket |> info("Deploying ##{id} to prod.") |> assign(view: "prod")}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Could not promote: #{inspect(reason)}")}
@@ -219,8 +276,10 @@ defmodule PeonWeb.ProjectLive do
   end
 
   def handle_event("fix_incident", %{"id" => id}, socket) do
-    incident = Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.user)
-    {:noreply, push_patch(socket, to: ~p"/c/#{incident.chat_id}")}
+    case Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.user) do
+      {:ok, incident} -> {:noreply, push_patch(socket, to: ~p"/c/#{incident.chat_id}")}
+      {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
+    end
   end
 
   def handle_event("resolve_incident", %{"id" => id}, socket) do
@@ -228,13 +287,83 @@ defmodule PeonWeb.ProjectLive do
     {:noreply, socket}
   end
 
-  def handle_event("toggle_ship", _params, socket),
-    do:
-      {:noreply,
-       socket |> update(:show_ship, &(!&1)) |> assign(show_secrets: false) |> load_ship()}
+  def handle_event("toggle_overview", _params, socket),
+    do: {:noreply, socket |> update(:overview, &(!&1)) |> load_ship()}
 
-  def handle_event("toggle_secrets", _params, socket),
-    do: {:noreply, socket |> update(:show_secrets, &(!&1)) |> assign(show_ship: false)}
+  def handle_event("dialog", %{"dialog" => dialog}, socket)
+      when dialog in ~w(new_project share hand_over secrets) do
+    {:noreply,
+     assign(socket, dialog: String.to_existing_atom(dialog), new_project: new_project())}
+  end
+
+  def handle_event("close_dialog", _params, socket), do: {:noreply, assign(socket, dialog: nil)}
+
+  def handle_event("new_project_change", %{"project" => params}, socket),
+    do: {:noreply, update(socket, :new_project, &Map.merge(&1, new_project_params(params)))}
+
+  def handle_event("toggle_more", _params, socket),
+    do: {:noreply, update(socket, :new_project, &%{&1 | more: !&1.more})}
+
+  def handle_event("create_project", %{"project" => params}, socket) do
+    p = Map.merge(socket.assigns.new_project, new_project_params(params))
+    user = socket.assigns.user
+
+    if p.name == "" or socket.assigns.creating do
+      {:noreply, socket}
+    else
+      basic =
+        if p.auth == "basic" and p.repo_url == "",
+          do: %{"basic_username" => p.basic_username, "basic_password" => p.basic_password},
+          else: %{}
+
+      attrs =
+        Map.merge(
+          %{"name" => p.name, "repo_url" => p.repo_url, "team_id" => p.team_id, "auth" => p.auth},
+          basic
+        )
+
+      {:noreply,
+       socket
+       |> assign(creating: true, new_project: p)
+       |> start_async(:create, fn -> Peon.Burrow.create_project(user, attrs) end)}
+    end
+  end
+
+  def handle_event("share", %{"share" => %{"team_id" => team_id}}, socket) do
+    user = socket.assigns.user
+    team_id = if team_id == "", do: nil, else: team_id
+
+    {:noreply,
+     start_async(socket, :burrow, fn ->
+       with :ok <- Peon.Burrow.share(user, team_id) do
+         {:ok, if(team_id, do: "Shared.", else: "Only you can open it now.")}
+       end
+     end)}
+  end
+
+  def handle_event("hand_over", %{"hand_over" => %{"user_id" => user_id}}, socket) do
+    user = socket.assigns.user
+
+    {:noreply,
+     start_async(socket, :burrow, fn ->
+       with :ok <- Peon.Burrow.hand_over(user, user_id) do
+         {:ok, "Handed over. Peon restarts on their AI login."}
+       end
+     end)}
+  end
+
+  # Burrow records it and has this Peon do it; without Burrow, Peon does it.
+  def handle_event("add_envs", _params, socket) do
+    user = socket.assigns.user
+    add = if socket.assigns.burrow_url, do: &Peon.Burrow.add_envs/1, else: &Ship.add_envs/1
+
+    {:noreply,
+     start_async(socket, :burrow, fn ->
+       with :ok <- add.(user) do
+         {:ok, "Staging and prod are set up: main goes to staging, then you promote."}
+       end
+     end)}
+  end
 
   def handle_event("set_secret", %{"name" => name, "value" => value}, socket) do
     name = name |> String.trim() |> String.upcase()
@@ -264,16 +393,16 @@ defmodule PeonWeb.ProjectLive do
   def handle_event("reload_preview", _params, socket),
     do: {:noreply, update(socket, :frame_key, &(&1 + 1))}
 
-  def handle_event("drawer", _params, socket),
-    do: {:noreply, update(socket, :drawer, &(!&1))}
-
   def handle_event("pane", %{"pane" => pane}, socket) when pane in ["chat", "preview"],
     do: {:noreply, assign(socket, pane: pane)}
 
-  def handle_event("preview_env", %{"env" => env}, socket) when env in ["dev", "staging", "prod"],
+  def handle_event("view", %{"view" => view}, socket) when view in ["dev", "staging", "prod"],
     do:
       {:noreply,
-       socket |> assign(preview_env: env) |> update(:frame_key, &(&1 + 1)) |> load_logs()}
+       socket
+       |> assign(view: view, overview: false)
+       |> update(:frame_key, &(&1 + 1))
+       |> load_logs()}
 
   def handle_event("toggle_logs", _params, socket),
     do: {:noreply, socket |> update(:show_logs, &(!&1)) |> load_logs()}
@@ -298,10 +427,28 @@ defmodule PeonWeb.ProjectLive do
   def handle_info({:conflicts, paths}, socket),
     do: {:noreply, update_info(socket, conflicts: paths)}
 
-  def handle_info({:chat_created, _}, socket), do: {:noreply, load_chats(socket)}
+  def handle_info({:chat_busy, id, busy?}, socket) do
+    busy =
+      if busy?,
+        do: MapSet.put(socket.assigns.busy, id),
+        else: MapSet.delete(socket.assigns.busy, id)
+
+    {:noreply, socket |> assign(busy: busy) |> load_tabs()}
+  end
+
+  def handle_info({:chat_started, id}, socket) do
+    socket = load_tabs(socket)
+
+    if socket.assigns.chat && socket.assigns.chat.id == id,
+      do:
+        {:noreply, socket |> assign(chat: Chats.get(id) || socket.assigns.chat) |> select_tab()},
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:chat_created, _}, socket), do: {:noreply, load_tabs(socket)}
 
   def handle_info({:chat_deleted, id}, socket) do
-    socket = load_chats(socket)
+    socket = load_tabs(socket)
 
     if socket.assigns.chat && socket.assigns.chat.id == id,
       do: {:noreply, push_patch(socket, to: ~p"/")},
@@ -319,11 +466,13 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_info({:stopped, _reason}, socket), do: {:noreply, socket}
 
+  def handle_info(:rail_changed, socket), do: {:noreply, load_rail(socket)}
+
   def handle_info({:env, name, info}, socket) do
     socket = update(socket, :envs, &Map.put(&1, name, info))
     # Stats arrive every few seconds; only reload the lists when something moved.
-    if info.deploy || socket.assigns.show_ship,
-      do: {:noreply, load_ship(socket)},
+    if info.deploy || socket.assigns.overview,
+      do: {:noreply, socket |> load_ship() |> load_tabs()},
       else: {:noreply, socket}
   end
 
@@ -336,13 +485,23 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_info(:clear_info, socket), do: {:noreply, clear_flash(socket, :info)}
 
-  def handle_info(_msg, socket), do: {:noreply, socket |> load_changeset() |> load_ship()}
+  # Store and checks events: refs moved, changesets checked or landed.
+  def handle_info(_msg, socket) do
+    {:noreply,
+     socket
+     |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
+     |> load_changeset()
+     |> load_tabs()
+     |> load_ship()}
+  end
 
-  # Info flashes clear themselves so they don't cover the ship bar; errors stay.
+  # Info flashes clear themselves so they don't cover the work; errors stay.
   defp info(socket, text) do
     Process.send_after(self(), :clear_info, 4_000)
     put_flash(socket, :info, text)
   end
+
+  defp full_text, do: "Up to #{Chats.max()} chats. Merge or close one first."
 
   # While the box holds just "/name", the commands and skills it matches,
   # names starting with it first. A bare "/" reloads them: the agent may have
@@ -389,40 +548,35 @@ defmodule PeonWeb.ProjectLive do
   # The dev preview's log comes from the chat, staging's and prod's from their env.
   defp load_logs(%{assigns: %{show_logs: false}} = socket), do: socket
 
-  defp load_logs(%{assigns: %{preview_env: "dev", chat: %{id: id}}} = socket) do
+  defp load_logs(%{assigns: %{view: "dev", chat: %{id: id}}} = socket) do
     case Chat.logs(id) do
       {:ok, logs} -> assign(socket, logs: logs)
       _ -> socket
     end
   end
 
-  defp load_logs(%{assigns: %{preview_env: env}} = socket) when env in ["staging", "prod"],
+  defp load_logs(%{assigns: %{view: env}} = socket) when env in ["staging", "prod"],
     do: assign(socket, logs: Env.logs(env))
 
   defp load_logs(socket), do: socket
 
-  # The chats with their latest changeset: "#12" open, "✓ #9" on main.
-  defp load_chats(socket) do
-    main = Code.ref("main")
+  defp load_rail(socket) do
+    user = socket.assigns.user
 
-    chats =
-      for chat <- Chats.list() do
-        tag =
-          case Chats.latest_changeset(chat.id) do
-            nil ->
-              nil
+    if connected?(socket),
+      do: start_async(socket, :rail, fn -> Peon.Burrow.rail(user) end),
+      else: socket
+  end
 
-            cs ->
-              if(main && Code.ancestor?(cs.id, main.changeset_id),
-                do: "✓ ##{cs.id}",
-                else: "##{cs.id}"
-              )
-          end
+  # The chat tabs, each with its changeset and phase (Peon.Activity).
+  defp load_tabs(socket),
+    do: socket |> assign(tabs: Activity.chats(socket.assigns.busy)) |> select_tab()
 
-        Map.put(chat, :tag, tag)
-      end
+  defp select_tab(%{assigns: %{chat: nil}} = socket), do: assign(socket, tab: nil)
 
-    assign(socket, chats: chats)
+  defp select_tab(socket) do
+    id = socket.assigns.chat.id
+    assign(socket, tab: Enum.find(socket.assigns.tabs, &(&1.chat.id == id)))
   end
 
   defp load_changeset(%{assigns: %{chat: nil}} = socket), do: socket
@@ -433,30 +587,92 @@ defmodule PeonWeb.ProjectLive do
 
     assign(socket,
       changeset: changeset,
-      main_id: main_id,
       landed?: changeset != nil and Code.ancestor?(changeset.id, main_id),
-      held: if(changeset && changeset.status == "passed", do: Ship.review_reasons(changeset))
+      held:
+        if(changeset != nil and changeset.status == "passed" and not Ship.live_only?(),
+          do: Ship.review_reasons(changeset)
+        )
     )
   end
 
   defp load_ship(socket) do
-    main =
-      case Code.resolve("main") do
-        {:ok, cs} -> cs
-        _ -> nil
-      end
-
     socket =
       assign(socket,
-        main: main,
         incidents: Incidents.list(),
         culprit: Verifier.culprit(),
-        auto_promote: Project.settings()["auto_promote"] == true
+        auto_promote: Project.settings()["auto_promote"] == true,
+        nothing_built?: not socket.assigns.repo? and Code.ref("prod") == nil
       )
 
-    if socket.assigns.show_ship,
-      do: assign(socket, deploys: Map.new(socket.assigns.env_names, &{&1, Env.deploys(&1, 5)})),
-      else: assign(socket, deploys: %{})
+    if socket.assigns.overview,
+      do: assign(socket, deploys: deploys(socket.assigns.env_names)),
+      else: assign(socket, deploys: [])
+  end
+
+  # The latest deploys over all environments, one row per changeset, with
+  # where it is now and what was asked for.
+  defp deploys(env_names) do
+    on = Map.new(env_names, &{&1, with(%{changeset_id: id} <- Code.ref(&1), do: id)})
+
+    env_names
+    |> Enum.flat_map(&Env.deploys(&1, 8))
+    |> Enum.filter(&(&1.status == "healthy"))
+    |> Enum.sort_by(& &1.id, :desc)
+    |> Enum.uniq_by(& &1.changeset_id)
+    |> Enum.take(8)
+    |> Enum.map(fn d ->
+      where =
+        Enum.find(Enum.reverse(env_names), fn env ->
+          on[env] && Code.ancestor?(d.changeset_id, on[env])
+        end)
+
+      intent =
+        case Code.changeset(d.changeset_id) do
+          {:ok, cs} -> cs.intent
+          _ -> ""
+        end
+
+      %{id: d.changeset_id, intent: intent, where: where, at: d.inserted_at}
+    end)
+  end
+
+  # The chat's dev preview while it has one; else what is live.
+  defp default_view(socket) do
+    if dev?(socket.assigns), do: assign(socket, view: "dev"), else: assign(socket, view: "prod")
+  end
+
+  defp dev?(%{chat: chat, tab: tab}),
+    do: chat != nil and chat.started_at != nil and not closed?(tab)
+
+  defp closed?(%{phase: phase}), do: phase in ~w(landing staged live)
+  defp closed?(_tab), do: false
+
+  defp new_project do
+    %{
+      name: "",
+      repo_url: "",
+      team_id: "",
+      auth: "accounts",
+      basic_username: "",
+      basic_password: "",
+      more: false
+    }
+  end
+
+  @new_project_fields [
+    {"name", :name},
+    {"repo_url", :repo_url},
+    {"team_id", :team_id},
+    {"auth", :auth},
+    {"basic_username", :basic_username},
+    {"basic_password", :basic_password}
+  ]
+
+  defp new_project_params(params) do
+    for {key, field} <- @new_project_fields,
+        is_binary(params[key]),
+        into: %{},
+        do: {field, String.trim(params[key])}
   end
 
   defp start_error({:session, _}),
@@ -475,462 +691,212 @@ defmodule PeonWeb.ProjectLive do
   def render(assigns) do
     assigns =
       assign(assigns,
-        preview: preview(assigns),
+        view: effective_view(assigns),
+        dev?: dev?(assigns),
         promote: promote_target(assigns),
-        open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved"))
+        open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved")),
+        burrow: assigns.burrow_url && assigns.burrow_url <> "/projects"
       )
+
+    assigns = assign(assigns, preview: preview(assigns))
 
     ~H"""
     <Layouts.flash_group flash={@flash} />
-    <div class={["ws-root", @drawer && "drawer"]} data-pane={@pane}>
-      <header class="ws-mbar">
-        <button
-          type="button"
-          phx-click="drawer"
-          class="ws-mbar-menu"
-          aria-label="Chats and project"
-          aria-expanded={to_string(@drawer)}
-        >
-          <.icon name="hero-bars-3" class="size-5" />
-        </button>
-        <span class="ws-mbar-title truncate">{(@chat && @chat.title) || "New chat"}</span>
-        <div class="seg" role="group" aria-label="View">
-          <button
-            :for={{pane, label} <- [{"chat", "Chat"}, {"preview", "Preview"}]}
-            type="button"
-            phx-click="pane"
-            phx-value-pane={pane}
-            aria-pressed={to_string(@pane == pane)}
-          >
-            {label}
-          </button>
-        </div>
-      </header>
-      <div :if={@drawer} class="ws-scrim" phx-click="drawer" aria-hidden="true"></div>
-      <nav class="ws-rail" data-kb-zoom-hide aria-label="Projects">
-        <a href={@burrow_url || ~p"/"} class="ws-rail-home" title="All projects">
-          <Layouts.mark size={26} />
-        </a>
-        <div class="ws-rail-list">
-          <%= for p <- @rail do %>
-            <span
-              :if={p.current}
-              class="ws-tile current"
-              title={p.name}
-              aria-current="page"
-            >
-              {tile_initials(p.name)}<i class={["dot", rail_tone(p.status)]}></i>
-            </span>
-            <a :if={!p.current} href={p.url} class="ws-tile" title={"#{p.name} · #{p.status}"}>
-              {tile_initials(p.name)}<i class={["dot", rail_tone(p.status)]}></i>
-            </a>
-          <% end %>
-        </div>
-        <button
-          type="button"
-          phx-click="toggle_left"
-          class="ws-tile ws-rail-fold"
-          data-kb-key="b"
-          data-kb-label={if @left_open, do: "Hide chats", else: "Show chats"}
-          data-kb-group="Chats"
-          aria-pressed={to_string(!@left_open)}
-          title={if @left_open, do: "Hide chats", else: "Show chats"}
-        >
-          <.icon
-            name={if @left_open, do: "hero-chevron-double-left", else: "hero-chevron-double-right"}
-            class="size-4"
-          />
-        </button>
-      </nav>
-      <aside
-        class={["ws-left", !@left_open && "folded"]}
-        data-kb-zoom-hide
-        aria-label="Project and chats"
-      >
-        <div class="ws-left-top">
-          <a href={@burrow_url || ~p"/"} class="ws-brand" aria-label="Peon, back to projects">
-            <Layouts.mark size={26} /> <span>peon</span>
-          </a>
-          <div class="ws-project">
-            <a :if={@burrow_url} href={@burrow_url} class="ws-back">
-              <.icon name="hero-chevron-left" class="size-3.5" /> All projects
-            </a>
-            <div class="flex items-center gap-2">
-              <div class="flex flex-col min-w-0 mr-auto">
-                <span class="ws-project-name">{@project && @project.name}</span>
-                <span class="mono ws-project-slug">{@project && @project.slug}</span>
-              </div>
-              <span :if={@info} class={["st", st_tone(@info.preview_status)]}>
-                <span class="dot"></span>{preview_word(@info.preview_status)}
-              </span>
-            </div>
-          </div>
-          <.link
-            patch={~p"/"}
-            data-kb-key="c"
-            data-kb-label="New chat"
-            data-kb-group="Chats"
-            data-kb-focus="#chat-input"
-            class="btn btn-secondary btn-sm w-full"
-          >
-            <.icon name="hero-plus" class="size-4" /> New chat
-          </.link>
-        </div>
+    <div class="ws-root" data-pane={@pane}>
+      <.rail rail={rail_items(@rail, @project, @tabs)} open={@rail_open} burrow={@burrow} />
 
-        <nav class="ws-convos" aria-label="Chats">
-          <div class="eyebrow px-1.5 pt-2 pb-1.5">Chats</div>
-          <.link
-            :for={c <- @chats}
-            patch={~p"/c/#{c.id}"}
-            data-kb="item"
-            data-kb-current={if(@chat && @chat.id == c.id, do: "1")}
-            aria-current={if(@chat && @chat.id == c.id, do: "page")}
-            class={["convo", @chat && @chat.id == c.id && "active"]}
-          >
-            <span class="truncate">{c.title}</span>
-            <span :if={c.tag} class="meta mono">{c.tag}</span>
-          </.link>
-        </nav>
-
-        <.ship_status
-          :if={not @repo?}
-          main={@main}
-          culprit={@culprit}
-          envs={@envs}
-          env_names={@env_names}
-          auto_promote={@auto_promote}
-          promote={@promote}
+      <div class="ws-main">
+        <.project_bar
+          project={@project}
+          meta={meta(assigns)}
+          overview={@overview}
+          sharing={@sharing}
+          live_only?={@live_only?}
+          repo?={@repo?}
+          secrets={@secrets}
           open_incidents={@open_incidents}
+          pane={@pane}
         />
 
-        <div class="ws-secrets-link">
-          <button
-            phx-click="toggle_secrets"
-            data-kb-key="k"
-            data-kb-label="Secrets"
-            data-kb-group="Ship"
-            class={["xlink", asked(@secrets) != [] && "text-[var(--warn)]"]}
+        <div class="ws-split">
+          <main
+            class="ws-chat"
+            aria-label={"#{@project && @project.name} chats"}
+            data-kb-zoom-hide
           >
-            {secrets_text(@secrets)}
-          </button>
-        </div>
-
-        <div class="ws-account">
-          <span class="ws-avatar" aria-hidden="true">{initials(@user)}</span>
-          <span class="truncate">{@user}</span>
-        </div>
-      </aside>
-
-      <main class="ws-chat" data-kb-zoom-hide>
-        <header class="ws-chat-head">
-          <h1 class="truncate">{(@chat && @chat.title) || "New chat"}</h1>
-          <span :if={@changeset} class="mono muted text-xs shrink-0">
-            {if(@landed?, do: "##{@changeset.id} on main", else: "##{@changeset.id}")}
-          </span>
-          <form :if={@chat} id="keep-running-form" phx-change="keep_running" class="ml-auto shrink-0">
-            <label class="sr-only" for="keep-running">Keep running</label>
-            <select
-              id="keep-running"
-              name="hours"
-              class="field keep"
-              title="How long the agent and preview stay up without use, e.g. while others test the preview"
-            >
-              <option :if={Chats.kept_running?(@chat)} value="kept" selected>
-                Running until {Calendar.strftime(@chat.keep_until, "%b %-d, %H:%M UTC")}
-              </option>
-              <option value="">Stops after 30 min idle</option>
-              <option value="4">Keep running 4 hours</option>
-              <option value="24">Keep running 1 day</option>
-              <option value="168">Keep running 7 days</option>
-            </select>
-          </form>
-          <button
-            :if={@chat}
-            type="button"
-            phx-click="delete_chat"
-            data-confirm={
-              if @repo?,
-                do:
-                  "Delete this chat? Its agent, preview and checkout go; a pull request it opened stays open.",
-                else: "Delete this chat? Its agent, preview and workspace go; landed changesets stay."
-            }
-            class="icon-btn sm shrink-0"
-            aria-label="Delete chat"
-            title="Delete chat"
-          >
-            <.icon name="hero-trash" class="size-4" />
-          </button>
-        </header>
-
-        <div class="ws-scroll" id="messages" phx-hook=".ScrollBottom">
-          <div class="ws-thread">
-            <div :if={@chat == nil and @pending == nil} class="ws-hello">
-              <Layouts.mark size={56} />
-              <h2>Something need doing?</h2>
-            </div>
-            <div :if={@starting} class="ws-working" role="status">
-              <.icon name="hero-arrow-path" class="size-4 spin" /> Starting the agent and preview…
-            </div>
-            <div :if={@start_error} class="say-error">{@start_error}</div>
-            <%= for block <- blocks((@info && @info.messages) || []) do %>
-              <.block block={block} />
-            <% end %>
-            <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
-            <div :if={@info && @info.busy?} class="ws-working" role="status">
-              <Layouts.mark size={28} />
-              <span class="swing text-[var(--rust)]"><.icon name="hero-wrench" class="size-4" /></span>
-              <span class="flex flex-col min-w-0">
-                <span class="font-medium">Work, work.</span>
-                <span class="text-[13px] text-[var(--text-2)] truncate">
-                  {doing(@info.messages)}
-                </span>
-              </span>
-              <button
-                phx-click="interrupt"
-                data-kb-key="x"
-                data-kb-label="Stop the agent"
-                data-kb-group="Agent & preview"
-                data-kb-esc
-                class="btn btn-ghost btn-sm"
-              >
-                Stop
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="ws-bottom">
-          <div :if={@culprit} class="notice err">
-            <span>Main's tests fail since #{@culprit.id}: {@culprit.intent}</span>
-            <button
-              phx-click="revert"
-              phx-value-id={@culprit.id}
-              data-kb="row"
-              class="btn btn-danger btn-sm ml-auto"
-            >
-              revert
-            </button>
-          </div>
-          <div :if={@info && @info.conflicts != []} class="notice warn">
-            Main changed files this chat also changed (the chat's version is kept): {Enum.join(
-              @info.conflicts,
-              ", "
-            )}
-          </div>
-          <.connect_card
-            :if={@chat && asked(@secrets, @chat.id) != []}
-            secrets={asked(@secrets, @chat.id)}
-            key={@secrets_key}
-          />
-          <.changeset_card
-            :if={@changeset}
-            changeset={@changeset}
-            landed?={@landed?}
-            held={@held}
-            step={@step}
-            envs={@envs}
-          />
-          <.form for={@form} id="composer" phx-submit="send" phx-change="typing" class="composer">
-            <div
-              :if={@slash != []}
-              id="slash-menu"
-              class="slash"
-              role="listbox"
-              aria-label="Commands and skills"
-            >
-              <button
-                :for={{item, i} <- Enum.with_index(@slash)}
-                type="button"
-                role="option"
-                aria-selected={to_string(i == 0)}
-                phx-click="pick_slash"
-                phx-value-name={item.name}
-                class="slash-item"
-              >
-                <span class="mono shrink-0">/{item.name}</span>
-                <span class="tag shrink-0">{item.kind}</span>
-                <span class="muted truncate">{item.description}</span>
-              </button>
-            </div>
-            <label class="sr-only" for="chat-input">Message Peon</label>
-            <textarea
-              name="text"
-              rows="2"
-              id="chat-input"
-              data-kb="search"
-              data-kb-label="Chat box"
-              phx-hook=".SubmitOnEnter"
-              placeholder={
-                if @chat, do: "Describe a change… (/ for commands)", else: "Describe your app…"
-              }
-            >{@form[:text].value}</textarea>
-            <div class="cbar">
-              <button :if={@info} type="button" phx-click="toggle_attach" data-kb="row" class="xlink">
-                Open in opencode
-              </button>
-              <button class="btn btn-primary ws-send" aria-label="Send">
-                <.icon name="hero-arrow-up" class="size-4" />
-              </button>
-            </div>
-            <pre :if={@info && @show_attach} class="out mono">{@info.attach}</pre>
-          </.form>
-        </div>
-      </main>
-
-      <section class="ws-prev" aria-label="Live preview">
-        <div class="ws-prev-bar">
-          <div class="seg" role="group" aria-label="Environment">
-            <button
-              :for={env <- ["dev" | @env_names]}
-              type="button"
-              phx-click="preview_env"
-              phx-value-env={env}
-              aria-pressed={to_string(@preview_env == env)}
-            >
-              {env}
-            </button>
-          </div>
-          <span :if={@preview.status} class={["st", st_tone(@preview.status)]}>
-            <span class="dot"></span>{preview_word(@preview.status)}
-          </span>
-          <div class="ws-url mono">
-            <.icon name="hero-lock-closed" class="size-3.5 shrink-0 muted" />
-            <span class="truncate">{@preview.url || "no preview yet"}</span>
-          </div>
-          <span :if={@preview.ref} class="tag mono" title="Version shown in the preview">{@preview.ref}</span>
-          <a
-            :for={{name, url} <- @preview[:links] || []}
-            href={url}
-            target="_blank"
-            rel="noopener"
-            class="tag mono"
-            title={"Open #{name} in a new tab"}
-          >
-            {name} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
-          </a>
-          <a
-            :if={@preview[:pr]}
-            href={@preview.pr}
-            target="_blank"
-            rel="noopener"
-            class="tag mono"
-            title="The chat's pull request"
-          >
-            PR {pr_number(@preview.pr)} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
-          </a>
-          <button
-            :if={@preview.url}
-            type="button"
-            phx-click="reload_preview"
-            data-kb-key="r"
-            data-kb-label="Reload preview"
-            data-kb-group="Agent & preview"
-            class="icon-btn"
-            aria-label="Reload preview"
-          >
-            <.icon name="hero-arrow-path" class="size-[18px]" />
-          </button>
-          <a
-            :if={@preview.url}
-            href={@preview.url}
-            target="_blank"
-            rel="noopener"
-            data-kb="row"
-            class="icon-btn"
-            aria-label={"Open #{@preview_env} in a new tab"}
-            title={"Open #{@preview_env} in a new tab"}
-          >
-            <.icon name="hero-arrow-top-right-on-square" class="size-[17px]" />
-          </a>
-          <button
-            :if={@preview_env == "dev" and @info}
-            type="button"
-            phx-click="restart_preview"
-            data-kb-key="R"
-            data-kb-label="Restart preview"
-            data-kb-group="Agent & preview"
-            class="btn btn-ghost btn-sm"
-          >
-            Restart
-          </button>
-          <button
-            :if={@preview.url}
-            type="button"
-            phx-click="toggle_logs"
-            data-kb-key="v"
-            data-kb-label="Preview logs"
-            data-kb-group="Agent & preview"
-            aria-pressed={to_string(@show_logs)}
-            class="btn btn-secondary btn-sm"
-          >
-            <.icon name="hero-command-line" class="size-4" /> Logs
-          </button>
-        </div>
-
-        <div class="ws-prev-body">
-          <iframe
-            :if={@preview.live?}
-            id={"preview-#{@preview_env}-#{@frame_key}"}
-            src={@preview.url}
-            class="ws-frame"
-          />
-          <div :if={!@preview.live?} class="ws-prev-empty" role="status">
-            <.icon
-              :if={@preview.status in [:starting, :booting, :loading, :watching]}
-              name="hero-arrow-path"
-              class="size-8 spin text-[var(--accent-text)]"
+            <.chat_tabs
+              tabs={@tabs}
+              chat={@chat}
+              project={@project}
+              nothing_built?={@nothing_built?}
+              repo?={@repo?}
             />
-            <div class="ws-prev-title">{@preview.message}</div>
-            <button
-              :if={@preview[:wake]}
-              type="button"
-              phx-click="wake"
-              data-kb="row"
-              class="btn btn-primary"
-            >
-              Start again
-            </button>
-            <a
-              :if={@preview[:open] && @preview.url}
-              href={@preview.url}
-              target="_blank"
-              rel="noopener"
-              data-kb="row"
-              class="btn btn-primary"
-            >
-              Open {@preview_env} in a new tab
-              <.icon name="hero-arrow-top-right-on-square" class="size-4" />
-            </a>
-          </div>
-          <section :if={@show_logs} class="ws-logs" aria-label="Logs">
-            <div class="ws-logs-head">
-              <.icon name="hero-command-line" class="size-4 muted" />
-              <span class="font-semibold text-[13px]">Logs</span>
-              <span class="mono muted text-xs">{@project && @project.slug} · {@preview_env}</span>
-              <button
-                type="button"
-                phx-click="toggle_logs"
-                class="icon-btn sm ml-auto"
-                aria-label="Hide logs"
-              >
-                <.icon name="hero-chevron-down" class="size-4" />
-              </button>
+
+            <div class="ws-scroll" id="messages" phx-hook=".ScrollBottom">
+              <div class="ws-thread">
+                <div :if={(@chat && @chat.started_at == nil) and @pending == nil} class="ws-hello">
+                  <Layouts.mark size={52} />
+                  <h2>{hello(@project, @nothing_built?)}</h2>
+                </div>
+                <div :if={@starting} class="ws-working" role="status">
+                  <.icon name="hero-arrow-path" class="size-4 spin" /> Starting the agent and preview…
+                </div>
+                <div :if={@start_error} class="say-error">{@start_error}</div>
+                <%= for block <- blocks((@info && @info.messages) || []) do %>
+                  <.block block={block} />
+                <% end %>
+                <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
+                <div :if={@info && @info.busy?} class="ws-working" role="status">
+                  <span class="swing text-[var(--rust)]"><.icon name="hero-wrench" class="size-4" /></span>
+                  <span class="font-medium shrink-0">Peon is working…</span>
+                  <span class="mono muted text-[12.5px] truncate">{doing(@info.messages)}</span>
+                  <button
+                    phx-click="interrupt"
+                    data-kb-key="x"
+                    data-kb-label="Stop the agent"
+                    data-kb-group="Agent & preview"
+                    data-kb-esc
+                    class="btn btn-ghost btn-sm ml-auto"
+                  >
+                    Stop
+                  </button>
+                </div>
+                <div
+                  :if={event = event_line(@tab, @live_only?)}
+                  class={["evt", event.tone]}
+                  role="note"
+                >
+                  <span class="ln"></span><span class="mono">{event.text}</span><span class="ln"></span>
+                </div>
+              </div>
             </div>
-            <pre class="ws-logs-body mono">{@logs}</pre>
+
+            <div class="ws-bottom">
+              <div :if={@culprit} class="notice err">
+                <span>Main's tests fail since #{@culprit.id}: {@culprit.intent}</span>
+                <button
+                  phx-click="revert"
+                  phx-value-id={@culprit.id}
+                  data-kb="row"
+                  class="btn btn-danger btn-sm ml-auto"
+                >
+                  revert
+                </button>
+              </div>
+              <div :if={@info && @info.conflicts != []} class="notice warn">
+                Main changed files this chat also changed (the chat's version is kept): {Enum.join(
+                  @info.conflicts,
+                  ", "
+                )}
+              </div>
+              <.connect_card
+                :if={@chat && asked(@secrets, @chat.id) != []}
+                secrets={asked(@secrets, @chat.id)}
+                key={@secrets_key}
+              />
+              <.changeset_card
+                :if={@changeset && !@repo?}
+                changeset={@changeset}
+                tab={@tab}
+                landed?={@landed?}
+                held={@held}
+                step={@step}
+                live_only?={@live_only?}
+                promote={@promote}
+              />
+              <.form for={@form} id="composer" phx-submit="send" phx-change="typing" class="composer">
+                <div
+                  :if={@slash != []}
+                  id="slash-menu"
+                  class="slash"
+                  role="listbox"
+                  aria-label="Commands and skills"
+                >
+                  <button
+                    :for={{item, i} <- Enum.with_index(@slash)}
+                    type="button"
+                    role="option"
+                    aria-selected={to_string(i == 0)}
+                    phx-click="pick_slash"
+                    phx-value-name={item.name}
+                    class="slash-item"
+                  >
+                    <span class="mono shrink-0">/{item.name}</span>
+                    <span class="tag shrink-0">{item.kind}</span>
+                    <span class="muted truncate">{item.description}</span>
+                  </button>
+                </div>
+                <label class="sr-only" for="chat-input">Message Peon</label>
+                <textarea
+                  name="text"
+                  rows="2"
+                  id="chat-input"
+                  data-kb="search"
+                  data-kb-label="Chat box"
+                  phx-hook=".SubmitOnEnter"
+                  disabled={closed?(@tab)}
+                  placeholder={placeholder(@tab, @changeset)}
+                >{@form[:text].value}</textarea>
+                <div class="cbar">
+                  <button
+                    :if={@info}
+                    type="button"
+                    phx-click="toggle_attach"
+                    data-kb="row"
+                    class="xlink"
+                  >
+                    Open in opencode
+                  </button>
+                  <button class="btn btn-primary ws-send" aria-label="Send" disabled={closed?(@tab)}>
+                    <.icon name="hero-arrow-up" class="size-4" />
+                  </button>
+                </div>
+                <pre :if={@info && @show_attach} class="out mono">{@info.attach}</pre>
+              </.form>
+            </div>
+          </main>
+
+          <section class="ws-prev" aria-label="Preview">
+            <.overview
+              :if={@overview}
+              envs={@envs}
+              env_names={@env_names}
+              live_only?={@live_only?}
+              tabs={@tabs}
+              info={@info}
+              promote={@promote}
+              auto_promote={@auto_promote}
+              incidents={@incidents}
+              deploys={@deploys}
+            />
+            <.preview_pane
+              :if={!@overview}
+              preview={@preview}
+              view={@view}
+              env_names={@env_names}
+              live_only?={@live_only?}
+              dev?={@dev?}
+              changeset={@changeset}
+              chat={@chat}
+              info={@info}
+              frame_key={@frame_key}
+              show_logs={@show_logs}
+              logs={@logs}
+              project={@project}
+            />
           </section>
         </div>
-      </section>
+      </div>
 
-      <.ship_panel
-        :if={@show_ship}
-        auto_promote={@auto_promote}
-        envs={@envs}
-        env_names={@env_names}
-        incidents={@incidents}
-        deploys={@deploys}
+      <.new_project_dialog
+        :if={@dialog == :new_project}
+        p={@new_project}
+        teams={(@sharing && @sharing.teams) || []}
+        creating={@creating}
       />
-
-      <.secrets_panel :if={@show_secrets} secrets={@secrets} key={@secrets_key} />
+      <.share_dialog :if={@dialog == :share} sharing={@sharing} project={@project} />
+      <.hand_over_dialog :if={@dialog == :hand_over} sharing={@sharing} project={@project} />
+      <.secrets_dialog :if={@dialog == :secrets} secrets={@secrets} key={@secrets_key} />
     </div>
 
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
@@ -974,41 +940,105 @@ defmodule PeonWeb.ProjectLive do
     """
   end
 
-  defp pr_number(url), do: "#" <> (url |> String.split("/") |> List.last())
+  # A view that isn't there falls back to what is live.
+  defp effective_view(%{view: "dev"} = assigns), do: if(dev?(assigns), do: "dev", else: "prod")
 
-  defp load_rail(socket) do
-    user = socket.assigns.user
+  defp effective_view(%{view: "staging", env_names: names}),
+    do: if("staging" in names, do: "staging", else: "prod")
 
-    if connected?(socket),
-      do: start_async(socket, :rail, fn -> Peon.Burrow.projects(user) end),
-      else: socket
+  defp effective_view(%{view: view}), do: view
+
+  # The rail's tiles; without Burrow, just this project.
+  defp rail_items([], project, tabs) when project != nil do
+    tile = Activity.project(tabs)
+
+    [
+      %{
+        id: project.id,
+        name: project.name,
+        url: "/",
+        current: true,
+        state: tile["state"],
+        label: tile["label"],
+        pct: tile["pct"]
+      }
+    ]
   end
 
-  # A project's tile in the rail: "Sauna Booking" -> "SB", "watchtower" -> "Wa".
-  defp tile_initials(name) do
-    case String.split(name || "?", ~r/[\s_-]+/, trim: true) do
-      [a, b | _] -> String.upcase(String.first(a) <> String.first(b))
-      [one] -> String.capitalize(String.slice(one, 0, 2))
-      [] -> "?"
+  defp rail_items(rail, _project, _tabs), do: rail
+
+  # "watchtower · live #8 · no staging · shared with Ops"
+  defp meta(%{project: nil}), do: ""
+
+  defp meta(assigns) do
+    %{project: project, envs: envs, sharing: sharing} = assigns
+    tag = fn env -> with(%{deployed: id} when id != nil <- envs[env], do: "##{id}") || "—" end
+
+    parts =
+      cond do
+        assigns.repo? -> [project.slug, "from #{repo_name()}"]
+        assigns.nothing_built? -> [project.slug, "nothing built yet"]
+        assigns.live_only? -> [project.slug, "live #{tag.("prod")}", "no staging"]
+        true -> [project.slug, "staging #{tag.("staging")}", "prod #{tag.("prod")}"]
+      end
+
+    shared = if sharing && sharing.team, do: ["shared with #{sharing.team.name}"], else: []
+    Enum.join(parts ++ shared, " · ")
+  end
+
+  defp repo_name do
+    case Peon.Source.repo() do
+      %{url: url} ->
+        (URI.parse(url).path || "")
+        |> String.trim_leading("/")
+        |> String.trim_trailing(".git")
+
+      _ ->
+        "a git repo"
     end
   end
 
-  defp rail_tone("running"), do: "ok"
-  defp rail_tone("starting"), do: "warn"
-  defp rail_tone("exited"), do: "err"
-  defp rail_tone(_), do: "idle"
+  defp hello(project, true), do: "What should #{project && project.name} do?"
+  defp hello(project, false), do: "What should change in #{project && project.name}?"
+
+  defp placeholder(%{phase: phase}, _cs) when phase in ~w(landing staged live),
+    do: "Merged. Start a new chat for the next change."
+
+  defp placeholder(%{phase: "ready"}, %{id: id}), do: "Add to ##{id}, or merge it"
+  defp placeholder(%{phase: "new"}, _cs), do: "Describe the change"
+  defp placeholder(_tab, _cs), do: "Message Peon (/ for commands)"
+
+  # The line under the thread once the chat's changeset is merged.
+  defp event_line(%{phase: "landing", changeset: %{id: id}}, true),
+    do: %{text: "##{id} on main · going live…", tone: nil}
+
+  defp event_line(%{phase: "landing", changeset: %{id: id}}, false),
+    do: %{text: "##{id} on main · on its way to staging…", tone: nil}
+
+  defp event_line(%{phase: "staged", changeset: %{id: id}}, _live_only?),
+    do: %{text: "##{id} on main · on staging", tone: "ok"}
+
+  defp event_line(%{phase: "live", changeset: %{id: id}}, true),
+    do: %{text: "##{id} on main · live", tone: "ok"}
+
+  defp event_line(%{phase: "live", changeset: %{id: id}}, false),
+    do: %{text: "##{id} promoted to prod", tone: "ok"}
+
+  defp event_line(_tab, _live_only?), do: nil
 
   # What the preview pane shows: the chat's dev preview, or staging or prod.
-  defp preview(%{preview_env: "dev", info: nil, chat: chat, starting: starting}) do
-    message =
-      if chat || starting,
-        do: "Starting the preview…",
-        else: "The preview starts with your first chat."
-
-    %{url: nil, status: if(chat, do: :starting), ref: nil, live?: false, message: message}
+  defp preview(%{view: "dev", info: nil, starting: starting, stopped: stopped} = assigns) do
+    %{
+      url: nil,
+      status: if(starting, do: :starting),
+      ref: assigns.changeset && "##{assigns.changeset.id}",
+      live?: false,
+      message: if(stopped, do: stopped_message(stopped), else: "Starting the preview…"),
+      wake: stopped != nil and not starting
+    }
   end
 
-  defp preview(%{preview_env: "dev", info: info, changeset: cs, stopped: stopped}) do
+  defp preview(%{view: "dev", info: info, changeset: cs, stopped: stopped}) do
     %{
       links: info[:preview_links] || [],
       pr: info[:pr_url],
@@ -1022,32 +1052,46 @@ defmodule PeonWeb.ProjectLive do
     }
   end
 
-  defp preview(%{preview_env: env, envs: envs}) do
+  defp preview(%{view: env, envs: envs, live_only?: live_only?}) do
+    name = env_label(env, live_only?)
+
     case envs[env] do
-      # Real environments keep frame-ancestors 'self' (clickjacking protection),
-      # so they open in their own tab instead of the frame.
-      %{deployed: id} = info when id != nil ->
+      %{deployed: id, status: {:crashed, _}} = info when id != nil ->
         %{
           url: info.url,
           status: info.status,
           ref: "##{id}",
           live?: false,
-          message: env_message(env, info),
-          open: true
+          down: env,
+          message: "#{name} is down"
+        }
+
+      %{deployed: id} = info when id != nil ->
+        # Real environments keep frame-ancestors 'self' (clickjacking protection),
+        # so they open in their own tab instead of the frame.
+        %{
+          url: info.url,
+          status: info.status,
+          ref: "##{id}",
+          live?: false,
+          message: env_message(name, info),
+          open: info.status == :running
         }
 
       info ->
         %{
           url: info && info.url,
-          status: info && info.status,
+          status: nil,
           ref: nil,
           live?: false,
-          message: "Nothing is deployed to #{env} yet."
+          empty: true,
+          message: "Nothing here yet"
         }
     end
   end
 
   defp promote_target(%{auto_promote: true}), do: nil
+  defp promote_target(%{live_only?: true}), do: nil
 
   defp promote_target(%{envs: envs}) do
     with %{good: good} when good != nil <- envs["staging"],
@@ -1125,544 +1169,6 @@ defmodule PeonWeb.ProjectLive do
   defp activity({"peon_request_secret", _}), do: "Asking you for a key…"
   defp activity(_), do: "Working on it…"
 
-  attr :block, :any, required: true
-
-  defp block(%{block: {:user, message}} = assigns) do
-    assigns = assign(assigns, :message, message)
-
-    ~H"""
-    <div class="bubble-user">{@message.text}</div>
-    """
-  end
-
-  defp block(%{block: {:peon, messages, ack?}} = assigns) do
-    assigns = assign(assigns, messages: messages, ack?: ack?)
-
-    ~H"""
-    <div class="say-peon-turn">
-      <Layouts.mark size={28} />
-      <div class="flex-1 min-w-0 flex flex-col gap-2">
-        <div class="text-[13px] font-semibold leading-[18px]">Peon</div>
-        <div :if={@ack?} class="say-agent">Zug zug.</div>
-        <.message :for={m <- @messages} message={m} />
-      </div>
-    </div>
-    """
-  end
-
-  attr :message, :map, required: true
-
-  defp message(%{message: %{role: :assistant}} = assigns) do
-    ~H"""
-    <div class="say-agent">{String.replace(@message.text, ~r/\A\s*zug zug\.?\s*/i, "")}</div>
-    """
-  end
-
-  defp message(%{message: %{role: :tool, detail: detail}} = assigns)
-       when is_binary(detail) and detail != "" do
-    assigns = assign(assigns, tool: split_tool(assigns.message.text))
-
-    ~H"""
-    <details class="result" open={@message[:peon?]}>
-      <summary class="result-btn">
-        <.icon name="hero-chevron-right" class="size-3.5 chev" />
-        <span class="mono font-medium text-[var(--text-2)]">{elem(@tool, 0)}</span>
-        <span class={["truncate", @message[:status] == "error" && "text-[var(--err)]"]}>{elem(
-          @tool,
-          1
-        )}</span>
-      </summary>
-      <pre class={["out mono", @message[:peon?] && "peon"]}>{@message.detail}</pre>
-    </details>
-    """
-  end
-
-  defp message(%{message: %{role: :tool}} = assigns) do
-    assigns = assign(assigns, tool: split_tool(assigns.message.text))
-
-    ~H"""
-    <div class={["tool mono", @message[:status] == "error" && "err"]}>
-      <span class="ar">→</span> <span class="nm">{elem(@tool, 0)}</span> {elem(@tool, 1)}
-    </div>
-    """
-  end
-
-  defp message(assigns) do
-    ~H"""
-    <div class="say-error">{@message.text}</div>
-    """
-  end
-
-  defp split_tool(text) do
-    case String.split(text, " ", parts: 2) do
-      [name, rest] -> {name, rest}
-      [name] -> {name, ""}
-    end
-  end
-
-  attr :changeset, :map, required: true
-  attr :landed?, :boolean, required: true
-  attr :held, :list
-  attr :step, :any
-  attr :envs, :map, required: true
-
-  defp changeset_card(assigns) do
-    verify = assigns.changeset.verify
-
-    steps =
-      (assigns.changeset.checks["steps"] || []) ++
-        if(assigns.landed? and verify,
-          do: [Map.put(verify, "name", "test") |> Map.put_new("duration_ms", nil)],
-          else: []
-        )
-
-    assigns =
-      assign(assigns, steps: steps, flow: flow(assigns.changeset, assigns.landed?, assigns.envs))
-
-    ~H"""
-    <section class="framed ws-cs" aria-label="Current changeset">
-      <div class="flex items-center gap-2.5 flex-wrap min-h-9">
-        <span class="text-[var(--rust)] flex"><.icon
-          name="hero-arrows-right-left"
-          class="size-[18px]"
-        /></span>
-        <h2 class="m-0 text-[15px] leading-[22px] font-semibold">Changeset #{@changeset.id}</h2>
-        <span class={["st", cs_tone(@changeset, @landed?)]}>
-          <span :if={@changeset.status in ["checking", "proposed"]} class="dot"></span>{cs_status(
-            @changeset,
-            @landed?
-          )}
-        </span>
-        <span :if={@landed?} class={["st", verify_tone(@changeset)]}>tests {verify_text(@changeset)}</span>
-      </div>
-      <div class="truncate muted text-[13px]">{@changeset.intent}</div>
-      <div :if={@steps != [] or @changeset.status == "checking"} class="ws-steps">
-        <div :for={step <- @steps} class={["step", step_kind(step["status"])]}>
-          <span class="i"><.step_icon status={step["status"]} /></span>
-          <span class="mono">{step["name"]}</span>
-          <span class="t mono">{seconds(step["duration_ms"])}</span>
-        </div>
-        <div :if={@changeset.status == "checking"} class="step run">
-          <span class="i"><.step_icon status="running" /></span>
-          <span class="mono">{step_text(@step)}</span>
-        </div>
-      </div>
-      <div :if={@held not in [nil, []] and not @landed?} class="text-[13px] text-[var(--warn)]">
-        Needs your review: {Enum.join(@held, "; ")}
-      </div>
-      <div class="mrg">
-        <div class="flow mono">
-          <span class={@flow.dev}>dev #{@changeset.id}</span>
-          <.icon name="hero-arrow-right" class="size-3.5" />
-          <span class={@flow.main}>main</span>
-          <.icon name="hero-arrow-right" class="size-3.5" />
-          <span class={@flow.staging}>staging</span>
-          <.icon name="hero-arrow-right" class="size-3.5" />
-          <span class={@flow.prod}>prod</span>
-        </div>
-        <button
-          :if={@changeset.status == "passed" and not @landed?}
-          phx-click="land"
-          phx-value-id={@changeset.id}
-          data-kb-key="a"
-          data-kb-label="Land changeset"
-          data-kb-group="Ship"
-          data-confirm="Land this changeset on main?"
-          class="btn btn-primary ml-auto"
-        >
-          <.icon name="hero-arrows-right-left" class="size-4" /> Land on main
-        </button>
-      </div>
-    </section>
-    """
-  end
-
-  # Which stages a changeset has reached: landed, and live on staging and prod.
-  defp flow(cs, landed?, envs) do
-    live? = fn env ->
-      landed? and match?(%{deployed: id} when id != nil, envs[env]) and
-        Code.ancestor?(cs.id, envs[env].deployed)
-    end
-
-    %{
-      dev: "on",
-      main: landed? && "on",
-      staging: live?.("staging") && "on",
-      prod: live?.("prod") && "on"
-    }
-  end
-
-  attr :status, :string, required: true
-
-  defp step_icon(%{status: "passed"} = assigns),
-    do: ~H|<.icon name="hero-check" class="size-[15px]" />|
-
-  defp step_icon(%{status: "failed"} = assigns),
-    do: ~H|<.icon name="hero-x-mark" class="size-[15px]" />|
-
-  defp step_icon(%{status: "running"} = assigns),
-    do: ~H|<.icon name="hero-arrow-path" class="size-[15px] spin" />|
-
-  defp step_icon(assigns), do: ~H|<.icon name="hero-minus-small" class="size-[15px]" />|
-
-  defp step_kind("passed"), do: "pass"
-  defp step_kind("failed"), do: "fail"
-  defp step_kind(_), do: "wait"
-
-  attr :main, :map
-  attr :culprit, :map
-  attr :envs, :map, required: true
-  attr :env_names, :list, required: true
-  attr :auto_promote, :boolean, required: true
-  attr :promote, :any
-  attr :open_incidents, :integer, required: true
-
-  # Under the chats: main's tests, staging and prod, and the way to incidents.
-  defp ship_status(assigns) do
-    ~H"""
-    <div class="ws-ship" id="ship-status">
-      <div class="eyebrow px-1.5 pb-1.5">Ship</div>
-      <div :if={@main} class="ws-ship-row">
-        <span class="mono">main #{@main.id}</span>
-        <span class={["st", verify_tone(@main)]}>tests {verify_text(@main)}</span>
-      </div>
-      <div :if={@culprit} class="ws-ship-row text-[var(--err)]" title={@culprit.intent}>
-        <span>broken by #{@culprit.id}</span>
-      </div>
-      <div :for={name <- @env_names} class="ws-ship-row">
-        <span class="mono">
-          {name}<span :if={info = @envs[name]}>{if(info.deployed, do: " ##{info.deployed}")}</span>
-          <span
-            :if={name == "prod" and @auto_promote}
-            class="tag ml-1"
-            title="Prod follows every healthy staging deploy"
-          >auto</span>
-        </span>
-        <%= if info = @envs[name] do %>
-          <span class={["st", st_tone(info.status)]}><span class="dot"></span>{env_text(info)}</span>
-        <% else %>
-          <span class="st idle">off</span>
-        <% end %>
-      </div>
-      <button
-        :if={@promote}
-        phx-click="promote"
-        phx-value-id={@promote}
-        data-kb-key="P"
-        data-kb-label="Promote to prod"
-        data-kb-group="Ship"
-        data-confirm={"Deploy ##{@promote} (healthy on staging) to prod?"}
-        class="btn btn-primary btn-sm w-full mt-1"
-      >
-        Promote #{@promote} to prod
-      </button>
-      <button
-        phx-click="toggle_ship"
-        data-kb-key="s"
-        data-kb-label="Incidents · deploys"
-        data-kb-group="Ship"
-        class={["xlink mt-1", @open_incidents > 0 && "text-[var(--err)]"]}
-      >
-        {@open_incidents} {if(@open_incidents == 1, do: "incident", else: "incidents")} · deploys
-      </button>
-    </div>
-    """
-  end
-
-  attr :envs, :map, required: true
-  attr :env_names, :list, required: true
-  attr :incidents, :list, required: true
-  attr :deploys, :map, required: true
-  attr :auto_promote, :boolean, required: true
-
-  defp ship_panel(assigns) do
-    ~H"""
-    <section id="ship-panel" class="ws-panel" aria-label="Incidents and deploys">
-      <div class="sec-h">
-        <h2 class="m-0 text-[15px] font-semibold">Incidents and deploys</h2>
-        <button type="button" phx-click="toggle_ship" class="icon-btn sm" aria-label="Close">
-          <.icon name="hero-x-mark" class="size-4" />
-        </button>
-      </div>
-      <div class="eyebrow pt-2 pb-1">Incidents</div>
-      <ul class="rows">
-        <li :if={@incidents == []} class="muted">No errors reported.</li>
-        <li :for={i <- @incidents} class="items-start!">
-          <span class="tag shrink-0">{i.env}</span>
-          <div class="flex-1 min-w-0">
-            <div class={["truncate", i.status != "resolved" && "text-[var(--err)]"]} title={i.detail}>
-              {i.title}
-            </div>
-            <div class="meta">
-              {i.count}× · {i.status}
-              <.link :if={i.chat_id} patch={~p"/c/#{i.chat_id}"} data-kb="row" class="xlink">chat</.link>
-            </div>
-          </div>
-          <button
-            :if={i.status == "open"}
-            phx-click="fix_incident"
-            phx-value-id={i.id}
-            data-kb="row"
-            class="btn btn-secondary btn-sm"
-          >
-            Fix with AI
-          </button>
-          <button
-            :if={i.status != "resolved"}
-            phx-click="resolve_incident"
-            phx-value-id={i.id}
-            data-kb="row"
-            class="btn btn-ghost btn-sm"
-          >
-            Resolve
-          </button>
-        </li>
-      </ul>
-      <div :for={name <- @env_names} class="pt-5">
-        <div class="sec-h">
-          <span class="flex items-center gap-3">
-            <span class="eyebrow">{name}</span>
-            <span :if={stats = @envs[name] && @envs[name].stats} class="meta mono">
-              {stats["process_count"]} procs · {mb(stats["total"])} MB · rq {stats["run_queue"]}
-            </span>
-          </span>
-          <label :if={name == "prod"} class="check">
-            <input
-              id="auto-promote"
-              type="checkbox"
-              data-kb="row"
-              checked={@auto_promote}
-              phx-click="toggle_auto_promote"
-            /> auto-promote healthy staging
-          </label>
-          <span :if={!(@envs[name] && @envs[name].deployed)} class="meta">nothing deployed yet</span>
-          <button
-            :if={@envs[name] && @envs[name].deployed}
-            phx-click="restart_env"
-            phx-value-env={name}
-            data-kb="row"
-            class="btn btn-ghost btn-sm"
-          >
-            Restart
-          </button>
-        </div>
-        <ul class="rows">
-          <li :for={d <- @deploys[name] || []}>
-            <span class="mono">#{d.changeset_id}</span>
-            <span class="meta">{d.mode}</span>
-            <span class={["st", deploy_tone(d.status)]}><span class="dot"></span>{d.status}</span>
-            <span class="meta truncate" title={d.detail}>{d.detail}</span>
-          </li>
-        </ul>
-        <pre
-          :if={@envs[name] && @envs[name].deployed}
-          title="A remote IEx shell on the running node"
-          class="out mono mt-2"
-        >{@envs[name].attach}</pre>
-      </div>
-    </section>
-    """
-  end
-
-  # Secrets the agent asked for that nobody has set yet (for one chat, or all).
-  defp asked(secrets, chat_id \\ nil),
-    do: Enum.filter(secrets, &(not &1.set? and (chat_id == nil or &1.chat_id == chat_id)))
-
-  defp secrets_text(secrets) do
-    case {length(secrets), length(asked(secrets))} do
-      {0, _} -> "Secrets"
-      {n, 0} -> "#{n} #{if n == 1, do: "secret", else: "secrets"}"
-      {n, a} -> "#{n - a} set · #{a} asked for"
-    end
-  end
-
-  attr :secrets, :list, required: true
-  attr :key, :integer, required: true
-
-  # In the chat: the keys the agent asked for, with a box to paste each into.
-  defp connect_card(assigns) do
-    ~H"""
-    <section class="framed ws-connect" aria-label="Keys the app needs">
-      <div class="flex items-baseline justify-between gap-3">
-        <h2 class="m-0 text-[15px] font-semibold">Peon needs a key</h2>
-        <span class="meta">kept in Peon, never in the code</span>
-      </div>
-      <.form
-        :for={s <- @secrets}
-        for={%{}}
-        id={"connect-#{s.name}-#{@key}"}
-        phx-submit="set_secret"
-        class="ws-connect-row"
-      >
-        <input type="hidden" name="name" value={s.name} />
-        <label class="flex flex-col min-w-0 flex-1 gap-1">
-          <span class="mono text-[13px] font-medium">{s.name}</span>
-          <span :if={s.why} class="meta">{s.why}</span>
-          <input
-            type="password"
-            name="value"
-            class="field"
-            autocomplete="off"
-            required
-            aria-label={"Value for #{s.name}"}
-          />
-        </label>
-        <button class="btn btn-primary btn-sm" data-kb="row">Save</button>
-      </.form>
-    </section>
-    """
-  end
-
-  attr :secrets, :list, required: true
-  attr :key, :integer, required: true
-
-  defp secrets_panel(assigns) do
-    ~H"""
-    <section id="secrets-panel" class="ws-panel" aria-label="Secrets">
-      <div class="sec-h">
-        <h2 class="m-0 text-[15px] font-semibold">Secrets</h2>
-        <button type="button" phx-click="toggle_secrets" class="icon-btn sm" aria-label="Close">
-          <.icon name="hero-x-mark" class="size-4" />
-        </button>
-      </div>
-      <p class="meta m-0 pb-3">
-        API keys, tokens and passwords. The preview, staging and prod get each one as an
-        environment variable and restart when one changes. The agent sees names only.
-      </p>
-      <ul class="rows">
-        <li :if={@secrets == []} class="muted">No secrets yet.</li>
-        <li :for={s <- @secrets} class="items-start!">
-          <div class="flex-1 min-w-0 flex flex-col gap-1.5">
-            <div class="flex items-center gap-2">
-              <span class="mono font-medium">{s.name}</span>
-              <span class={["st", if(s.set?, do: "ok", else: "warn")]}>
-                <span class="dot"></span>{if s.set?, do: "set", else: "asked for"}
-              </span>
-            </div>
-            <span :if={s.why} class="meta">{s.why}</span>
-            <span :if={s.set? && s.set_by} class="meta">by {s.set_by}</span>
-            <.form
-              for={%{}}
-              id={"secret-#{s.name}-#{@key}"}
-              phx-submit="set_secret"
-              class="flex gap-2"
-            >
-              <input type="hidden" name="name" value={s.name} />
-              <input
-                type="password"
-                name="value"
-                class="field h-8!"
-                autocomplete="off"
-                required
-                placeholder={if s.set?, do: "New value", else: "Value"}
-                aria-label={"Value for #{s.name}"}
-              />
-              <button class="btn btn-secondary btn-sm" data-kb="row">
-                {if s.set?, do: "Replace", else: "Save"}
-              </button>
-            </.form>
-          </div>
-          <button
-            phx-click="delete_secret"
-            phx-value-name={s.name}
-            data-kb="row"
-            data-confirm={"Remove #{s.name}? The app loses it on its next restart."}
-            class="btn btn-ghost btn-sm"
-          >
-            Remove
-          </button>
-        </li>
-      </ul>
-      <div class="eyebrow pt-5 pb-2">Add a secret</div>
-      <.form for={%{}} id={"secret-new-#{@key}"} phx-submit="set_secret" class="flex flex-col gap-2">
-        <input
-          type="text"
-          name="name"
-          class="field mono"
-          placeholder="NAME, like SLACK_TOKEN"
-          autocomplete="off"
-          required
-          aria-label="Name"
-        />
-        <input
-          type="password"
-          name="value"
-          class="field"
-          placeholder="Value"
-          autocomplete="off"
-          required
-          aria-label="Value"
-        />
-        <button class="btn btn-primary btn-sm self-start" data-kb="row">Add</button>
-      </.form>
-    </section>
-    """
-  end
-
-  defp initials(nil), do: "?"
-
-  defp initials(email) do
-    email
-    |> String.split("@")
-    |> hd()
-    |> String.split(~r/[^a-zA-Z0-9]+/, trim: true)
-    |> Enum.take(2)
-    |> Enum.map_join(&String.first/1)
-    |> String.upcase()
-  end
-
-  defp seconds(nil), do: ""
-  defp seconds(ms), do: "#{Float.round(ms / 1000, 1)}s"
-
-  defp step_text({step, status}), do: "#{step} #{status}"
-  defp step_text(_), do: "checking…"
-
-  defp cs_status(_cs, true), do: "on main"
-  defp cs_status(%{status: "passed"}, false), do: "passed"
-  defp cs_status(cs, false), do: cs.status
-
-  defp cs_tone(_cs, true), do: "ok"
-  defp cs_tone(%{status: "passed"}, _), do: "ok"
-  defp cs_tone(%{status: "failed"}, _), do: "err"
-  defp cs_tone(%{status: "superseded"}, _), do: "idle"
-  defp cs_tone(_, _), do: "warn"
-
-  # The imported template is the baseline: never tested, counted as passing.
-  defp verify_text(%{verify: %{"status" => status}}), do: status
-  defp verify_text(%{parent_id: nil}), do: "baseline"
-  defp verify_text(_), do: "pending"
-
-  defp verify_tone(%{verify: %{"status" => "passed"}}), do: "ok"
-  defp verify_tone(%{verify: %{"status" => "failed"}}), do: "err"
-  defp verify_tone(%{parent_id: nil}), do: "ok"
-  defp verify_tone(_), do: "warn"
-
-  defp env_text(%{status: :watching, deploy: %{target: id}}), do: "watching ##{id}"
-  defp env_text(%{status: :loading, deploy: %{target: id}}), do: "hot-loading ##{id}"
-  defp env_text(%{status: :booting, deploy: %{target: id}}), do: "starting ##{id}"
-  defp env_text(%{status: {:crashed, _}}), do: "crashed"
-  defp env_text(%{status: status}), do: to_string(status)
-
-  defp st_tone(:running), do: "ok"
-
-  defp st_tone(status) when status in [:starting, :loading, :booting, :watching, :attaching],
-    do: "warn"
-
-  defp st_tone(status) when status in [nil, :stopped, :no_pack], do: "idle"
-  defp st_tone(_), do: "err"
-
-  defp preview_word({:crashed, _}), do: "stopped"
-  defp preview_word(:no_pack), do: "no preview"
-  defp preview_word({:pack_error, _}), do: "pack error"
-  defp preview_word(status), do: to_string(status)
-
-  defp deploy_tone("healthy"), do: "ok"
-  defp deploy_tone("failed"), do: "err"
-  defp deploy_tone(_), do: "warn"
-
-  defp mb(nil), do: "?"
-  defp mb(bytes), do: div(bytes, 1_048_576)
-
   defp preview_message(:starting),
     do: "Starting the preview (the first start fetches and compiles dependencies)…"
 
@@ -1683,17 +1189,17 @@ defmodule PeonWeb.ProjectLive do
 
   defp stopped_message(:room),
     do:
-      "Stopped to make room: at most #{Application.get_env(:peon, :max_running_chats, 3)} chats run at once. Send a message or start it again."
+      "Stopped to make room: at most #{Application.get_env(:peon, :max_running_chats, 4)} chats run at once. Send a message or start it again."
 
   defp stopped_message(_),
     do: "The agent and preview stopped. Send a message or start them again."
 
-  defp env_message(env, %{status: {:crashed, _}}),
-    do: "#{String.capitalize(env)} stopped. Check its logs."
-
-  defp env_message(env, %{status: :running, deployed: id}),
+  defp env_message(name, %{status: :running, deployed: id}),
     do:
-      "#{String.capitalize(env)} runs ##{id} with its real security headers, so it opens in its own tab."
+      "#{String.capitalize(name)} runs ##{id} with its real security headers, so it opens in its own tab."
 
-  defp env_message(env, info), do: "#{String.capitalize(env)}: #{env_text(info)}"
+  defp env_message(name, %{deploy: %{target: id}}) when id != nil,
+    do: "Deploying ##{id} to #{name}…"
+
+  defp env_message(name, info), do: "#{String.capitalize(name)}: #{env_text(info)}"
 end

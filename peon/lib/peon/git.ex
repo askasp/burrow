@@ -34,6 +34,7 @@ defmodule Peon.Git do
       })
     end
 
+    Peon.Chats.create_first()
     :ignore
   end
 

@@ -18,6 +18,7 @@ defmodule Burrow.Application do
       {DynamicSupervisor, name: Burrow.CellSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: Burrow.OpenCodeRegistry},
       {DynamicSupervisor, name: Burrow.OpenCodeSupervisor, strategy: :one_for_one},
+      Burrow.Activity,
       # Desired state is the projects table: start a Peon for every project.
       {Task,
        fn ->

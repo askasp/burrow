@@ -39,6 +39,7 @@ defmodule PeonWeb.Router do
     pipe_through :api
 
     post "/add-envs", BurrowController, :add_envs
+    post "/rail", BurrowController, :rail
   end
 
   # Enable LiveDashboard in development

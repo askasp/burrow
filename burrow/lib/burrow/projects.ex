@@ -43,6 +43,9 @@ defmodule Burrow.Projects do
       where: p.user_id == ^user.id or p.team_id in subquery(Teams.ids_query(user.id))
   end
 
+  def visible?(%Scope{} = scope, id),
+    do: Repo.exists?(from p in visible(scope), where: p.id == ^id)
+
   def owner?(%Scope{user: user}, %Project{user_id: user_id}), do: user.id == user_id
 
   def get(id), do: Repo.get(Project, id)

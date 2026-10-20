@@ -3,7 +3,8 @@ defmodule Peon.Incidents do
   Errors from running environments, grouped by fingerprint (exception and
   the app frame it came from). A new or recurring incident opens a chat that
   is asked to fix it (project setting `"auto_fix"`, default on, at most
-  three chats at a time); otherwise the user starts one from the UI. An
+  three chats at a time, and only while the project has room for a chat,
+  see `Peon.Chats.max/0`); otherwise the user starts one from the UI. An
   incident is resolved when a changeset from its chat is deployed to the
   environment it came from.
 
@@ -70,18 +71,22 @@ defmodule Peon.Incidents do
     end
   end
 
-  @doc "Opens a chat that is asked to fix the incident."
+  @doc "Opens a chat that is asked to fix the incident, when there is room for one."
   def fix(%Incident{} = incident, created_by \\ "peon") do
-    chat = Chats.create("Fix: " <> incident.title, created_by)
+    if Chats.room?() do
+      chat = Chats.create("Fix: " <> incident.title, created_by)
 
-    incident =
-      incident
-      |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id)
-      |> Repo.update!()
-      |> broadcast()
+      incident =
+        incident
+        |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id)
+        |> Repo.update!()
+        |> broadcast()
 
-    Ship.tell_chat(chat.id, prompt(incident))
-    incident
+      Ship.tell_chat(chat.id, prompt(incident))
+      {:ok, incident}
+    else
+      {:error, :full}
+    end
   end
 
   @doc """
@@ -188,9 +193,12 @@ defmodule Peon.Incidents do
   defp maybe_fix(incident) do
     fixing = Repo.aggregate(from(i in Incident, where: i.status == "fixing"), :count)
 
-    if Project.settings()["auto_fix"] != false and fixing < @max_fixing,
-      do: fix(incident),
-      else: incident
+    with true <- Project.settings()["auto_fix"] != false and fixing < @max_fixing,
+         {:ok, incident} <- fix(incident) do
+      incident
+    else
+      _ -> incident
+    end
   end
 
   defp prompt(incident) do

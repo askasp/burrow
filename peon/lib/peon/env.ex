@@ -25,6 +25,9 @@ defmodule Peon.Env do
   incidents (`Peon.Incidents`). The container outlives Peon restarts: a new
   Peon adopts it when it still runs the ref's changeset.
 
+  The attacher also reports the app's usage: requests, LiveView sessions and
+  visitors (`Peon.Env.Usage`).
+
   Broadcasts `{:env, name, info}` on topic `"envs"`.
   """
 
@@ -35,7 +38,7 @@ defmodule Peon.Env do
   import Ecto.Query
 
   alias Peon.{Code, Incidents, Project, Repo, Sandbox, Secrets, Store, Template, Workspace}
-  alias Peon.Env.Deploy
+  alias Peon.Env.{Deploy, Usage}
   alias Peon.Incidents.Incident
   alias PeonCore.{Policy, Tree}
 
@@ -143,7 +146,8 @@ defmodule Peon.Env do
       logs: :queue.new(),
       log_count: 0,
       stats: nil,
-      errors: []
+      errors: [],
+      usage: Peon.Env.Usage.new()
     }
 
     {:ok, state, {:continue, :boot}}
@@ -631,12 +635,20 @@ defmodule Peon.Env do
     end
   end
 
-  defp attacher_message(state, %{"event" => "stats", "stats" => stats}),
-    do: broadcast(%{state | stats: stats})
+  defp attacher_message(state, %{"event" => "stats", "stats" => stats}) do
+    usage = Usage.add(state.usage, stats["usage"] || %{}, System.os_time(:second))
+    broadcast(%{state | stats: Map.delete(stats, "usage"), usage: usage})
+  end
 
   defp attacher_message(state, %{"event" => "error"} = error) do
     error = Map.put(error, "at", DateTime.utc_now(:second))
-    state = %{state | errors: Enum.take([error | state.errors], 20)}
+
+    state = %{
+      state
+      | errors: Enum.take([error | state.errors], 20),
+        usage: Usage.error(state.usage, System.os_time(:second))
+    }
+
     fingerprint = Incidents.fingerprint(error)
 
     case state.deploy do
@@ -714,6 +726,7 @@ defmodule Peon.Env do
       good: state.good,
       deploy: state.deploy && Map.take(state.deploy, [:target, :mode, :phase]),
       stats: state.stats,
+      usage: Usage.summary(state.usage, System.os_time(:second)),
       errors: Enum.take(state.errors, 10),
       attach:
         "docker exec -it #{state.container} iex --sname debug --cookie #{state.cookie} --remsh app@app"

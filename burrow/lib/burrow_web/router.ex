@@ -29,6 +29,12 @@ defmodule BurrowWeb.Router do
     pipe_through :api
 
     get "/:id/projects", PeonController, :projects
+    post "/:id/projects", PeonController, :create
+    post "/:id/prefs", PeonController, :prefs
+    post "/:id/share", PeonController, :share
+    post "/:id/hand-over", PeonController, :hand_over
+    post "/:id/add-envs", PeonController, :add_envs
+    post "/:id/status", PeonController, :status
   end
 
   # Enable Swoosh mailbox preview in development

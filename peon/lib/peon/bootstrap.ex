@@ -42,6 +42,7 @@ defmodule Peon.Bootstrap do
       # Burrow starts new projects live-only ("live"); see Peon.Ship.
       Project.put_settings(%{"envs" => Application.get_env(:peon, :envs, "pipeline")})
       if auth == "basic", do: put_basic_auth()
+      Peon.Chats.create_first()
       Logger.info("created #{slug} from the template (#{auth}) as changeset #{cs.id}")
     end
   after

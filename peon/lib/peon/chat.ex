@@ -171,7 +171,7 @@ defmodule Peon.Chat do
   # stopped for room, so with only those running the cap is exceeded rather
   # than refusing the chat.
   defp make_room(id) do
-    max = Application.get_env(:peon, :max_running_chats, 3)
+    max = Application.get_env(:peon, :max_running_chats, 4)
     running = Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
     running = for {other, pid} <- running, other != id, do: pid
 
@@ -187,6 +187,14 @@ defmodule Peon.Chat do
       |> Enum.take(length(running) - max + 1)
       |> Enum.each(fn {_, pid} -> send(pid, :make_room) end)
     end
+  end
+
+  @doc "The chats whose agent is working right now."
+  def busy_ids do
+    for {id, pid} <- Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}]),
+        match?(%{busy?: true}, activity(pid)),
+        into: MapSet.new(),
+        do: id
   end
 
   defp activity(pid) do
@@ -255,6 +263,8 @@ defmodule Peon.Chat do
         session_id: nil,
         pr_url: if(chat = Chats.get(id), do: chat.pr_url),
         busy?: false,
+        # What `{:chat_busy, id, busy?}` on "chats" last said
+        told_busy?: false,
         prompted_at: 0,
         # A command's message is its expanded template; the chat shows what
         # was typed instead: `label` until the message appears, then `labels`.
@@ -310,6 +320,7 @@ defmodule Peon.Chat do
 
     case run_prompt(state, text) do
       {:ok, label} ->
+        Chats.started(state.id, text)
         state = %{state | busy?: true, prompted_at: prompted_at, label: label}
         send(self(), :poll)
         {:reply, :ok, state |> broadcast_status() |> touch()}
@@ -322,7 +333,7 @@ defmodule Peon.Chat do
   def handle_call(:activity, _from, state) do
     stoppable? = not state.busy? and not Chats.kept_running?(Chats.get(state.id))
 
-    {:reply, %{used_at: state.used_at, stoppable?: stoppable?}, state}
+    {:reply, %{used_at: state.used_at, stoppable?: stoppable?, busy?: state.busy?}, state}
   end
 
   def handle_call(:delete, _from, state) do
@@ -519,6 +530,7 @@ defmodule Peon.Chat do
   @impl true
   def terminate(_reason, %{repo: true} = state) do
     broadcast(state, {:stopped, state.stopped})
+    tell_busy(%{state | busy?: false})
     Sandbox.stop(state.agent.name)
     stop_preview(state)
     Sandbox.remove_network(state.network)
@@ -526,6 +538,7 @@ defmodule Peon.Chat do
 
   def terminate(_reason, state) do
     broadcast(state, {:stopped, state.stopped})
+    tell_busy(%{state | busy?: false})
     Sandbox.stop(state.agent.name)
     Sandbox.stop(state.preview.name)
     Sandbox.remove_network(state.network)
@@ -870,7 +883,15 @@ defmodule Peon.Chat do
   end
 
   defp broadcast_status(state),
-    do: broadcast(state, {:status, Map.delete(info_map(state), :messages)})
+    do: state |> broadcast({:status, Map.delete(info_map(state), :messages)}) |> tell_busy()
+
+  # Every chat's tab shows whether its agent works (`busy_ids/0` at first).
+  defp tell_busy(%{busy?: busy?, told_busy?: busy?} = state), do: state
+
+  defp tell_busy(state) do
+    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_busy, state.id, state.busy?})
+    %{state | told_busy?: state.busy?}
+  end
 
   defp touch(state) do
     if state.idle_ref, do: Process.cancel_timer(state.idle_ref)

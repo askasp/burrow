@@ -10,6 +10,8 @@ defmodule Peon.Sandbox do
 
   require Logger
 
+  @memory_mb 3072
+
   @doc """
   Runs `script` with `sh -c` in a fresh container with `dir` mounted at /app.
   Returns `{exit_status, output, duration_ms}`; a timeout kills the container
@@ -168,6 +170,9 @@ defmodule Peon.Sandbox do
     :ok
   end
 
+  @doc "The memory each container may use, in MB."
+  def memory_mb, do: @memory_mb
+
   defp common_args(dir, opts) do
     hex_cache = Path.join(Application.fetch_env!(:peon, :data_dir), "cache/hex")
     File.mkdir_p!(hex_cache)
@@ -178,7 +183,7 @@ defmodule Peon.Sandbox do
       |> Enum.flat_map(fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 
     ["--label", Keyword.get(opts, :label, "peon.project=#{project()}")] ++
-      ["--user", host_user(), "--cpus", "2", "--memory", "3g", "--pids-limit", "512"] ++
+      ["--user", host_user(), "--cpus", "2", "--memory", "#{@memory_mb}m", "--pids-limit", "512"] ++
       ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++ env
   end
 

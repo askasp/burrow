@@ -41,11 +41,11 @@ defmodule Peon.Application do
         []
 
       Peon.Source.repo?() ->
-        [Peon.Git, Peon.Agent.MCP, kept_running()]
+        [Peon.Git, Peon.Agent.MCP, Peon.Activity, kept_running()]
 
       true ->
         [Peon.Bootstrap, Peon.Checks, Peon.Verifier, Peon.Agent.MCP] ++
-          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [kept_running()]
+          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [Peon.Activity, kept_running()]
     end
   end
 
