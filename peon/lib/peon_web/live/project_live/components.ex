@@ -60,8 +60,10 @@ defmodule PeonWeb.ProjectLive.Components do
           class="rbtn"
           title="New project"
           aria-haspopup="dialog"
-          phx-click="dialog"
-          phx-value-dialog="new_project"
+          phx-click={
+            JS.remove_class("drawer", to: ".ws-root")
+            |> JS.push("dialog", value: %{dialog: "new_project"})
+          }
           data-kb-key="N"
           data-kb-label="New project"
           data-kb-group="Projects"
@@ -110,8 +112,18 @@ defmodule PeonWeb.ProjectLive.Components do
   def project_bar(assigns) do
     ~H"""
     <div class="pbar">
-      <h1 class="pbar-name">{@project && @project.name}</h1>
-      <span class="mono pbar-meta">{@meta}</span>
+      <button
+        type="button"
+        class="icon-btn pbar-menu"
+        aria-label="Projects"
+        phx-click={JS.add_class("drawer", to: ".ws-root")}
+      >
+        <.icon name="hero-bars-3" class="size-5" />
+      </button>
+      <div class="pbar-title">
+        <h1 class="pbar-name">{@project && @project.name}</h1>
+        <span class="mono pbar-meta">{@meta}</span>
+      </div>
       <div class="pbar-acts">
         <div class="seg ws-panes" role="group" aria-label="View">
           <button
@@ -128,6 +140,7 @@ defmodule PeonWeb.ProjectLive.Components do
           :if={!@repo?}
           id="overview-btn"
           type="button"
+          aria-label="Deploys and usage"
           class="btn btn-secondary btn-sm"
           aria-pressed={to_string(@overview)}
           phx-click="toggle_overview"
@@ -135,7 +148,8 @@ defmodule PeonWeb.ProjectLive.Components do
           data-kb-label="Deploys and usage"
           data-kb-group="Ship"
         >
-          <.icon name="hero-chart-bar" class="size-[15px]" /> Deploys and usage
+          <.icon name="hero-chart-bar" class="size-[15px]" />
+          <span class="pbar-long">Deploys and usage</span>
           <span :if={@open_incidents > 0} class="cnt" title="Open incidents">{@open_incidents}</span>
         </button>
         <div class="menuw">
@@ -398,7 +412,7 @@ defmodule PeonWeb.ProjectLive.Components do
           <button
             :if={@phase in ~w(working ready) and not @landed?}
             type="button"
-            class="btn btn-primary"
+            class="btn btn-secondary btn-sm btn-ink"
             phx-click="land"
             phx-value-id={@changeset.id}
             disabled={@changeset.status != "passed"}

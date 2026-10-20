@@ -703,6 +703,12 @@ defmodule PeonWeb.ProjectLive do
     ~H"""
     <Layouts.flash_group flash={@flash} />
     <div class="ws-root" data-pane={@pane}>
+      <div
+        class="ws-scrim"
+        aria-hidden="true"
+        phx-click={JS.remove_class("drawer", to: ".ws-root")}
+      >
+      </div>
       <.rail rail={rail_items(@rail, @project, @tabs)} open={@rail_open} burrow={@burrow} />
 
       <div class="ws-main">
@@ -847,7 +853,7 @@ defmodule PeonWeb.ProjectLive do
                   >
                     Open in opencode
                   </button>
-                  <button class="btn btn-primary ws-send" aria-label="Send" disabled={closed?(@tab)}>
+                  <button class="icon-btn ws-send" aria-label="Send" disabled={closed?(@tab)}>
                     <.icon name="hero-arrow-up" class="size-4" />
                   </button>
                 </div>

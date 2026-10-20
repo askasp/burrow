@@ -268,8 +268,10 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 
 /* The project bar and its ⋯ menu */
 .pbar { flex: none; display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; min-height: 56px; padding: 8px 12px 8px 20px; border-bottom: 1px solid var(--border) }
+.pbar-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0 }
 .pbar-name { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600 }
 .pbar-meta { font-size: 12.5px; color: var(--text-3); min-width: 0 }
+.pbar-menu, .ws-scrim { display: none }
 .pbar-acts { margin-left: auto; display: flex; align-items: center; gap: 4px }
 .btn-secondary[aria-pressed="true"] { border-color: var(--text) }
 .cnt { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--err); color: var(--bg); font-size: 11px; line-height: 18px; text-align: center }
@@ -350,7 +352,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .slash-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border-radius: 6px; font-size: 13px; text-align: left; color: var(--text) }
 .slash-item:hover, .slash-item[aria-selected="true"] { background: var(--surface) }
 .cbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 0 2px }
-.ws-send { width: 36px; height: 36px; padding: 0; margin-left: auto }
+/* Quiet controls: hairlines, ink only where it counts */
+.ws-send { width: 32px; height: 32px; margin-left: auto; border-color: var(--border-strong); color: var(--text) }
+.ws-send:hover { border-color: var(--text) }
+.btn-ink { border-color: var(--text) }
+.btn-ink:hover { border-color: var(--text); opacity: .8 }
 .ws-connect { padding: 14px; display: flex; flex-direction: column; gap: 12px; border-color: var(--warn) }
 .ws-connect-row { display: flex; align-items: flex-end; gap: 10px; margin: 0 }
 
@@ -358,10 +364,10 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-prev { flex: 1.15 1 520px; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--sunken) }
 .vbar { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 56px; padding: 10px 12px; background: var(--surface); border-bottom: 1px solid var(--border) }
 .vbar select.keep { width: auto; height: 32px; font-size: 13px; background-position: calc(100% - 18px) 13px, calc(100% - 13px) 13px }
-.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border-strong); border-radius: 6px; flex: none }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; flex: none }
 .seg button { height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; cursor: pointer }
 .seg button:hover { color: var(--text) }
-.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg) }
+.seg button[aria-pressed="true"] { background: var(--sunken); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong) }
 .seg button[disabled] { opacity: .4; cursor: not-allowed }
 .seg button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px }
 .ws-url { flex: 1 1 160px; min-width: 0; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden }
@@ -425,16 +431,21 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
    project bar with Chat / Preview, then one of the two */
 @media (max-width: 960px) {
   .ws-root { flex-direction: column }
-  .rail, .rail.open { width: auto; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--border) }
-  .rtop { height: 52px; padding: 0 8px 0 12px }
-  .rail .rlist { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 6px }
-  .rail .rn, .rail .rt, .rail .rword, .rail .rcollapse { display: none }
-  .rail .rbot { flex-direction: row; border-top: 0; padding: 6px }
-  .rail .ritem { width: auto; min-height: 44px }
-  .rbtn { width: 44px; height: 44px; padding: 0; justify-content: center }
-  .pbar { padding: 8px 12px }
+  .rail, .rail.open { position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: min(280px, 85vw); transform: translateX(-100%); transition: transform .2s ease-out }
+  .ws-root.drawer .rail { transform: none }
+  .rail .rn, .rail .rt { opacity: 1 }
+  .rail .rcollapse { display: none }
+  .ws-root.drawer .ws-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(10, 8, 6, .5) }
+  .pbar-menu { display: inline-flex; margin-left: -6px }
+  .pbar { flex-wrap: nowrap; gap: 6px; min-height: 52px; padding: 6px 8px }
+  .pbar-title { flex: 1; flex-direction: column; flex-wrap: nowrap; gap: 0 }
+  .pbar-name { font-size: 16px; line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100% }
+  .pbar-meta { font-size: 11.5px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100% }
+  .pbar-acts { flex: none; gap: 2px }
+  .pbar-long { display: none }
+  #overview-btn { width: 32px; padding: 0 }
   .seg.ws-panes { display: inline-flex }
-  .ws-panes button { height: 32px; padding: 0 12px }
+  .ws-panes button { height: 28px; padding: 0 9px }
   .ws-chat, .ws-prev { flex: 1 1 auto; min-height: 0; border-right: 0 }
   .ws-root[data-pane="chat"] .ws-prev, .ws-root[data-pane="preview"] .ws-chat { display: none }
   .chead { padding: 6px 12px 0 }
