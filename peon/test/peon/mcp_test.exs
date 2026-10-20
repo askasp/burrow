@@ -3,6 +3,18 @@ defmodule Peon.MCPTest do
 
   alias Peon.Agent.MCP
 
+  setup do
+    Peon.Instance.put(%Peon.Instance{
+      id: "mcp-test",
+      slug: "mcp_test",
+      name: "MCP test",
+      data_dir: System.tmp_dir!(),
+      secret: "mcp-test-secret-0123456789-0123456789"
+    })
+
+    :ok
+  end
+
   test "initialize, tools/list and errors follow JSON-RPC" do
     init =
       MCP.handle(

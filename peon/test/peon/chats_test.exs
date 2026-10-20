@@ -18,9 +18,7 @@ defmodule Peon.ChatsTest do
 
   @tag :tmp_dir
   test "deleting a chat removes its row and files and tells the chat list", %{tmp_dir: dir} do
-    previous = Application.get_env(:peon, :data_dir)
-    Application.put_env(:peon, :data_dir, dir)
-    on_exit(fn -> Application.put_env(:peon, :data_dir, previous) end)
+    put_instance(data_dir: dir)
     Chats.subscribe()
     chat = Chats.create("Throwaway", "ada@example.com")
     File.mkdir_p!(Chat.workspace_dir(chat.id))

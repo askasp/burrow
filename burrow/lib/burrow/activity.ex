@@ -1,28 +1,29 @@
 defmodule Burrow.Activity do
   @moduledoc """
   What each project's Peon is doing, for the project rail in every
-  workspace. A Peon reports its project's state when it changes (`put/2`):
-  `%{"state" => "working" | "waiting" | "done" | "stopped", "label", "pct"}`,
-  `pct` being how far the tile's health bar reaches.
+  workspace. Each Peon broadcasts its project's state when it changes
+  (`Peon.Activity`): `%{"state" => "working" | "waiting" | "done" |
+  "stopped", "label", "pct"}`, `pct` being how far the tile's health bar
+  reaches.
 
   Whenever an activity, a Peon's status (`Burrow.Cell`) or the projects and
-  teams change, every running Peon is told (`Burrow.PeonAPI.rail_changed/1`)
-  and its workspaces fetch their rail again, so nothing polls. Pushes within
-  `@debounce` ms go out as one.
+  teams change, `:rail_changed` goes out on topic `"rail"` and workspaces
+  draw their rail again, so nothing polls. Changes within `@debounce` ms go
+  out as one.
   """
 
   use GenServer
 
-  alias Burrow.{Cell, PeonAPI, Projects}
+  alias Burrow.{Cell, Projects}
 
   @table __MODULE__
   @debounce 300
 
   def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  def put(project_id, activity), do: GenServer.cast(__MODULE__, {:put, project_id, activity})
+  def subscribe, do: Phoenix.PubSub.subscribe(Burrow.PubSub, "rail")
 
-  @doc "Tells every running Peon to fetch its rails again, e.g. after a user's theme changed."
+  @doc "Tells every workspace to draw its rail again, e.g. after a user's theme changed."
   def push do
     if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :push)
     :ok
@@ -47,6 +48,7 @@ defmodule Burrow.Activity do
   @impl true
   def init(nil) do
     :ets.new(@table, [:named_table, :protected, read_concurrency: true])
+    Phoenix.PubSub.subscribe(Peon.PubSub, Peon.Instance.activity_topic())
     Projects.subscribe()
     Cell.subscribe()
     Burrow.Teams.subscribe()
@@ -54,24 +56,21 @@ defmodule Burrow.Activity do
   end
 
   @impl true
-  def handle_cast({:put, id, activity}, state) do
+  def handle_cast(:push, state), do: {:noreply, schedule(state)}
+
+  @impl true
+  def handle_info(:push, state) do
+    Phoenix.PubSub.broadcast(Burrow.PubSub, "rail", :rail_changed)
+    {:noreply, %{state | timer: nil}}
+  end
+
+  def handle_info({:activity, id, activity}, state) do
     if reported(id) == activity do
       {:noreply, state}
     else
       :ets.insert(@table, {id, activity})
       {:noreply, schedule(state)}
     end
-  end
-
-  def handle_cast(:push, state), do: {:noreply, schedule(state)}
-
-  @impl true
-  def handle_info(:push, state) do
-    for project <- Projects.all(),
-        Cell.status(project.id) == :running,
-        do: Task.start(fn -> PeonAPI.rail_changed(project) end)
-
-    {:noreply, %{state | timer: nil}}
   end
 
   # A Peon that stops loses its report; it sends a new one when it is back.

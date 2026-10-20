@@ -1,26 +1,57 @@
-defmodule PeonWeb.ProjectLive do
+defmodule BurrowWeb.WorkspaceLive do
   @moduledoc """
-  The workspace, Peon's home screen, laid out as the Peon UI kit's "4 ·
-  Peon: home" board: the project rail (every project the user can open, from
-  Burrow), then the project bar, the chat tabs with the open chat and its
+  A project's workspace, Burrow's home screen, laid out as the Peon UI kit's
+  "4 · Peon: home" board: the project rail (every project the user can
+  open), then the project bar, the chat tabs with the open chat and its
   changeset, and the preview. The preview switches between the chat's dev
   preview and what is live (staging and prod in a pipeline project), or
   gives way to "Deploys and usage".
 
-  A project has up to four chats (`Peon.Chats.max/0`), each one changeset;
-  `Peon.Activity` says where each stands. An empty chat starts its agent
-  and preview with its first message.
+  It works on the project's Peon (`Peon.Instance`), which Burrow runs
+  (`Burrow.Cell`); until that is up it says it is starting. A project has up
+  to four chats (`Peon.Chats.max/0`), each one changeset; `Peon.Activity`
+  says where each stands. An empty chat starts its agent and preview with
+  its first message.
   """
 
-  use PeonWeb, :live_view
+  use BurrowWeb, :live_view
 
-  import PeonWeb.ProjectLive.Components
+  import BurrowWeb.WorkspaceLive.Components
 
+  alias Burrow.{Accounts, Cell, Projects, Teams}
   alias Peon.{Activity, Chat, Chats, Code, Env, Incidents, Project, Secrets, Ship, Store}
   alias Peon.Verifier
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(%{"id" => id}, _session, socket) do
+    scope = socket.assigns.current_scope
+    project = Projects.get!(scope, id)
+
+    socket =
+      assign(socket,
+        page_title: project.name,
+        burrow_project: project,
+        base: ~p"/projects/#{project.id}",
+        user: scope.user.email,
+        theme: scope.user.theme,
+        rail_open: scope.user.rail_open
+      )
+
+    if connected?(socket) do
+      Accounts.opened_project(scope.user, project.id)
+      Burrow.Activity.subscribe()
+      Cell.subscribe()
+    end
+
+    case Peon.Instance.lookup(project.id) do
+      nil -> {:ok, assign(socket, peon: nil, cell: Cell.status(project.id))}
+      instance -> {:ok, socket |> assign(peon: instance) |> mount_peon()}
+    end
+  end
+
+  defp mount_peon(socket) do
+    Peon.Instance.put(socket.assigns.peon)
+
     if connected?(socket) do
       Chats.subscribe()
       Store.subscribe()
@@ -28,45 +59,42 @@ defmodule PeonWeb.ProjectLive do
       Env.subscribe()
       Incidents.subscribe()
       Secrets.subscribe()
-      Peon.Burrow.subscribe()
     end
 
-    {:ok,
-     socket
-     |> assign(project: Project.get(), repo?: Peon.Source.repo?())
-     |> assign(burrow_url: Application.get_env(:peon, :burrow_url))
-     # The project rail and this project's sharing, from Burrow
-     |> assign(rail: [], sharing: nil, rail_open: false, rail_set?: false)
-     |> load_rail()
-     |> assign(busy: if(connected?(socket), do: Chat.busy_ids(), else: MapSet.new()))
-     |> assign(chat: nil, tab: nil, info: nil, view: "dev")
-     |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
-     # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
-     |> assign(stopped: nil)
-     |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
-     |> assign(changeset: nil, landed?: false, held: nil, form: to_form(%{"text" => ""}))
-     # The "/" menu: the chat's commands and skills, and those matching the box
-     |> assign(slash_items: [], slash: [])
-     # "Deploys and usage" in place of the preview; one dialog at a time
-     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
-     |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
-     |> assign(secrets: Secrets.list(), secrets_key: 0)
-     # Phones: one pane at a time
-     |> assign(pane: "chat")
-     |> assign(envs: Map.new(Ship.env_names(), &{&1, Env.info(&1)}))
-     |> load_tabs()
-     |> load_ship()}
+    socket
+    |> assign(project: Project.get(), repo?: Peon.Source.repo?())
+    # The project rail and this project's sharing
+    |> load_rail()
+    |> assign(busy: if(connected?(socket), do: Chat.busy_ids(), else: MapSet.new()))
+    |> assign(chat: nil, tab: nil, info: nil, view: "dev")
+    |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
+    # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
+    |> assign(stopped: nil)
+    |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
+    |> assign(changeset: nil, landed?: false, held: nil, form: to_form(%{"text" => ""}))
+    # The "/" menu: the chat's commands and skills, and those matching the box
+    |> assign(slash_items: [], slash: [])
+    # "Deploys and usage" in place of the preview; one dialog at a time
+    |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
+    |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
+    |> assign(secrets: Secrets.list(), secrets_key: 0)
+    # Phones: one pane at a time
+    |> assign(pane: "chat")
+    |> assign(envs: Map.new(Ship.env_names(), &{&1, Env.info(&1)}))
+    |> load_tabs()
+    |> load_ship()
   end
 
   @impl true
-  def handle_params(%{"id" => id}, _uri, socket) do
+  def handle_params(_params, _uri, %{assigns: %{peon: nil}} = socket), do: {:noreply, socket}
+
+  def handle_params(%{"chat" => id}, _uri, socket) do
     case Chats.get(id) do
       nil ->
-        {:noreply, push_patch(socket, to: ~p"/")}
+        {:noreply, push_patch(socket, to: socket.assigns.base)}
 
       chat ->
-        if old = socket.assigns.chat,
-          do: Phoenix.PubSub.unsubscribe(Peon.PubSub, "chat:#{old.id}")
+        if old = socket.assigns.chat, do: Peon.Instance.unsubscribe("chat:#{old.id}")
 
         if connected?(socket), do: Chat.subscribe(id)
 
@@ -89,12 +117,15 @@ defmodule PeonWeb.ProjectLive do
   def handle_params(_params, _uri, socket) do
     case socket.assigns.tabs do
       [first | _] ->
-        {:noreply, push_patch(socket, to: ~p"/c/#{first.chat.id}", replace: true)}
+        {:noreply, push_patch(socket, to: chat_path(socket, first.chat.id), replace: true)}
 
       [] ->
         case Chats.create_empty(socket.assigns.user) do
-          {:ok, chat} -> {:noreply, push_patch(socket, to: ~p"/c/#{chat.id}", replace: true)}
-          {:error, :full} -> {:noreply, socket}
+          {:ok, chat} ->
+            {:noreply, push_patch(socket, to: chat_path(socket, chat.id), replace: true)}
+
+          {:error, :full} ->
+            {:noreply, socket}
         end
     end
   end
@@ -104,7 +135,7 @@ defmodule PeonWeb.ProjectLive do
 
     socket
     |> assign(starting: true, stopped: nil, start_error: nil)
-    |> start_async(:chat, fn -> Chat.ensure_started(id) end)
+    |> start_async(:chat, Peon.Instance.bind(fn -> Chat.ensure_started(id) end))
   end
 
   @impl true
@@ -124,37 +155,6 @@ defmodule PeonWeb.ProjectLive do
   def handle_async(:chat, {:exit, reason}, socket) do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
-
-  def handle_async(:rail, {:ok, rail}, socket) do
-    socket = assign(socket, rail: rail.projects, sharing: rail.project)
-    socket = if rail.theme, do: assign(socket, theme: rail.theme), else: socket
-
-    # The user's choice, until they toggle it here
-    if socket.assigns.rail_set?,
-      do: {:noreply, socket},
-      else: {:noreply, assign(socket, rail_open: rail.rail_open)}
-  end
-
-  def handle_async(:rail, {:exit, _}, socket), do: {:noreply, socket}
-
-  def handle_async(:create, {:ok, {:ok, url}}, socket),
-    do: {:noreply, redirect(socket, external: url)}
-
-  def handle_async(:create, {:ok, {:error, message}}, socket),
-    do: {:noreply, socket |> assign(creating: false) |> put_flash(:error, message)}
-
-  def handle_async(:create, {:exit, _}, socket),
-    do:
-      {:noreply, socket |> assign(creating: false) |> put_flash(:error, "Burrow did not answer.")}
-
-  def handle_async(:burrow, {:ok, {:ok, text}}, socket),
-    do: {:noreply, socket |> assign(dialog: nil) |> info(text) |> load_rail()}
-
-  def handle_async(:burrow, {:ok, {:error, message}}, socket),
-    do: {:noreply, put_flash(socket, :error, message)}
-
-  def handle_async(:burrow, {:exit, _}, socket),
-    do: {:noreply, put_flash(socket, :error, "Burrow did not answer.")}
 
   @impl true
   def handle_event("send", %{"text" => text}, socket) do
@@ -183,7 +183,7 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("new_chat", _params, socket) do
     case Chats.create_empty(socket.assigns.user) do
-      {:ok, chat} -> {:noreply, push_patch(socket, to: ~p"/c/#{chat.id}")}
+      {:ok, chat} -> {:noreply, push_patch(socket, to: chat_path(socket, chat.id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
   end
@@ -192,26 +192,24 @@ defmodule PeonWeb.ProjectLive do
   # workspace go; what it merged stays. Stopping a repo preview can take
   # minutes, so that runs on its own.
   def handle_event("close_chat", %{"id" => id}, socket) do
-    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Chat.delete(id) end)
+    Task.Supervisor.start_child(
+      Peon.TaskSupervisor,
+      Peon.Instance.bind(fn -> Chat.delete(id) end)
+    )
+
     {:noreply, socket}
   end
 
   def handle_event("toggle_rail", _params, socket) do
     open? = !socket.assigns.rail_open
-    user = socket.assigns.user
-
-    Task.Supervisor.start_child(Peon.TaskSupervisor, fn ->
-      Peon.Burrow.put_rail_open(user, open?)
-    end)
-
-    {:noreply, assign(socket, rail_open: open?, rail_set?: true)}
+    Accounts.put_rail_open(socket.assigns.current_scope.user, open?)
+    {:noreply, assign(socket, rail_open: open?)}
   end
 
-  # System, light, dark, round again; saved in Burrow for every Peon.
+  # System, light, dark, round again; the user's, everywhere in Burrow.
   def handle_event("theme", _params, socket) do
     theme = %{"system" => "light", "light" => "dark"}[socket.assigns.theme] || "system"
-    user = socket.assigns.user
-    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Peon.Burrow.put_theme(user, theme) end)
+    Accounts.put_theme(socket.assigns.current_scope.user, theme)
     {:noreply, assign(socket, theme: theme)}
   end
 
@@ -286,7 +284,7 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("fix_incident", %{"id" => id}, socket) do
     case Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.user) do
-      {:ok, incident} -> {:noreply, push_patch(socket, to: ~p"/c/#{incident.chat_id}")}
+      {:ok, incident} -> {:noreply, push_patch(socket, to: chat_path(socket, incident.chat_id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
   end
@@ -315,63 +313,87 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_event("create_project", %{"project" => params}, socket) do
     p = Map.merge(socket.assigns.new_project, new_project_params(params))
-    user = socket.assigns.user
 
-    if p.name == "" or socket.assigns.creating do
-      {:noreply, socket}
-    else
-      basic =
-        if p.auth == "basic" and p.repo_url == "",
-          do: %{"basic_username" => p.basic_username, "basic_password" => p.basic_password},
-          else: %{}
+    basic =
+      if p.auth == "basic" and p.repo_url == "",
+        do: %{"basic_username" => p.basic_username, "basic_password" => p.basic_password},
+        else: %{}
 
-      attrs =
-        Map.merge(
-          %{"name" => p.name, "repo_url" => p.repo_url, "team_id" => p.team_id, "auth" => p.auth},
-          basic
-        )
+    attrs =
+      Map.merge(
+        %{"name" => p.name, "repo_url" => p.repo_url, "team_id" => p.team_id, "auth" => p.auth},
+        basic
+      )
 
-      {:noreply,
-       socket
-       |> assign(creating: true, new_project: p)
-       |> start_async(:create, fn -> Peon.Burrow.create_project(user, attrs) end)}
+    cond do
+      p.name == "" ->
+        {:noreply, socket}
+
+      true ->
+        case Projects.create(socket.assigns.current_scope, attrs) do
+          {:ok, project} ->
+            {:noreply, push_navigate(socket, to: ~p"/projects/#{project.id}")}
+
+          {:error, changeset} ->
+            {:noreply,
+             socket |> assign(new_project: p) |> put_flash(:error, first_error(changeset))}
+        end
     end
   end
 
   def handle_event("share", %{"share" => %{"team_id" => team_id}}, socket) do
-    user = socket.assigns.user
-    team_id = if team_id == "", do: nil, else: team_id
+    %{current_scope: scope, burrow_project: project} = socket.assigns
 
-    {:noreply,
-     start_async(socket, :burrow, fn ->
-       with :ok <- Peon.Burrow.share(user, team_id) do
-         {:ok, if(team_id, do: "Shared.", else: "Only you can open it now.")}
-       end
-     end)}
+    case Projects.share(scope, project, team_id) do
+      {:ok, project} ->
+        text = if project.team_id, do: "Shared.", else: "Only you can open it now."
+        {:noreply, socket |> assign(dialog: nil) |> info(text) |> load_rail()}
+
+      {:error, :not_owner} ->
+        {:noreply, put_flash(socket, :error, "Only the project's owner can share it.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "That isn't one of your teams.")}
+    end
   end
 
   def handle_event("hand_over", %{"hand_over" => %{"user_id" => user_id}}, socket) do
-    user = socket.assigns.user
+    %{current_scope: scope, burrow_project: project} = socket.assigns
 
-    {:noreply,
-     start_async(socket, :burrow, fn ->
-       with :ok <- Peon.Burrow.hand_over(user, user_id) do
-         {:ok, "Handed over. Peon restarts on their AI login."}
-       end
-     end)}
+    case Projects.hand_over(scope, project, user_id) do
+      {:ok, _project} ->
+        {:noreply,
+         socket
+         |> assign(dialog: nil)
+         |> info("Handed over. Peon restarts on their AI login.")
+         |> load_rail()}
+
+      {:error, :not_owner} ->
+        {:noreply, put_flash(socket, :error, "Only the project's owner can hand it over.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Hand it to someone in the team it is shared with.")}
+    end
   end
 
-  # Burrow records it and has this Peon do it; without Burrow, Peon does it.
   def handle_event("add_envs", _params, socket) do
-    user = socket.assigns.user
-    add = if socket.assigns.burrow_url, do: &Peon.Burrow.add_envs/1, else: &Ship.add_envs/1
+    %{current_scope: scope, burrow_project: project} = socket.assigns
 
-    {:noreply,
-     start_async(socket, :burrow, fn ->
-       with :ok <- add.(user) do
-         {:ok, "Staging and prod are set up: main goes to staging, then you promote."}
-       end
-     end)}
+    case Projects.add_envs(scope, project) do
+      {:ok, _project} ->
+        {:noreply,
+         socket
+         |> assign(dialog: nil)
+         |> info("Staging and prod are set up: main goes to staging, then you promote.")
+         |> load_rail()}
+
+      {:error, :not_owner} ->
+        {:noreply,
+         put_flash(socket, :error, "Only the project's owner can add staging and prod.")}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, message)}
+    end
   end
 
   def handle_event("set_secret", %{"name" => name, "value" => value}, socket) do
@@ -460,7 +482,7 @@ defmodule PeonWeb.ProjectLive do
     socket = load_tabs(socket)
 
     if socket.assigns.chat && socket.assigns.chat.id == id,
-      do: {:noreply, push_patch(socket, to: ~p"/")},
+      do: {:noreply, push_patch(socket, to: socket.assigns.base)},
       else: {:noreply, socket}
   end
 
@@ -475,7 +497,33 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_info({:stopped, _reason}, socket), do: {:noreply, socket}
 
-  def handle_info(:rail_changed, socket), do: {:noreply, load_rail(socket)}
+  # A project or team changed, or what a project's Peon is doing.
+  def handle_info(:rail_changed, %{assigns: %{peon: nil}} = socket), do: {:noreply, socket}
+
+  def handle_info(:rail_changed, socket) do
+    %{current_scope: scope, burrow_project: project} = socket.assigns
+
+    if Projects.visible?(scope, project.id),
+      do:
+        {:noreply,
+         socket |> assign(burrow_project: Projects.get!(scope, project.id)) |> load_rail()},
+      else: {:noreply, push_navigate(socket, to: ~p"/projects")}
+  end
+
+  # The project's Peon is up: open the workspace.
+  def handle_info(
+        {:cell, id, :running},
+        %{assigns: %{peon: nil, burrow_project: %{id: id}}} = socket
+      ),
+      do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
+
+  def handle_info(
+        {:cell, id, status},
+        %{assigns: %{peon: nil, burrow_project: %{id: id}}} = socket
+      ),
+      do: {:noreply, assign(socket, cell: status)}
+
+  def handle_info({:cell, _id, _status}, socket), do: {:noreply, socket}
 
   def handle_info({:env, name, info}, socket) do
     socket = update(socket, :envs, &Map.put(&1, name, info))
@@ -569,12 +617,55 @@ defmodule PeonWeb.ProjectLive do
 
   defp load_logs(socket), do: socket
 
+  # Every project the user can open, with what its Peon is doing
+  # (`Burrow.Activity`), and this project's sharing.
   defp load_rail(socket) do
-    user = socket.assigns.user
+    %{current_scope: scope, burrow_project: project} = socket.assigns
 
-    if connected?(socket),
-      do: start_async(socket, :rail, fn -> Peon.Burrow.rail(user) end),
-      else: socket
+    rail =
+      for p <- Projects.list(scope) do
+        tile = Burrow.Activity.of(p.id)
+
+        %{
+          id: p.id,
+          name: p.name,
+          url: ~p"/projects/#{p.id}",
+          current: p.id == project.id,
+          state: tile["state"],
+          label: tile["label"],
+          pct: tile["pct"]
+        }
+      end
+
+    sharing = %{
+      owner?: Projects.owner?(scope, project),
+      live_only?: Burrow.Projects.Project.live_only?(project),
+      team: project.team && %{id: project.team.id, name: project.team.name},
+      teams: for(t <- Teams.list(scope), do: %{id: t.id, name: t.name}),
+      teammates: teammates(project)
+    }
+
+    assign(socket, rail: rail, sharing: sharing)
+  end
+
+  defp teammates(%{team: %Teams.Team{} = team, user_id: owner_id}),
+    do:
+      for(
+        m <- Teams.members(team),
+        m.user_id != owner_id,
+        do: %{id: m.user.id, email: m.user.email}
+      )
+
+  defp teammates(_project), do: []
+
+  defp chat_path(socket, id), do: socket.assigns.base <> "/c/" <> id
+
+  defp first_error(changeset) do
+    case Ecto.Changeset.traverse_errors(changeset, &BurrowWeb.CoreComponents.translate_error/1)
+         |> Enum.at(0) do
+      {field, [message | _]} -> "#{Phoenix.Naming.humanize(field)} #{message}"
+      _ -> "Could not create the project."
+    end
   end
 
   # The chat tabs, each with its changeset and phase (Peon.Activity).
@@ -697,14 +788,38 @@ defmodule PeonWeb.ProjectLive do
   defp start_error(reason), do: "The agent could not start: #{inspect(reason)}"
 
   @impl true
+  def render(%{peon: nil} = assigns) do
+    ~H"""
+    <Layouts.auth flash={@flash} current_scope={@current_scope}>
+      <div class="flex flex-col items-center gap-3 text-center" role="status">
+        <.icon
+          :if={!match?({:exited, _}, @cell)}
+          name="hero-arrow-path"
+          class="size-8 animate-spin text-[var(--accent-text)]"
+        />
+        <h1 class="m-0 text-xl font-semibold">
+          {if match?({:exited, _}, @cell),
+            do: "#{@burrow_project.name} stopped",
+            else: "Starting #{@burrow_project.name}…"}
+        </h1>
+        <p class="m-0 text-[var(--text-2)]">
+          {if match?({:exited, _}, @cell),
+            do: "Its Peon stopped and is restarting. This page opens it once it is back.",
+            else: "Its workspace opens as soon as its Peon is up."}
+        </p>
+        <.link navigate={~p"/projects"} class="xlink">All projects</.link>
+      </div>
+    </Layouts.auth>
+    """
+  end
+
   def render(assigns) do
     assigns =
       assign(assigns,
         view: effective_view(assigns),
         dev?: dev?(assigns),
         promote: promote_target(assigns),
-        open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved")),
-        burrow: assigns.burrow_url
+        open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved"))
       )
 
     assigns = assign(assigns, preview: preview(assigns))
@@ -718,13 +833,8 @@ defmodule PeonWeb.ProjectLive do
         phx-click={JS.remove_class("drawer", to: ".ws-root")}
       >
       </div>
-      <.rail
-        rail={rail_items(@rail, @project, @tabs)}
-        open={@rail_open}
-        burrow={@burrow}
-        theme={@theme}
-      />
-      <div id="theme" phx-hook=".Theme" data-theme={@theme} data-url={~p"/theme"} hidden></div>
+      <.rail rail={@rail} open={@rail_open} theme={@theme} />
+      <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
 
       <div class="ws-main">
         <.project_bar
@@ -752,6 +862,7 @@ defmodule PeonWeb.ProjectLive do
               tabs={@tabs}
               chat={@chat}
               project={@project}
+              base={@base}
               nothing_built?={@nothing_built?}
               repo?={@repo?}
             />
@@ -892,6 +1003,7 @@ defmodule PeonWeb.ProjectLive do
               auto_promote={@auto_promote}
               incidents={@incidents}
               deploys={@deploys}
+              base={@base}
             />
             <.preview_pane
               :if={!@overview}
@@ -924,22 +1036,11 @@ defmodule PeonWeb.ProjectLive do
     </div>
 
     <script :type={Phoenix.LiveView.ColocatedHook} name=".Theme">
-      // The user's theme on <html>, kept in this Peon's session for the next load.
+      // The user's theme on <html>; Burrow keeps it for the next page load.
       export default {
         mounted() { this.apply() },
         updated() { this.apply() },
-        apply() {
-          const theme = this.el.dataset.theme
-          const root = document.documentElement
-          if (root.dataset.theme === theme) return
-          root.dataset.theme = theme
-          const csrf = document.querySelector("meta[name='csrf-token']")?.content
-          fetch(this.el.dataset.url, {
-            method: "POST",
-            headers: {"x-csrf-token": csrf},
-            body: new URLSearchParams({theme})
-          })
-        }
+        apply() { document.documentElement.dataset.theme = this.el.dataset.theme }
       }
     </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
@@ -990,25 +1091,6 @@ defmodule PeonWeb.ProjectLive do
     do: if("staging" in names, do: "staging", else: "prod")
 
   defp effective_view(%{view: view}), do: view
-
-  # The rail's tiles; without Burrow, just this project.
-  defp rail_items([], project, tabs) when project != nil do
-    tile = Activity.project(tabs)
-
-    [
-      %{
-        id: project.id,
-        name: project.name,
-        url: ~p"/",
-        current: true,
-        state: tile["state"],
-        label: tile["label"],
-        pct: tile["pct"]
-      }
-    ]
-  end
-
-  defp rail_items(rail, _project, _tabs), do: rail
 
   # "watchtower · live #8 · no staging · shared with Ops"
   defp meta(%{project: nil}), do: ""

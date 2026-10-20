@@ -30,9 +30,10 @@ defmodule Peon.Store do
 
   @type author :: %{kind: :human | :ai, id: String.t()}
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(instance),
+    do: GenServer.start_link(__MODULE__, instance, name: Peon.Instance.via(instance, __MODULE__))
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, @topic)
+  def subscribe, do: Peon.Instance.subscribe(@topic)
 
   @doc """
   Imports a directory as the project's first changeset and points main at it.
@@ -54,7 +55,12 @@ defmodule Peon.Store do
 
   @doc "Like `import_dir/4`, for a tree and its blobs (hash => content) built in memory."
   def import_tree(tree, blobs, slug, name, author),
-    do: GenServer.call(__MODULE__, {:import_tree, tree, blobs, slug, name, author}, :infinity)
+    do:
+      GenServer.call(
+        Peon.Instance.via(__MODULE__),
+        {:import_tree, tree, blobs, slug, name, author},
+        :infinity
+      )
 
   @doc """
   Submits a changeset. `attrs`:
@@ -68,14 +74,19 @@ defmodule Peon.Store do
   When `parent` is behind main and none of its paths changed since, the
   changeset is created on top of main. Otherwise returns `{:conflict, paths}`.
   """
-  def submit(attrs), do: GenServer.call(__MODULE__, {:submit, attrs}, :infinity)
+  def submit(attrs),
+    do: GenServer.call(Peon.Instance.via(__MODULE__), {:submit, attrs}, :infinity)
 
   @doc """
   Moves (or creates, with `expected_version` 0) a ref. Options:
     * `:approved_by` - required for prod: the human who approved the move
   """
   def move_ref(name, to, expected_version, actor, opts \\ []),
-    do: GenServer.call(__MODULE__, {:move_ref, name, to, expected_version, actor, opts})
+    do:
+      GenServer.call(
+        Peon.Instance.via(__MODULE__),
+        {:move_ref, name, to, expected_version, actor, opts}
+      )
 
   @doc """
   Puts a passed changeset on main. When main moved since the changeset's
@@ -83,22 +94,26 @@ defmodule Peon.Store do
   original is superseded. Returns the changeset now at main, or
   `{:conflict, paths}` when main changed the same paths in between.
   """
-  def land(id, actor), do: GenServer.call(__MODULE__, {:land, id, actor})
+  def land(id, actor), do: GenServer.call(Peon.Instance.via(__MODULE__), {:land, id, actor})
 
   @doc "Records the result of testing a changeset on main: `%{\"status\", \"steps\"}`."
-  def set_verify(id, verify), do: GenServer.call(__MODULE__, {:set_verify, id, verify})
+  def set_verify(id, verify),
+    do: GenServer.call(Peon.Instance.via(__MODULE__), {:set_verify, id, verify})
 
   @doc "Marks an open changeset superseded, e.g. when a newer draft replaces it."
-  def supersede(id), do: GenServer.call(__MODULE__, {:supersede, id})
+  def supersede(id), do: GenServer.call(Peon.Instance.via(__MODULE__), {:supersede, id})
 
   @doc "Records check progress: status is checking, passed or failed."
   def set_status(id, status, checks),
-    do: GenServer.call(__MODULE__, {:set_status, id, status, checks})
+    do: GenServer.call(Peon.Instance.via(__MODULE__), {:set_status, id, status, checks})
 
   ## Server
 
   @impl true
-  def init(_opts), do: {:ok, %{}}
+  def init(instance) do
+    Peon.Instance.put(instance)
+    {:ok, %{}}
+  end
 
   @impl true
   def handle_call(request, _from, state) do
@@ -115,7 +130,7 @@ defmodule Peon.Store do
 
     case reply do
       {:ok, {result, broadcasts}} ->
-        Enum.each(broadcasts, &Phoenix.PubSub.broadcast(Peon.PubSub, @topic, &1))
+        Enum.each(broadcasts, &Peon.Instance.broadcast(@topic, &1))
         {:reply, {:ok, result}, state}
 
       {:error, reason} ->

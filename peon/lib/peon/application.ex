@@ -5,58 +5,24 @@ defmodule Peon.Application do
 
   use Application
 
+  # What every project's Peon (`Peon.Instance`) shares. The instances
+  # themselves are started by their host, Burrow.
   @impl true
   def start(_type, _args) do
     children =
       [
-        PeonWeb.Telemetry,
-        Peon.Repo,
-        {Ecto.Migrator, repos: Application.fetch_env!(:peon, :ecto_repos), skip: false},
-        {DNSCluster, query: Application.get_env(:peon, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Peon.PubSub},
         {Task.Supervisor, name: Peon.TaskSupervisor},
-        {Registry, keys: :unique, name: Peon.ChatRegistry},
-        {Registry, keys: :unique, name: Peon.EnvRegistry},
-        {DynamicSupervisor, name: Peon.ChatSupervisor, strategy: :one_for_one},
-        Peon.Store
-      ] ++
-        workers() ++
-        [
-          # Start to serve requests, typically the last entry
-          PeonWeb.Endpoint
-        ]
+        {Registry, keys: :unique, name: Peon.Registry}
+      ] ++ test_repo()
 
-    # See https://elixir.hexdocs.pm/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: Peon.Supervisor]
-    Supervisor.start_link(children, opts)
+    Supervisor.start_link(children, strategy: :one_for_one, name: Peon.Supervisor)
   end
 
-  # Bootstrap, checks, environments and previews touch Docker and the
-  # template; tests start them explicitly when needed. A repo project has no
-  # store to check, land or deploy: just its repo and the agent's tools.
-  defp workers do
-    cond do
-      not Application.get_env(:peon, :start_workers, true) ->
-        []
-
-      Peon.Source.repo?() ->
-        [Peon.Git, Peon.Agent.MCP, Peon.Activity, kept_running()]
-
-      true ->
-        [Peon.Bootstrap, Peon.Checks, Peon.Verifier, Peon.Agent.MCP] ++
-          Enum.map(Peon.Env.names(), &{Peon.Env, &1}) ++ [Peon.Activity, kept_running()]
-    end
-  end
-
-  # Chats kept running come back up after a restart, e.g. a shared preview.
-  defp kept_running, do: {Task, &Peon.Chat.start_kept_running/0}
-
-  # Tell Phoenix to update the endpoint configuration
-  # whenever the application is updated.
-  @impl true
-  def config_change(changed, _new, removed) do
-    PeonWeb.Endpoint.config_change(changed, removed)
-    :ok
+  # Tests run one instance on `Peon.Repo` itself, in the SQL sandbox.
+  defp test_repo do
+    if Application.get_env(:peon, :test_repo, false),
+      do: [Peon.Repo, {Ecto.Migrator, repos: [Peon.Repo], skip: false}],
+      else: []
   end
 end

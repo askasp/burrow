@@ -174,7 +174,7 @@ defmodule Peon.Sandbox do
   def memory_mb, do: @memory_mb
 
   defp common_args(dir, opts) do
-    hex_cache = Path.join(Application.fetch_env!(:peon, :data_dir), "cache/hex")
+    hex_cache = Path.join(Peon.Instance.fetch!(:data_dir), "cache/hex")
     File.mkdir_p!(hex_cache)
 
     env =
@@ -206,7 +206,7 @@ defmodule Peon.Sandbox do
     :ok
   end
 
-  defp project, do: Application.fetch_env!(:peon, :project_slug)
+  defp project, do: Peon.Instance.fetch!(:slug)
 
   defp image, do: Application.fetch_env!(:peon, :sandbox_image)
 

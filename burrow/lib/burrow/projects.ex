@@ -6,7 +6,7 @@ defmodule Burrow.Projects do
   (`team_id`): then everyone in that team can see, open and restart it. Its
   Peon still runs on the owner's AI login.
 
-  Per-project secrets (Peon's secret key, the SSO secret shared with Peon) are
+  Per-project secrets (the secret Peon signs its agents' tokens with) are
   derived from Burrow's secret, so none are stored.
   """
 
@@ -43,8 +43,8 @@ defmodule Burrow.Projects do
       where: p.user_id == ^user.id or p.team_id in subquery(Teams.ids_query(user.id))
   end
 
-  @doc "Whether `port` is a project's Peon (`BurrowWeb.PeonProxy` passes only those on)."
-  def peon_port?(port), do: Repo.exists?(from p in Project, where: p.port == ^port)
+  @doc "The project whose Peon was on `port`, for links from before workspaces moved into Burrow."
+  def get_by_port(port), do: Repo.get_by(Project, port: port)
 
   def visible?(%Scope{} = scope, id),
     do: Repo.exists?(from p in visible(scope), where: p.id == ^id)
@@ -207,7 +207,7 @@ defmodule Burrow.Projects do
 
   @doc """
   Turns a live-only project into one with staging and prod, for good. Its
-  Peon does the work (`Burrow.PeonAPI.add_envs/2`); this records it.
+  Peon does the work (`Peon.Ship.add_envs/1`); this records it.
   """
   def add_envs(%Scope{} = scope, %Project{} = project) do
     cond do
@@ -218,7 +218,7 @@ defmodule Burrow.Projects do
         {:ok, project}
 
       true ->
-        with :ok <- Burrow.PeonAPI.add_envs(project, scope.user.email) do
+        with :ok <- add_peon_envs(project, scope.user.email) do
           {1, _} =
             Repo.update_all(from(p in Project, where: p.id == ^project.id),
               set: [envs: "pipeline"]
@@ -231,14 +231,10 @@ defmodule Burrow.Projects do
     end
   end
 
-  @doc """
-  A short-lived link that signs the user into the project's Peon, then opens
-  `to` there, in the user's `theme`.
-  """
-  def peon_url(project, email, to \\ nil, theme \\ nil) do
-    token = Phoenix.Token.sign(secret(project, "sso"), "peon sso", email)
-    params = [token: token, to: to, theme: theme]
-    query = URI.encode_query(Enum.reject(params, &(elem(&1, 1) == nil)))
-    Burrow.Ports.peon_url(project.port) <> "/sso?" <> query
+  defp add_peon_envs(project, email) do
+    case Peon.Instance.run(project.id, fn -> Peon.Ship.add_envs(email) end) do
+      :ok -> :ok
+      {:error, :not_running} -> {:error, "The project's Peon isn't running."}
+    end
   end
 end

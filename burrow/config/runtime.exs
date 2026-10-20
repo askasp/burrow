@@ -40,20 +40,12 @@ end
 if config_env() != :test do
   burrow_port = System.get_env("PORT", "4000")
 
+  opencode_bin = System.get_env("BURROW_OPENCODE_BIN") || System.find_executable("opencode")
+
   config :burrow,
     data_dir: System.get_env("BURROW_DATA_DIR") || Path.join(root, "data/burrow"),
-    peon_release:
-      System.get_env("BURROW_PEON_RELEASE") ||
-        Path.join(root, "peon/_build/prod/rel/peon/bin/peon"),
-    template_dir: System.get_env("BURROW_TEMPLATE_DIR") || Path.join(root, "template"),
-    peon_host: System.get_env("BURROW_PEON_HOST", "localhost"),
-    # Public address per port behind a tunnel, e.g. https://burrow-{port}.example.com
-    port_url: System.get_env("BURROW_PORT_URL"),
-    # Where a browser opens a project's workspace; unset, /w/{port} on Burrow's
-    # own site (BurrowWeb.PeonProxy). E.g. https://peon-{port}.example.com.
-    peon_url: System.get_env("BURROW_PEON_URL"),
     # opencode runs every user's agents with the user's own AI logins.
-    opencode_bin: System.get_env("BURROW_OPENCODE_BIN") || System.find_executable("opencode"),
+    opencode_bin: opencode_bin,
     opencode_model: System.get_env("BURROW_OPENCODE_MODEL", "openai/gpt-6-sol"),
     # Local mode: let users copy this computer's opencode logins. Never by
     # default once Burrow is public: anyone who signs up could use them.
@@ -62,6 +54,24 @@ if config_env() != :test do
         "BURROW_LOCAL_LOGIN_IMPORT",
         to_string(config_env() == :dev and is_nil(System.get_env("BURROW_PUBLIC_URL")))
       ) == "true"
+
+  # Each project's Peon, run inside Burrow (`Burrow.Cell`, `Peon.Instance`).
+  config :peon,
+    template_dir: System.get_env("BURROW_TEMPLATE_DIR") || Path.join(root, "template"),
+    sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
+    # Where a browser reaches a preview's or an environment's port: its own
+    # address behind a tunnel (e.g. https://peon-{port}.example.com), or the
+    # port on BURROW_PEON_HOST
+    port_url:
+      System.get_env("BURROW_PORT_URL") ||
+        "http://#{System.get_env("BURROW_PEON_HOST", "localhost")}:{port}",
+    opencode_bin: opencode_bin || "opencode",
+    check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
+    # Chats running at once per project (agent and preview)
+    max_running_chats: String.to_integer(System.get_env("PEON_MAX_RUNNING_CHATS", "4")),
+    health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
+    # The workspace (Burrow's own site) may show previews in a frame.
+    frame_ancestors: [System.get_env("BURROW_PUBLIC_URL") || "http://localhost:#{burrow_port}"]
 end
 
 if System.get_env("PHX_SERVER") do

@@ -19,7 +19,7 @@ defmodule Peon.Incidents do
 
   @max_fixing 3
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "incidents")
+  def subscribe, do: Peon.Instance.subscribe("incidents")
 
   def list(limit \\ 20),
     do: Repo.all(from i in Incident, order_by: [desc: i.last_seen_at, desc: i.id], limit: ^limit)
@@ -218,7 +218,7 @@ defmodule Peon.Incidents do
   end
 
   defp broadcast(incident) do
-    Phoenix.PubSub.broadcast(Peon.PubSub, "incidents", {:incident, incident})
+    Peon.Instance.broadcast("incidents", {:incident, incident})
     incident
   end
 end

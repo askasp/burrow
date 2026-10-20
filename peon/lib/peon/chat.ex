@@ -36,7 +36,7 @@ defmodule Peon.Chat do
   alias Peon.Agent.{MCP, Prompt}
   alias Peon.OpenCode.Client
 
-  @registry Peon.ChatRegistry
+  @registry Peon.Registry
   @idle_timeout :timer.minutes(30)
   @boot_timeout :timer.seconds(90)
   @poll_interval 1_500
@@ -51,7 +51,10 @@ defmodule Peon.Chat do
   def ensure_started(id) do
     unless whereis(id), do: make_room(id)
 
-    case DynamicSupervisor.start_child(Peon.ChatSupervisor, {__MODULE__, id}) do
+    case DynamicSupervisor.start_child(
+           Peon.Instance.via(:chats),
+           {__MODULE__, {Peon.Instance.current!(), id}}
+         ) do
       {:ok, pid} ->
         GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
 
@@ -93,11 +96,11 @@ defmodule Peon.Chat do
 
   def logs(id), do: call(id, :logs)
 
-  def subscribe(id), do: Phoenix.PubSub.subscribe(Peon.PubSub, "chat:#{id}")
+  def subscribe(id), do: Peon.Instance.subscribe("chat:#{id}")
 
   def workspace_dir(id), do: Path.join(base_dir(id), "workspace")
 
-  defp base_dir(id), do: Path.join([Application.fetch_env!(:peon, :data_dir), "chats", id])
+  defp base_dir(id), do: Path.join([Peon.Instance.fetch!(:data_dir), "chats", id])
 
   @doc """
   Deletes a chat: its opencode session (when it runs), its containers, its
@@ -131,7 +134,10 @@ defmodule Peon.Chat do
   @doc "Starts the chats kept running, e.g. after Peon restarted."
   def start_kept_running do
     for chat <- Chats.list_kept_running() do
-      Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> ensure_started(chat.id) end)
+      Task.Supervisor.start_child(
+        Peon.TaskSupervisor,
+        Peon.Instance.bind(fn -> ensure_started(chat.id) end)
+      )
     end
 
     :ok
@@ -142,12 +148,15 @@ defmodule Peon.Chat do
   previous run of Peon left behind; its containers outlive Peon.
   """
   def stop_left_behind do
-    slug = Application.fetch_env!(:peon, :project_slug)
+    slug = Peon.Instance.fetch!(:slug)
 
-    case File.ls(Path.join(Application.fetch_env!(:peon, :data_dir), "chats")) do
+    case File.ls(Path.join(Peon.Instance.fetch!(:data_dir), "chats")) do
       {:ok, ids} ->
         ids
-        |> Task.async_stream(&stop_left_behind(&1, slug), timeout: :infinity, max_concurrency: 4)
+        |> Task.async_stream(Peon.Instance.bind(&stop_left_behind(&1, slug)),
+          timeout: :infinity,
+          max_concurrency: 4
+        )
         |> Stream.run()
 
       {:error, _} ->
@@ -172,8 +181,7 @@ defmodule Peon.Chat do
   # than refusing the chat.
   defp make_room(id) do
     max = Application.get_env(:peon, :max_running_chats, 4)
-    running = Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
-    running = for {other, pid} <- running, other != id, do: pid
+    running = for {other, pid} <- running(), other != id, do: pid
 
     if length(running) >= max do
       running
@@ -191,7 +199,7 @@ defmodule Peon.Chat do
 
   @doc "The chats whose agent is working right now."
   def busy_ids do
-    for {id, pid} <- Registry.select(@registry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}]),
+    for {id, pid} <- running(),
         match?(%{busy?: true}, activity(pid)),
         into: MapSet.new(),
         do: id
@@ -203,7 +211,15 @@ defmodule Peon.Chat do
     :exit, _ -> nil
   end
 
-  defp whereis(id), do: GenServer.whereis({:via, Registry, {@registry, id}})
+  # This instance's running chats: `[{id, pid}]`.
+  defp running do
+    me = Peon.Instance.fetch!(:id)
+    Registry.select(@registry, [{{{me, {__MODULE__, :"$1"}}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+  end
+
+  defp key(id), do: {Peon.Instance.fetch!(:id), {__MODULE__, id}}
+
+  defp whereis(id), do: Peon.Instance.whereis({__MODULE__, id})
 
   defp call(id, msg) do
     case whereis(id) do
@@ -212,23 +228,31 @@ defmodule Peon.Chat do
     end
   end
 
-  def child_spec(id),
-    do: %{id: {__MODULE__, id}, start: {__MODULE__, :start_link, [id]}, restart: :temporary}
+  def child_spec({instance, id}),
+    do: %{
+      id: {__MODULE__, id},
+      start: {__MODULE__, :start_link, [instance, id]},
+      restart: :temporary
+    }
 
-  def start_link(id),
-    do: GenServer.start_link(__MODULE__, id, name: {:via, Registry, {@registry, id}})
+  def start_link(instance, id),
+    do:
+      GenServer.start_link(__MODULE__, {instance, id},
+        name: Peon.Instance.via(instance, {__MODULE__, id})
+      )
 
   ## Server
 
   @impl true
-  def init(id) do
+  def init({instance, id}) do
+    Peon.Instance.put(instance)
     Process.flag(:trap_exit, true)
     Store.subscribe()
     Secrets.subscribe()
 
     # A repo chat claims its ports once its checkout says how many (load_pack/1).
     with {:ok, preview_port} <- if(Source.repo?(), do: {:ok, nil}, else: claim_preview_port(id)) do
-      slug = Application.fetch_env!(:peon, :project_slug)
+      slug = Peon.Instance.fetch!(:slug)
       base = base_dir(id)
 
       state = %{
@@ -614,10 +638,16 @@ defmodule Peon.Chat do
   defp start_agent(state) do
     config_dir = Path.join(state.base, "opencode-config")
     write_agent_config(state, config_dir)
-    opencode = Application.fetch_env!(:peon, :opencode)
-    data_dir = opencode[:data_dir]
+
+    data_dir =
+      Peon.Instance.fetch!(:opencode_data_dir) ||
+        Path.join(Peon.Instance.fetch!(:data_dir), "opencode-data")
+
     File.mkdir_p!(data_dir)
-    bin = System.find_executable(opencode[:bin] || "opencode") || raise "opencode not found"
+
+    bin =
+      System.find_executable(Application.get_env(:peon, :opencode_bin, "opencode")) ||
+        raise "opencode not found"
 
     container =
       Sandbox.start(state.dir, "exec opencode serve --hostname 0.0.0.0 --port 4096",
@@ -653,7 +683,7 @@ defmodule Peon.Chat do
 
     allow = ~w(read edit glob grep list bash task todowrite webfetch websearch lsp skill)
     chat = Chats.get(state.id)
-    model = (chat && chat.model) || Application.fetch_env!(:peon, :opencode)[:model]
+    model = (chat && chat.model) || Peon.Instance.fetch!(:opencode_model)
 
     config = %{
       "$schema" => "https://opencode.ai/config.json",
@@ -669,7 +699,7 @@ defmodule Peon.Chat do
           "question" => "deny",
           "doom_loop" => "deny"
         }),
-      # Peon's tools, over the mounted Unix socket (see PeonWeb.MCPPlug).
+      # Peon's tools, over the mounted Unix socket (see Peon.Agent.MCP.Plug).
       "mcp" => %{
         "peon" => %{
           "type" => "local",
@@ -878,7 +908,7 @@ defmodule Peon.Chat do
   defp preview_links(_state), do: []
 
   defp broadcast(state, message) do
-    Phoenix.PubSub.broadcast(Peon.PubSub, "chat:#{state.id}", message)
+    Peon.Instance.broadcast("chat:#{state.id}", message)
     state
   end
 
@@ -889,7 +919,7 @@ defmodule Peon.Chat do
   defp tell_busy(%{busy?: busy?, told_busy?: busy?} = state), do: state
 
   defp tell_busy(state) do
-    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_busy, state.id, state.busy?})
+    Peon.Instance.broadcast("chats", {:chat_busy, state.id, state.busy?})
     %{state | told_busy?: state.busy?}
   end
 
@@ -1096,28 +1126,28 @@ defmodule Peon.Chat do
 
     free = &(Peon.Ports.browser_safe?(&1) and not MapSet.member?(used, &1))
 
-    case Enum.find(Application.fetch_env!(:peon, :preview_ports), free) do
+    case Enum.find(Peon.Instance.fetch!(:preview_ports), free) do
       nil ->
         {:stop, :no_free_preview_port}
 
       port ->
-        Registry.update_value(@registry, id, fn _ -> port end)
+        Registry.update_value(@registry, key(id), fn _ -> port end)
         {:ok, port}
     end
   end
 
   # A repo chat's preview may need several ports; it holds them as a list.
   defp claim_preview_ports(id, count) do
-    Registry.update_value(@registry, id, fn _ -> [] end)
+    Registry.update_value(@registry, key(id), fn _ -> [] end)
     used = used_ports()
 
     free =
-      Application.fetch_env!(:peon, :preview_ports)
+      Peon.Instance.fetch!(:preview_ports)
       |> Enum.filter(&(Peon.Ports.browser_safe?(&1) and not MapSet.member?(used, &1)))
       |> Enum.take(count)
 
     if length(free) == count do
-      Registry.update_value(@registry, id, fn _ -> free end)
+      Registry.update_value(@registry, key(id), fn _ -> free end)
       {:ok, free}
     else
       {:error, :no_free_preview_port}
@@ -1125,7 +1155,9 @@ defmodule Peon.Chat do
   end
 
   defp used_ports do
-    Registry.select(@registry, [{{:_, :_, :"$1"}, [], [:"$1"]}])
+    me = Peon.Instance.fetch!(:id)
+
+    Registry.select(@registry, [{{{me, {__MODULE__, :_}}, :_, :"$1"}, [], [:"$1"]}])
     |> List.flatten()
     |> MapSet.new()
   end

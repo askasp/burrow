@@ -303,8 +303,8 @@ defmodule BurrowWeb.ProjectLive.Index do
         <ul id="projects" aria-label="Projects" class="plist flex-[1_1_340px] max-w-[420px]">
           <li :if={@projects == []} class="py-4 text-sm text-[var(--text-3)]">No projects yet.</li>
           <li :for={p <- @projects} id={"project-#{p.id}"} class="relative">
-            <a
-              href={~p"/projects/#{p.id}/open"}
+            <.link
+              navigate={~p"/projects/#{p.id}"}
               data-kb="item"
               class={["prow pr-12", @selected && @selected.id == p.id && "sel"]}
               title={"Open #{p.name}"}
@@ -321,7 +321,7 @@ defmodule BurrowWeb.ProjectLive.Index do
                 <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
               </span>
               <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
-            </a>
+            </.link>
             <.link
               patch={~p"/projects?p=#{p.id}"}
               class="icon-btn sm prow-more"

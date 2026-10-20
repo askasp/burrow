@@ -33,9 +33,10 @@ defmodule Peon.Checks do
 
   @formattable [".ex", ".exs", ".heex"]
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(instance),
+    do: GenServer.start_link(__MODULE__, instance, name: Peon.Instance.via(instance, __MODULE__))
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, @topic)
+  def subscribe, do: Peon.Instance.subscribe(@topic)
 
   @doc "Trims check output to its errors, within the size the AI gets back."
   def trim_output(output) do
@@ -60,7 +61,8 @@ defmodule Peon.Checks do
   ## Server
 
   @impl true
-  def init(_opts) do
+  def init(instance) do
+    Peon.Instance.put(instance)
     Store.subscribe()
 
     pending =
@@ -122,7 +124,13 @@ defmodule Peon.Checks do
         case Code.changeset(id) do
           {:ok, %{status: status}} when status in ["proposed", "checking"] ->
             Store.set_status(id, "checking", %{})
-            task = Task.Supervisor.async_nolink(Peon.TaskSupervisor, fn -> run(id, slot) end)
+
+            task =
+              Task.Supervisor.async_nolink(
+                Peon.TaskSupervisor,
+                Peon.Instance.bind(fn -> run(id, slot) end)
+              )
+
             running = Map.put(state.running, task.ref, {id, slot})
             maybe_start(%{state | queue: queue, running: running, free: free})
 
@@ -148,13 +156,13 @@ defmodule Peon.Checks do
           nil
       end
 
-    Phoenix.PubSub.broadcast(Peon.PubSub, @topic, {:checked, id, status, checks, outcome})
+    Peon.Instance.broadcast(@topic, {:checked, id, status, checks, outcome})
   end
 
   ## Running a check (in a task)
 
   defp run(id, slot) do
-    dir = Path.join(Application.fetch_env!(:peon, :data_dir), "checks/slot-#{slot}")
+    dir = Path.join(Peon.Instance.fetch!(:data_dir), "checks/slot-#{slot}")
     format = Enum.map_join(formattable(id), " ", &shell_quote/1)
 
     steps = [
@@ -212,7 +220,7 @@ defmodule Peon.Checks do
           end
       }
 
-      Phoenix.PubSub.broadcast(Peon.PubSub, @topic, {:check_step, id, name, step["status"]})
+      Peon.Instance.broadcast(@topic, {:check_step, id, name, step["status"]})
 
       if passed?,
         do: {:cont, {"passed", steps ++ [step]}},

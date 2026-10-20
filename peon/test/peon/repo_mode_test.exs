@@ -5,9 +5,7 @@ defmodule Peon.RepoModeTest do
   alias Peon.{PreviewPack, Project, Repo}
 
   setup do
-    previous = Application.get_env(:peon, :repo)
-    Application.put_env(:peon, :repo, %{url: "https://github.com/a/b.git", branch: "main"})
-    on_exit(fn -> Application.put_env(:peon, :repo, previous) end)
+    put_instance(repo: %{url: "https://github.com/a/b.git", branch: "main"})
     Repo.insert!(%Project{slug: "amino", name: "Amino"})
     :ok
   end

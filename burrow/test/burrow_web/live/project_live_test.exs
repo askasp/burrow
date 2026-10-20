@@ -10,15 +10,9 @@ defmodule BurrowWeb.ProjectLiveTest do
   import Ecto.Query
 
   alias Burrow.Accounts.Scope
-  alias Burrow.{PeonAPI, Projects, Teams}
+  alias Burrow.{Projects, Teams}
 
   setup :register_and_log_in_user
-
-  setup do
-    # No Peon runs; one that is asked answers as a stopped one would.
-    Req.Test.stub(PeonAPI, &Plug.Conn.send_resp(&1, 503, ""))
-    :ok
-  end
 
   test "creates a project and shows the slug it gets", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
@@ -130,7 +124,7 @@ defmodule BurrowWeb.ProjectLiveTest do
 
       assert has_element?(
                lv,
-               "#project-#{project.id} a.prow[href='/projects/#{project.id}/open']"
+               "#project-#{project.id} a.prow[href='/projects/#{project.id}']"
              )
 
       refute has_element?(lv, "#open-workspace")
@@ -140,54 +134,20 @@ defmodule BurrowWeb.ProjectLiveTest do
       assert has_element?(lv, "#selected-project #restart-peon")
     end
 
-    test "add staging and prod turns it into a pipeline project", %{conn: conn, project: project} do
+    @tag :tmp_dir
+    test "add staging and prod turns it into a pipeline project", %{
+      conn: conn,
+      project: project,
+      tmp_dir: dir
+    } do
+      Burrow.PeonHelpers.start_peon!(project, dir)
       {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
       running!(project)
-
-      Req.Test.stub(PeonAPI, fn conn ->
-        assert conn.request_path == "/api/burrow/add-envs"
-        Plug.Conn.send_resp(conn, 204, "")
-      end)
 
       lv |> element("#project-menu-button") |> render_click()
       lv |> element("#add-envs") |> render_click()
       assert render(lv) =~ "Watchtower has staging and prod now."
       assert Projects.get(project.id).envs == "pipeline"
-    end
-
-    test "its Peon gets the projects the user can open, with the shared token", %{
-      project: project,
-      user: user
-    } do
-      {:ok, other} = Projects.create(Scope.for_user(user), %{"name" => "Stash"})
-      path = ~p"/api/peon/#{project.id}/projects?email=#{user.email}"
-
-      assert %{"projects" => projects} =
-               build_conn()
-               |> put_req_header("authorization", "Bearer " <> PeonAPI.token(project))
-               |> get(path)
-               |> json_response(200)
-
-      assert [
-               %{"id" => other_id, "current" => false, "name" => "Stash"},
-               %{"id" => id, "current" => true, "url" => url}
-             ] = projects
-
-      assert {other_id, id} == {other.id, project.id}
-      assert url =~ "/projects/#{project.id}/open"
-
-      assert build_conn()
-             |> put_req_header("authorization", "Bearer nope")
-             |> get(path)
-             |> json_response(401)
-
-      # Someone who can't open this project gets nothing.
-      stranger = user_fixture()
-
-      assert build_conn()
-             |> put_req_header("authorization", "Bearer " <> PeonAPI.token(project))
-             |> get(~p"/api/peon/#{project.id}/projects?email=#{stranger.email}")
-             |> json_response(401)
     end
   end
 

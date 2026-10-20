@@ -24,19 +24,6 @@ defmodule BurrowWeb.Router do
     get "/manifest.webmanifest", ManifestController, :show
   end
 
-  # Each project's Peon, with the token it shares with Burrow.
-  scope "/api/peon", BurrowWeb do
-    pipe_through :api
-
-    get "/:id/projects", PeonController, :projects
-    post "/:id/projects", PeonController, :create
-    post "/:id/prefs", PeonController, :prefs
-    post "/:id/share", PeonController, :share
-    post "/:id/hand-over", PeonController, :hand_over
-    post "/:id/add-envs", PeonController, :add_envs
-    post "/:id/status", PeonController, :status
-  end
-
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:burrow, :dev_routes) do
     pipeline :local_only do
@@ -57,11 +44,15 @@ defmodule BurrowWeb.Router do
   scope "/", BurrowWeb do
     pipe_through [:browser, :require_authenticated_user]
 
+    # Links from before workspaces were Burrow's own pages
     get "/projects/:id/open", ProjectController, :open
+    get "/w/:port/*rest", ProjectController, :old_workspace
 
     live_session :require_authenticated_user,
       on_mount: [{BurrowWeb.UserAuth, :require_authenticated}] do
       live "/projects", ProjectLive.Index, :index
+      live "/projects/:id", WorkspaceLive, :index
+      live "/projects/:id/c/:chat", WorkspaceLive, :chat
       live "/teams", TeamLive.Index, :index
       live "/ai", AILive, :index
       live "/users/settings", UserLive.Settings, :edit

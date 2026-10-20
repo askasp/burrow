@@ -29,7 +29,36 @@ defmodule Peon.DataCase do
 
   setup tags do
     Peon.DataCase.setup_sandbox(tags)
-    :ok
+    instance = Peon.DataCase.put_instance()
+    store = start_supervised!({Peon.Store, instance})
+    Ecto.Adapters.SQL.Sandbox.allow(Peon.Repo, self(), store)
+
+    start_supervised!(
+      {DynamicSupervisor, name: Peon.Instance.via(instance, :chats), strategy: :one_for_one}
+    )
+
+    %{instance: instance}
+  end
+
+  @doc """
+  Makes the test process work for a test instance on `Peon.Repo`, with
+  `changes` (e.g. `data_dir: dir`), and returns it.
+  """
+  def put_instance(changes \\ []) do
+    base =
+      Peon.Instance.current() ||
+        %Peon.Instance{
+          id: "test-#{System.unique_integer([:positive])}",
+          slug: "test_app",
+          name: "Test App",
+          data_dir:
+            Path.join(System.tmp_dir!(), "peon-test-#{System.unique_integer([:positive])}"),
+          secret: "test-secret-0123456789-0123456789",
+          opencode_model: "openai/gpt-test",
+          db: Peon.Repo
+        }
+
+    Peon.Instance.put(struct!(base, changes))
   end
 
   @doc """

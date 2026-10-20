@@ -1,6 +1,6 @@
 defmodule Peon.AuthTest do
   # The login a new app starts with (Peon.Template): what Bootstrap keeps and
-  # what the agent is told. Not async: it sets environment variables.
+  # what the agent is told.
   use Peon.DataCase, async: false
 
   alias Peon.{Bootstrap, Secrets, Store, Template}
@@ -8,18 +8,8 @@ defmodule Peon.AuthTest do
 
   @template Path.expand("../../../template", __DIR__)
 
-  setup do
-    on_exit(fn ->
-      System.delete_env("PEON_BASIC_AUTH_USERNAME")
-      System.delete_env("PEON_BASIC_AUTH_PASSWORD")
-    end)
-  end
-
   test "the basic auth login Burrow passed becomes the app's secrets" do
-    System.put_env("PEON_BASIC_AUTH_USERNAME", "ada")
-    System.put_env("PEON_BASIC_AUTH_PASSWORD", "correct horse")
-
-    assert :ok = Bootstrap.put_basic_auth()
+    assert :ok = Bootstrap.put_basic_auth({"ada", "correct horse"})
 
     assert Secrets.env() == %{
              "BASIC_AUTH_USERNAME" => "ada",
@@ -30,9 +20,7 @@ defmodule Peon.AuthTest do
   end
 
   test "without a login from Burrow, the owner is asked for it" do
-    System.put_env("PEON_BASIC_AUTH_USERNAME", "ada")
-
-    assert :ok = Bootstrap.put_basic_auth()
+    assert :ok = Bootstrap.put_basic_auth({"ada", nil})
     assert Secrets.env() == %{"BASIC_AUTH_USERNAME" => "ada"}
     assert [%{name: "BASIC_AUTH_PASSWORD", set?: false}] = Secrets.requested()
   end

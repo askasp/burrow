@@ -42,7 +42,6 @@ defmodule Peon.Env do
   alias Peon.Incidents.Incident
   alias PeonCore.{Policy, Tree}
 
-  @registry Peon.EnvRegistry
   @boot_timeout :timer.minutes(15)
   @health_every :timer.seconds(5)
   @revive_after :timer.seconds(10)
@@ -53,17 +52,19 @@ defmodule Peon.Env do
   ## API
 
   @doc "The configured environments, staging first."
-  def names do
-    ports = Application.get_env(:peon, :env_ports, %{})
-    Enum.filter(["staging", "prod"], &Map.has_key?(ports, &1))
-  end
+  def names(instance \\ Peon.Instance.current!()),
+    do: Enum.filter(["staging", "prod"], &Map.has_key?(instance.env_ports, &1))
 
-  def child_spec(name), do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [name]}}
+  def child_spec({instance, name}),
+    do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [instance, name]}}
 
-  def start_link(name),
-    do: GenServer.start_link(__MODULE__, name, name: {:via, Registry, {@registry, name}})
+  def start_link(instance, name),
+    do:
+      GenServer.start_link(__MODULE__, {instance, name},
+        name: Peon.Instance.via(instance, {__MODULE__, name})
+      )
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "envs")
+  def subscribe, do: Peon.Instance.subscribe("envs")
 
   @doc "Status for the UI, or nil when the env isn't running."
   def info(name), do: call(name, :info, nil)
@@ -102,7 +103,7 @@ defmodule Peon.Env do
   def hot?(changed), do: not matches_any?(changed, restart_paths())
 
   defp call(name, msg, default, timeout \\ 5_000) do
-    case GenServer.whereis({:via, Registry, {@registry, name}}) do
+    case Peon.Instance.whereis({__MODULE__, name}) do
       nil -> default
       pid -> GenServer.call(pid, msg, timeout)
     end
@@ -111,10 +112,11 @@ defmodule Peon.Env do
   ## Server
 
   @impl true
-  def init(name) do
-    slug = Application.fetch_env!(:peon, :project_slug)
+  def init({instance, name}) do
+    Peon.Instance.put(instance)
+    slug = Peon.Instance.fetch!(:slug)
     otp_app = Template.otp_app(slug)
-    base = Path.join([Application.fetch_env!(:peon, :data_dir), "envs", name])
+    base = Path.join([Peon.Instance.fetch!(:data_dir), "envs", name])
     Enum.each(["app", "data"], &File.mkdir_p!(Path.join(base, &1)))
     Store.subscribe()
     Secrets.subscribe()
@@ -127,7 +129,7 @@ defmodule Peon.Env do
       otp_app: otp_app,
       endpoint: Macro.camelize(otp_app) <> "Web.Endpoint",
       container: "peon-env-#{slug}-#{name}",
-      port: Map.fetch!(Application.fetch_env!(:peon, :env_ports), name),
+      port: Map.fetch!(Peon.Instance.fetch!(:env_ports), name),
       cookie: secret(base, "cookie", 24),
       secret_key_base: secret(base, "secret_key_base", 48),
       app: nil,
@@ -289,12 +291,11 @@ defmodule Peon.Env do
   def handle_info(_msg, state), do: {:noreply, state}
 
   @doc """
-  The origins that may show the app in a frame: Burrow's project page and this
-  Peon's workspace, and nobody else.
+  The origins that may show the app in a frame: the host's site, where the
+  workspace is (`:frame_ancestors`, URLs), and nobody else.
   """
   def frame_ancestors do
-    [Application.get_env(:peon, :burrow_url), PeonWeb.Endpoint.url()]
-    |> Enum.reject(&is_nil/1)
+    Application.get_env(:peon, :frame_ancestors, [])
     |> Enum.map(&origin/1)
     |> Enum.uniq()
     |> Enum.join(" ")
@@ -739,7 +740,7 @@ defmodule Peon.Env do
   defp status(%{app_status: status}), do: status
 
   defp broadcast(state) do
-    Phoenix.PubSub.broadcast(Peon.PubSub, "envs", {:env, state.name, info_map(state)})
+    Peon.Instance.broadcast("envs", {:env, state.name, info_map(state)})
     state
   end
 

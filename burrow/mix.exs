@@ -67,8 +67,8 @@ defmodule Burrow.MixProject do
        depth: 1},
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
-      # BurrowWeb.PeonProxy: a workspace's LiveView socket through Burrow
-      {:mint_web_socket, "~> 1.0"},
+      # Each project's Peon, run inside Burrow (Burrow.Cell)
+      {:peon, path: "../peon"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},

@@ -15,15 +15,10 @@ defmodule Peon.PullRequestTest do
     sh!(["remote", "add", "origin", origin], work)
     sh!(["push", "origin", "main"], work)
 
-    for {key, value} <- [
-          repo: %{url: origin, branch: "main"},
-          data_dir: Path.join(dir, "data"),
-          github_req: [plug: {Req.Test, PullRequest}]
-        ] do
-      previous = Application.get_env(:peon, key)
-      Application.put_env(:peon, key, value)
-      on_exit(fn -> Application.put_env(:peon, key, previous) end)
-    end
+    put_instance(repo: %{url: origin, branch: "main"}, data_dir: Path.join(dir, "data"))
+    previous = Application.get_env(:peon, :github_req)
+    Application.put_env(:peon, :github_req, plug: {Req.Test, PullRequest})
+    on_exit(fn -> Application.put_env(:peon, :github_req, previous) end)
 
     chat = Path.join(dir, "chats/a/workspace")
     :ok = Git.checkout(chat, "a")
@@ -93,7 +88,7 @@ defmodule Peon.PullRequestTest do
     origin: origin,
     chat: chat
   } do
-    Application.put_env(:peon, :repo, %{url: "https://github.com/acme/shop.git", branch: "main"})
+    put_instance(repo: %{url: "https://github.com/acme/shop.git", branch: "main"})
     # The push still goes to the local origin; only the API is GitHub's.
     sh!(["remote", "set-url", "origin", origin], chat)
     File.write!(Path.join(chat, "index.html"), "new")

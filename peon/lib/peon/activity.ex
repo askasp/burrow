@@ -16,7 +16,8 @@ defmodule Peon.Activity do
 
   The project's (`project/1`) is what Burrow's rails show:
   `%{"state" => "working" | "waiting" | "done" | "stopped", "label", "pct"}`.
-  This process reports it to Burrow whenever it changes (`Peon.Burrow.report/1`).
+  This process broadcasts it whenever it changes, as `{:activity, id,
+  activity}` on `Peon.Instance.activity_topic/0`.
   """
 
   use GenServer
@@ -25,7 +26,8 @@ defmodule Peon.Activity do
 
   @debounce 300
 
-  def start_link(_opts), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def start_link(instance),
+    do: GenServer.start_link(__MODULE__, instance, name: Peon.Instance.via(instance, __MODULE__))
 
   @doc "`[%{chat, changeset, phase}]` in tab order; `busy` holds the chats whose agent works."
   def chats(busy) do
@@ -136,7 +138,8 @@ defmodule Peon.Activity do
   ## Server
 
   @impl true
-  def init(nil) do
+  def init(instance) do
+    Peon.Instance.put(instance)
     Chats.subscribe()
     Peon.Store.subscribe()
     Peon.Checks.subscribe()
@@ -167,8 +170,13 @@ defmodule Peon.Activity do
   defp report(state) do
     activity = project(chats(state.busy))
 
-    if activity != state.reported,
-      do: Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Peon.Burrow.report(activity) end)
+    if activity != state.reported do
+      Phoenix.PubSub.broadcast(
+        Peon.PubSub,
+        Peon.Instance.activity_topic(),
+        {:activity, Peon.Instance.fetch!(:id), activity}
+      )
+    end
 
     %{state | reported: activity}
   end

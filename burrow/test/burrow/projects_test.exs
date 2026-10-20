@@ -36,10 +36,11 @@ defmodule Burrow.ProjectsTest do
   end
 
   test "staging and prod get ports a browser opens" do
-    assert Burrow.Cell.split_ports("5000-5009") == {"5000-5007", 5008, 5009}
+    ports = &Burrow.Cell.ports(%Project{preview_ports: &1})
+    assert ports.("5000-5009") == {5000..5007, %{"staging" => 5008, "prod" => 5009}}
     # 5060 and 5061 are blocked (SIP); the range end is fine, previews skip them in Peon.
-    assert Burrow.Cell.split_ports("5060-5069") == {"5060-5067", 5068, 5069}
-    assert Burrow.Cell.split_ports("6660-6669") == {"6660-6662", 6663, 6664}
+    assert ports.("5060-5069") == {5060..5067, %{"staging" => 5068, "prod" => 5069}}
+    assert ports.("6660-6669") == {6660..6662, %{"staging" => 6663, "prod" => 6664}}
   end
 
   test "a project from a git repo has no envs, so its whole range is previews" do
@@ -56,14 +57,15 @@ defmodule Burrow.ProjectsTest do
     assert project.repo_url == "https://github.com/a/b.git"
     assert Project.repo?(project)
     refute Project.live_only?(project)
-    assert Burrow.Cell.split_ports(project) == {project.preview_ports, "", ""}
+    [first, last] = project.preview_ports |> String.split("-") |> Enum.map(&String.to_integer/1)
+    assert Burrow.Cell.ports(project) == {first..last, %{}}
   end
 
   describe "the new app's login" do
     test "is user accounts unless picked" do
       {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Default"})
       assert project.auth == "accounts"
-      assert Burrow.Cell.auth_env(project) == %{"PEON_AUTH" => "accounts"}
+      assert Project.basic_login(project) == nil
 
       {:ok, open} = Projects.create(user_scope_fixture(), %{"name" => "Open", "auth" => "open"})
       assert Projects.get(open.id).auth == "open"
@@ -102,11 +104,8 @@ defmodule Burrow.ProjectsTest do
       # What the Peon is started with.
       {:ok, made} = attrs |> Projects.change() |> Ecto.Changeset.apply_action(:insert)
 
-      assert Burrow.Cell.auth_env(made) == %{
-               "PEON_AUTH" => "basic",
-               "PEON_BASIC_AUTH_USERNAME" => "ada",
-               "PEON_BASIC_AUTH_PASSWORD" => "correct horse"
-             }
+      assert made.auth == "basic"
+      assert Project.basic_login(made) == {"ada", "correct horse"}
 
       refute inspect(made) =~ "correct horse"
 
@@ -116,7 +115,7 @@ defmodule Burrow.ProjectsTest do
       stored = Projects.get(project.id)
       assert stored.auth == "basic" and stored.basic_password == nil
       # Restarts don't have it: Peon kept it as the app's secrets.
-      assert Burrow.Cell.auth_env(stored) == %{"PEON_AUTH" => "basic"}
+      assert Project.basic_login(stored) == nil
     end
 
     test "doesn't apply to a repo project" do
@@ -170,39 +169,5 @@ defmodule Burrow.ProjectsTest do
 
     assert {:error, %Ecto.Changeset{errors: [team_id: _]}} =
              Projects.create(owner, %{"name" => "Other", "team_id" => to_string(theirs.id)})
-  end
-
-  test "the Peon link carries a token Peon can verify with the shared secret" do
-    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "SSO"})
-    url = Projects.peon_url(project, "a@b.no")
-    [_, token] = String.split(url, "token=")
-
-    assert {:ok, "a@b.no"} =
-             Phoenix.Token.verify(Projects.secret(project, "sso"), "peon sso", token, max_age: 60)
-  end
-
-  test "workspaces open under Burrow's own site, at /w/<port>" do
-    Application.put_env(:burrow, :port_url, "https://peon-{port}.example.com")
-    on_exit(fn -> Application.delete_env(:burrow, :port_url) end)
-    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Home"})
-
-    assert Projects.peon_url(project, "a@b.no", nil, "dark") =~
-             ~r"^#{BurrowWeb.Endpoint.url()}/w/#{project.port}/sso\?token=.+&theme=dark$"
-
-    assert Burrow.Ports.peon_path(project.port) == "/w/#{project.port}"
-    # Previews keep their own hosts.
-    assert Burrow.Ports.url(project.port) == "https://peon-#{project.port}.example.com"
-    assert Burrow.Ports.host(project.port) == "peon-#{project.port}.example.com"
-  end
-
-  test "BURROW_PEON_URL can give workspaces their port's own address instead" do
-    Application.put_env(:burrow, :peon_url, "https://peon-{port}.example.com")
-    on_exit(fn -> Application.delete_env(:burrow, :peon_url) end)
-    {:ok, project} = Projects.create(user_scope_fixture(), %{"name" => "Own host"})
-
-    assert Projects.peon_url(project, "a@b.no") =~
-             "https://peon-#{project.port}.example.com/sso?token="
-
-    assert Burrow.Ports.peon_path(project.port) == nil
   end
 end

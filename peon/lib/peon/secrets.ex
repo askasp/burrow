@@ -32,7 +32,7 @@ defmodule Peon.Secrets do
   @reserved ~w(MIX_ENV PORT PHX_HOST PHX_SERVER SECRET_KEY_BASE DATABASE_PATH DATABASE_URL
                PREVIEW_BIND HOME PATH LANG RELEASE_COOKIE)
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "secrets")
+  def subscribe, do: Peon.Instance.subscribe("secrets")
 
   @doc """
   Every secret without its value, by name:
@@ -162,7 +162,7 @@ defmodule Peon.Secrets do
   end
 
   defp broadcast do
-    Phoenix.PubSub.broadcast(Peon.PubSub, "secrets", {:secrets, list()})
+    Peon.Instance.broadcast("secrets", {:secrets, list()})
   end
 
   # Wakes the chat that asked, so the agent carries on.

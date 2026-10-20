@@ -152,12 +152,15 @@ defmodule Peon.Ship do
   def tell_chat(nil, _text), do: :ok
 
   def tell_chat(chat_id, text) do
-    Task.Supervisor.start_child(Peon.TaskSupervisor, fn ->
-      case Chat.send_message(chat_id, "[Peon] " <> text) do
-        :ok -> :ok
-        error -> Logger.warning("could not tell chat #{chat_id}: #{inspect(error)}")
-      end
-    end)
+    Task.Supervisor.start_child(
+      Peon.TaskSupervisor,
+      Peon.Instance.bind(fn ->
+        case Chat.send_message(chat_id, "[Peon] " <> text) do
+          :ok -> :ok
+          error -> Logger.warning("could not tell chat #{chat_id}: #{inspect(error)}")
+        end
+      end)
+    )
 
     :ok
   end

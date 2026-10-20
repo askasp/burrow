@@ -1,11 +1,11 @@
-defmodule PeonWeb.ProjectLive.Components do
+defmodule BurrowWeb.WorkspaceLive.Components do
   @moduledoc """
-  The workspace's parts (`PeonWeb.ProjectLive`): the project rail, the
+  The workspace's parts (`BurrowWeb.WorkspaceLive`): the project rail, the
   project bar, the chat tabs and changeset card, the preview pane, "Deploys
   and usage", and the dialogs.
   """
 
-  use PeonWeb, :html
+  use BurrowWeb, :html
 
   alias Peon.Chats
 
@@ -13,7 +13,6 @@ defmodule PeonWeb.ProjectLive.Components do
 
   attr :rail, :list, required: true
   attr :open, :boolean, required: true
-  attr :burrow, :string, doc: "Burrow's project list, nil without Burrow"
   attr :theme, :string, required: true
 
   @doc """
@@ -24,15 +23,15 @@ defmodule PeonWeb.ProjectLive.Components do
     ~H"""
     <nav class={["rail", @open && "open"]} aria-label="Projects" data-kb-zoom-hide>
       <div class="rtop">
-        <a class="rlogo" href={@burrow || "/"} title="All projects" aria-label="All projects">
+        <.link class="rlogo" navigate={~p"/projects"} title="All projects" aria-label="All projects">
           <Layouts.mark size={34} /><span class="rword rt">peon</span>
-        </a>
+        </.link>
       </div>
       <ul class="rlist">
         <li :for={p <- @rail}>
-          <a
+          <.link
             class="ritem"
-            href={if p.current, do: ~p"/", else: p.url}
+            navigate={p.url}
             aria-current={if p.current, do: "page"}
             data-kb-current={if p.current, do: "1"}
             data-kb="item"
@@ -50,12 +49,11 @@ defmodule PeonWeb.ProjectLive.Components do
               </span>
             </span>
             <span class="sr-only">, {p.label}</span>
-          </a>
+          </.link>
         </li>
       </ul>
       <div class="rbot">
         <button
-          :if={@burrow}
           id="new-project-btn"
           type="button"
           class="rbtn"
@@ -71,9 +69,9 @@ defmodule PeonWeb.ProjectLive.Components do
         >
           <.icon name="hero-plus" class="size-[18px] shrink-0" /><span class="rt">New project</span>
         </button>
-        <a :if={@burrow} class="rbtn" href={@burrow} title="Account, teams and AI login (Burrow)">
+        <.link class="rbtn" navigate={~p"/projects"} title="Projects, teams and AI login">
           <.icon name="hero-squares-2x2" class="size-[18px] shrink-0" /><span class="rt">Account</span>
-        </a>
+        </.link>
         <button
           type="button"
           class="rbtn"
@@ -322,6 +320,7 @@ defmodule PeonWeb.ProjectLive.Components do
   attr :tabs, :list, required: true
   attr :chat, :map
   attr :project, :map
+  attr :base, :string, required: true, doc: "the workspace's path"
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
 
@@ -334,7 +333,7 @@ defmodule PeonWeb.ProjectLive.Components do
       <div class="ctabs" role="tablist" aria-label="Chats">
         <div :for={t <- @tabs} class="tabw" id={"tab-#{t.chat.id}"}>
           <.link
-            patch={~p"/c/#{t.chat.id}"}
+            patch={"#{@base}/c/#{t.chat.id}"}
             class="ctab"
             role="tab"
             aria-selected={to_string(@chat != nil and @chat.id == t.chat.id)}
@@ -824,6 +823,7 @@ defmodule PeonWeb.ProjectLive.Components do
   attr :promote, :any
   attr :auto_promote, :boolean, required: true
   attr :incidents, :list, required: true
+  attr :base, :string, required: true, doc: "the workspace's path"
   attr :deploys, :list, required: true
 
   @doc """
@@ -985,7 +985,7 @@ defmodule PeonWeb.ProjectLive.Components do
                 <div class="truncate text-[var(--err)]" title={i.detail}>{i.title}</div>
                 <div class="meta">
                   {i.count}× · {i.status}
-                  <.link :if={i.chat_id} patch={~p"/c/#{i.chat_id}"} data-kb="row" class="xlink">chat</.link>
+                  <.link :if={i.chat_id} patch={"#{@base}/c/#{i.chat_id}"} data-kb="row" class="xlink">chat</.link>
                 </div>
               </div>
               <button

@@ -28,7 +28,8 @@ defmodule Peon.Verifier do
   # How far back from main's tip to look for the last passing changeset.
   @max_chain 200
 
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(instance),
+    do: GenServer.start_link(__MODULE__, instance, name: Peon.Instance.via(instance, __MODULE__))
 
   @doc """
   What to do next, given main's history from the last passing changeset to
@@ -78,7 +79,8 @@ defmodule Peon.Verifier do
   ## Server
 
   @impl true
-  def init(_opts) do
+  def init(instance) do
+    Peon.Instance.put(instance)
     Store.subscribe()
     send(self(), :next)
     {:ok, %{running: nil}}
@@ -107,13 +109,16 @@ defmodule Peon.Verifier do
 
     case plan(chain) do
       {:test, id} ->
-        dir = Path.join(Application.fetch_env!(:peon, :data_dir), "checks/verify")
+        dir = Path.join(Peon.Instance.fetch!(:data_dir), "checks/verify")
 
         task =
-          Task.Supervisor.async_nolink(Peon.TaskSupervisor, fn ->
-            {status, steps} = Checks.run_steps(dir, id, @steps)
-            {id, status, steps}
-          end)
+          Task.Supervisor.async_nolink(
+            Peon.TaskSupervisor,
+            Peon.Instance.bind(fn ->
+              {status, steps} = Checks.run_steps(dir, id, @steps)
+              {id, status, steps}
+            end)
+          )
 
         %{state | running: {id, task.ref}}
 

@@ -9,7 +9,7 @@ defmodule BurrowWeb.PageController do
     case conn.assigns.current_scope do
       %{user: %{} = user} = scope ->
         if user.last_project_id && Projects.visible?(scope, user.last_project_id),
-          do: redirect(conn, to: ~p"/projects/#{user.last_project_id}/open"),
+          do: redirect(conn, to: ~p"/projects/#{user.last_project_id}"),
           else: redirect(conn, to: ~p"/projects")
 
       _ ->

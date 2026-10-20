@@ -9,38 +9,4 @@ defmodule Burrow.Ports do
            |> Enum.map(&(&1 |> Atom.to_string() |> String.to_integer()))
 
   def browser_safe?(port), do: port not in @blocked
-
-  @doc """
-  Where a browser reaches a Peon or app port: `BURROW_PORT_URL` with
-  `{port}` filled in (e.g. `https://burrow-{port}.example.com` behind a
-  tunnel), or `http://<peon host>:<port>`.
-  """
-  def url(port), do: String.replace(url_template(), "{port}", to_string(port))
-
-  def host(port), do: URI.parse(url(port)).host
-
-  @doc """
-  Where a browser opens the Peon on `port`: `/w/<port>` on Burrow's own site
-  (`BurrowWeb.PeonProxy` passes it on), so an installed Burrow app keeps
-  workspaces in its window. `BURROW_PEON_URL` (with `{port}`) overrides it,
-  e.g. with the port's own address.
-  """
-  def peon_url(port) do
-    (Application.get_env(:burrow, :peon_url) || BurrowWeb.Endpoint.url() <> "/w/{port}")
-    |> String.replace("{port}", to_string(port))
-    |> String.trim_trailing("/")
-  end
-
-  @doc "The path a Peon answers under (`PEON_PATH`), nil when it has its own host."
-  def peon_path(port) do
-    case URI.parse(peon_url(port)).path do
-      path when path in [nil, "", "/"] -> nil
-      path -> path
-    end
-  end
-
-  def url_template,
-    do:
-      Application.get_env(:burrow, :port_url) ||
-        "http://#{Application.fetch_env!(:burrow, :peon_host)}:{port}"
 end

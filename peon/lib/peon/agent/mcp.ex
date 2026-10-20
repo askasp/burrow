@@ -10,25 +10,27 @@ defmodule Peon.Agent.MCP do
   @protocol_version "2025-06-18"
   @token_max_age 7 * 24 * 3600
 
-  @doc "Where Peon serves MCP (`PeonWeb.MCPPlug`); mounted into agent containers."
-  def socket_path, do: Path.join(Application.fetch_env!(:peon, :data_dir), "mcp.sock")
+  @doc "Where Peon serves MCP (`Peon.Agent.MCP.Plug`); mounted into agent containers."
+  def socket_path(instance \\ Peon.Instance.current!()),
+    do: Path.join(instance.data_dir, "mcp.sock")
 
-  @doc "Bandit child serving MCP on the Unix socket."
-  def child_spec(_opts) do
-    File.rm(socket_path())
+  @doc "Bandit child serving the instance's MCP on its Unix socket."
+  def child_spec(instance) do
+    File.rm(socket_path(instance))
 
     Bandit.child_spec(
-      plug: PeonWeb.MCPPlug,
-      ip: {:local, socket_path()},
+      plug: {Peon.Agent.MCP.Plug, instance},
+      ip: {:local, socket_path(instance)},
       port: 0,
       startup_log: false
     )
   end
 
-  def token(chat_id), do: Phoenix.Token.sign(PeonWeb.Endpoint, @salt, chat_id)
+  def token(chat_id), do: Plug.Crypto.sign(secret(), @salt, chat_id)
 
-  def verify(token),
-    do: Phoenix.Token.verify(PeonWeb.Endpoint, @salt, token, max_age: @token_max_age)
+  def verify(token), do: Plug.Crypto.verify(secret(), @salt, token, max_age: @token_max_age)
+
+  defp secret, do: Peon.Instance.fetch!(:secret) || raise("this Peon instance has no :secret")
 
   @doc "Handles one JSON-RPC message. Returns a response map, or nil for notifications."
   def handle(%{"method" => method} = request, chat_id) do

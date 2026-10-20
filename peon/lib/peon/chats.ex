@@ -40,7 +40,7 @@ defmodule Peon.Chats do
     end
   end
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Peon.PubSub, "chats")
+  def subscribe, do: Peon.Instance.subscribe("chats")
 
   @efforts ~w(low medium high)
   @max 4
@@ -83,7 +83,7 @@ defmodule Peon.Chats do
     )
 
     Repo.update_all(from(c in Chat, where: c.id == ^id and c.title == ""), set: [title: title])
-    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_started, id})
+    Peon.Instance.broadcast("chats", {:chat_started, id})
   end
 
   @doc """
@@ -109,7 +109,7 @@ defmodule Peon.Chats do
         started_at: if(opts[:started] != false, do: DateTime.utc_now(:second))
       })
 
-    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_created, chat})
+    Peon.Instance.broadcast("chats", {:chat_created, chat})
     chat
   end
 
@@ -141,7 +141,7 @@ defmodule Peon.Chats do
   @doc "Deletes the chat's row; `Peon.Chat.delete/1` also stops it and removes its files."
   def delete(id) do
     Repo.delete_all(from c in Chat, where: c.id == ^id)
-    Phoenix.PubSub.broadcast(Peon.PubSub, "chats", {:chat_deleted, id})
+    Peon.Instance.broadcast("chats", {:chat_deleted, id})
   end
 
   def set_pr_url(id, url) do

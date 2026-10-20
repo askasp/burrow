@@ -20,16 +20,17 @@ defmodule Peon.Git do
 
   @token "GITHUB_TOKEN"
 
-  def child_spec(_opts), do: %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
+  def child_spec(instance), do: %{id: __MODULE__, start: {__MODULE__, :start_link, [instance]}}
 
-  def start_link do
+  def start_link(instance) do
+    Peon.Instance.put(instance)
     Sandbox.remove_all()
     Peon.Chat.stop_left_behind()
 
     if Project.get() == nil do
       Repo.insert!(%Project{
-        slug: Application.fetch_env!(:peon, :project_slug),
-        name: Application.fetch_env!(:peon, :project_name),
+        slug: Peon.Instance.fetch!(:slug),
+        name: Peon.Instance.fetch!(:name),
         settings: %{"repo_url" => Source.repo().url}
       })
     end
@@ -38,14 +39,14 @@ defmodule Peon.Git do
     :ignore
   end
 
-  def mirror_dir, do: Path.join(Application.fetch_env!(:peon, :data_dir), "repo.git")
+  def mirror_dir, do: Path.join(Peon.Instance.fetch!(:data_dir), "repo.git")
 
   @doc """
   Clones the repo into the mirror, or fetches it. One at a time, so chats
   starting together don't clone twice.
   """
   def sync do
-    :global.trans({__MODULE__, :mirror}, fn ->
+    :global.trans({__MODULE__, Peon.Instance.fetch!(:id)}, fn ->
       dir = mirror_dir()
 
       if File.dir?(dir) do

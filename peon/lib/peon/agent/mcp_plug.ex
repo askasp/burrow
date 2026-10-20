@@ -1,17 +1,25 @@
-defmodule PeonWeb.MCPPlug do
+defmodule Peon.Agent.MCP.Plug do
   @moduledoc """
-  MCP (`Peon.Agent.MCP`) over HTTP, served only on Peon's Unix socket
-  (`Peon.Agent.MCP.socket_path/0`). Agent containers get the socket mounted
-  and reach it through `priv/mcp_bridge.exs`, so no network path from the
-  sandbox to Peon is needed.
+  MCP (`Peon.Agent.MCP`) over HTTP, served only on the instance's Unix
+  socket (`Peon.Agent.MCP.socket_path/0`). Agent containers get the socket
+  mounted and reach it through `priv/mcp_bridge.exs`, so no network path
+  from the sandbox to Peon is needed.
   """
 
-  use Plug.Builder
+  # The socket's instance arrives as the plug's options.
+  use Plug.Builder, copy_opts_to_assign: :instance
 
   alias Peon.Agent.MCP
 
-  plug Plug.Parsers, parsers: [:json], json_decoder: Jason, length: 20_000_000
-  plug :dispatch
+  plug(:put_instance)
+  plug(Plug.Parsers, parsers: [:json], json_decoder: Jason, length: 20_000_000)
+  plug(:dispatch)
+
+  # Each request runs in its own process, as the socket's instance.
+  def put_instance(conn, _opts) do
+    Peon.Instance.put(conn.assigns.instance)
+    conn
+  end
 
   def dispatch(%{method: "POST"} = conn, _opts) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),

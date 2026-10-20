@@ -15,11 +15,7 @@ defmodule Peon.GitTest do
     sh!(["remote", "add", "origin", origin], work)
     sh!(["push", "origin", "main"], work)
 
-    for {key, value} <- [repo: %{url: origin, branch: "main"}, data_dir: Path.join(dir, "data")] do
-      previous = Application.get_env(:peon, key)
-      Application.put_env(:peon, key, value)
-      on_exit(fn -> Application.put_env(:peon, key, previous) end)
-    end
+    put_instance(repo: %{url: origin, branch: "main"}, data_dir: Path.join(dir, "data"))
 
     %{origin: origin, work: work}
   end
@@ -50,7 +46,7 @@ defmodule Peon.GitTest do
   test "a repo it can't read asks for a GitHub token, which never reaches the app", %{
     tmp_dir: dir
   } do
-    Application.put_env(:peon, :repo, %{url: Path.join(dir, "missing.git"), branch: "main"})
+    put_instance(repo: %{url: Path.join(dir, "missing.git"), branch: "main"})
 
     assert {:error, "git clone" <> _} = Git.checkout(Path.join(dir, "ws"), "c")
     assert [%{name: "GITHUB_TOKEN", set?: false}] = Secrets.requested()
