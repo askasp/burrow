@@ -22,6 +22,12 @@ defmodule Burrow.Activity do
 
   def put(project_id, activity), do: GenServer.cast(__MODULE__, {:put, project_id, activity})
 
+  @doc "Tells every running Peon to fetch its rails again, e.g. after a user's theme changed."
+  def push do
+    if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :push)
+    :ok
+  end
+
   @doc "The project's tile in a rail: its Peon's own report while it runs."
   def of(project_id) do
     case Cell.status(project_id) do
@@ -56,6 +62,8 @@ defmodule Burrow.Activity do
       {:noreply, schedule(state)}
     end
   end
+
+  def handle_cast(:push, state), do: {:noreply, schedule(state)}
 
   @impl true
   def handle_info(:push, state) do

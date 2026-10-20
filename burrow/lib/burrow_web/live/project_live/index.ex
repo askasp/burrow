@@ -1,10 +1,10 @@
 defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
   The projects screen: your projects and those shared with your teams on the
-  left, the selected one (`?p=<id>`) on the right. The work happens in each
-  project's workspace (its Peon), which has a rail back to all of them. New
-  project opens the form; share, hand over and adding staging and prod are
-  in the ⋯ menu.
+  left; a project opens its workspace (its Peon), which has a rail back to
+  all of them. Its details (`?p=<id>`: its Peon, sharing, the ⋯ menu with
+  share, hand over and adding staging and prod) show on the right. New
+  project opens the form.
   """
 
   use BurrowWeb, :live_view
@@ -302,12 +302,12 @@ defmodule BurrowWeb.ProjectLive.Index do
       <div class="flex flex-wrap gap-12 items-start">
         <ul id="projects" aria-label="Projects" class="plist flex-[1_1_340px] max-w-[420px]">
           <li :if={@projects == []} class="py-4 text-sm text-[var(--text-3)]">No projects yet.</li>
-          <li :for={p <- @projects} id={"project-#{p.id}"}>
-            <.link
-              patch={~p"/projects?p=#{p.id}"}
+          <li :for={p <- @projects} id={"project-#{p.id}"} class="relative">
+            <a
+              href={~p"/projects/#{p.id}/open"}
               data-kb="item"
-              class={["prow", @selected && @selected.id == p.id && "sel"]}
-              aria-current={@selected && @selected.id == p.id && "true"}
+              class={["prow pr-12", @selected && @selected.id == p.id && "sel"]}
+              title={"Open #{p.name}"}
             >
               <span class="r1">
                 <span class="name">{p.name}</span>
@@ -321,6 +321,15 @@ defmodule BurrowWeb.ProjectLive.Index do
                 <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
               </span>
               <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
+            </a>
+            <.link
+              patch={~p"/projects?p=#{p.id}"}
+              class="icon-btn sm prow-more"
+              aria-label={"Details for #{p.name}"}
+              title="Details"
+              aria-current={@selected && @selected.id == p.id && "true"}
+            >
+              <.icon name="hero-chevron-right" class="size-4" />
             </.link>
           </li>
         </ul>
@@ -343,20 +352,6 @@ defmodule BurrowWeb.ProjectLive.Index do
               </span>
             </div>
             <div class="flex items-center gap-2">
-              <.link
-                :if={@statuses[@selected.id] == :running}
-                id="open-workspace"
-                data-kb-key="e"
-                data-kb-label="Open workspace"
-                data-kb-group="Project"
-                href={~p"/projects/#{@selected.id}/open"}
-                class="btn btn-primary"
-              >
-                Open workspace
-              </.link>
-              <button :if={@statuses[@selected.id] != :running} class="btn btn-primary" disabled>
-                Open workspace
-              </button>
               <div :if={owner?} class="menuw" phx-click-away={@menu_open && "close_menu"}>
                 <button
                   id="project-menu-button"

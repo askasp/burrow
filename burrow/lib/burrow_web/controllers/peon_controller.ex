@@ -31,6 +31,7 @@ defmodule BurrowWeb.PeonController do
           })
         end,
       "rail_open" => scope.user.rail_open,
+      "theme" => scope.user.theme,
       "project" => %{
         "owner" => Projects.owner?(scope, project),
         "live_only" => Project.live_only?(project),
@@ -46,10 +47,15 @@ defmodule BurrowWeb.PeonController do
 
   defp teammates(_project), do: []
 
-  @doc "Remembers whether the rail shows project names."
-  def prefs(conn, %{"rail_open" => open?}) when is_boolean(open?) do
-    Accounts.put_rail_open(conn.assigns.scope.user, open?)
-    send_resp(conn, 204, "")
+  @doc "Remembers whether the rail shows project names, and the user's theme."
+  def prefs(conn, params) do
+    user = conn.assigns.scope.user
+    if is_boolean(params["rail_open"]), do: Accounts.put_rail_open(user, params["rail_open"])
+
+    case params["theme"] && Accounts.put_theme(user, params["theme"]) do
+      {:error, _} -> error(conn, "Pick system, light or dark.")
+      _ -> send_resp(conn, 204, "")
+    end
   end
 
   @doc "A new project from the workspace's dialog; answers where to open it."

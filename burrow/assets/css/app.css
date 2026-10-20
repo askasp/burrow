@@ -50,8 +50,10 @@
   --shadow: rgba(40, 25, 15, .10);
 }
 
+/* Dark: the device's choice unless the user pinned light, or pinned dark
+   (data-theme on <html>, the user's theme in Burrow) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #141210; --surface: #1B1816; --sunken: #0E0C0B; --raised: #24201D;
     --border: #2E2925; --border-strong: #433C36;
@@ -61,6 +63,16 @@
     --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
     --shadow: rgba(0, 0, 0, .45);
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141210; --surface: #1B1816; --sunken: #0E0C0B; --raised: #24201D;
+  --border: #2E2925; --border-strong: #433C36;
+  --text: #ECE8E3; --text-2: #B3AAA2; --text-3: #938A82;
+  --accent: #8FBF5A; --accent-ink: #16200B; --accent-text: #A7D278; --accent-soft: #222B19;
+  --rust: #E07A56;
+  --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
+  --shadow: rgba(0, 0, 0, .45);
 }
 
 body {
@@ -308,3 +320,14 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .dbar i { transition: none }
   .hp i { transition: none }
 }
+
+/* The theme switch in the header: system, light, dark */
+.theme-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px }
+.theme-switch button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); cursor: pointer }
+.theme-switch button:hover { color: var(--text) }
+.theme-switch button[aria-pressed="true"] { background: var(--sunken); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong) }
+.theme-switch button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px }
+
+/* A project row opens its workspace; this shows its details instead */
+.prow-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); color: var(--text-3) }
+.prow-more[aria-current="true"] { color: var(--text); border-color: var(--border-strong) }

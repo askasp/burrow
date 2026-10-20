@@ -19,7 +19,9 @@ defmodule BurrowWeb.ProjectController do
 
     case Cell.status(project.id) do
       status when status in [:running, :stopped] ->
-        redirect(conn, external: Projects.peon_url(project, scope.user.email, to))
+        redirect(conn,
+          external: Projects.peon_url(project, scope.user.email, to, scope.user.theme)
+        )
 
       status ->
         conn

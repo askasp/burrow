@@ -38,6 +38,20 @@ defmodule Burrow.Accounts do
     :ok
   end
 
+  @themes ~w(system light dark)
+
+  def themes, do: @themes
+
+  @doc "The user's theme: \"system\" follows the device, \"light\" or \"dark\" pin it."
+  def put_theme(%User{id: id}, theme) when theme in @themes do
+    Repo.update_all(from(u in User, where: u.id == ^id), set: [theme: theme])
+    # Every open workspace follows (its rail carries the theme).
+    Burrow.Activity.push()
+    :ok
+  end
+
+  def put_theme(_user, _theme), do: {:error, :unknown_theme}
+
   @doc """
   Gets a user by email and password.
 

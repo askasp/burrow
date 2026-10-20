@@ -9,6 +9,8 @@ defmodule Burrow.Accounts.User do
     # whether the workspace's project rail shows names
     field :last_project_id, :integer
     field :rail_open, :boolean, default: false
+    # "system", "light" or "dark", in Burrow and every Peon
+    field :theme, :string, default: "system"
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime

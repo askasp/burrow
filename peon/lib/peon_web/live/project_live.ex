@@ -127,6 +127,7 @@ defmodule PeonWeb.ProjectLive do
 
   def handle_async(:rail, {:ok, rail}, socket) do
     socket = assign(socket, rail: rail.projects, sharing: rail.project)
+    socket = if rail.theme, do: assign(socket, theme: rail.theme), else: socket
 
     # The user's choice, until they toggle it here
     if socket.assigns.rail_set?,
@@ -204,6 +205,14 @@ defmodule PeonWeb.ProjectLive do
     end)
 
     {:noreply, assign(socket, rail_open: open?, rail_set?: true)}
+  end
+
+  # System, light, dark, round again; saved in Burrow for every Peon.
+  def handle_event("theme", _params, socket) do
+    theme = %{"system" => "light", "light" => "dark"}[socket.assigns.theme] || "system"
+    user = socket.assigns.user
+    Task.Supervisor.start_child(Peon.TaskSupervisor, fn -> Peon.Burrow.put_theme(user, theme) end)
+    {:noreply, assign(socket, theme: theme)}
   end
 
   def handle_event("keep_running", %{"hours" => hours}, socket) do
@@ -709,7 +718,13 @@ defmodule PeonWeb.ProjectLive do
         phx-click={JS.remove_class("drawer", to: ".ws-root")}
       >
       </div>
-      <.rail rail={rail_items(@rail, @project, @tabs)} open={@rail_open} burrow={@burrow} />
+      <.rail
+        rail={rail_items(@rail, @project, @tabs)}
+        open={@rail_open}
+        burrow={@burrow}
+        theme={@theme}
+      />
+      <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
 
       <div class="ws-main">
         <.project_bar
@@ -905,6 +920,25 @@ defmodule PeonWeb.ProjectLive do
       <.secrets_dialog :if={@dialog == :secrets} secrets={@secrets} key={@secrets_key} />
     </div>
 
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Theme">
+      // The user's theme on <html>, kept in this Peon's session for the next load.
+      export default {
+        mounted() { this.apply() },
+        updated() { this.apply() },
+        apply() {
+          const theme = this.el.dataset.theme
+          const root = document.documentElement
+          if (root.dataset.theme === theme) return
+          root.dataset.theme = theme
+          const csrf = document.querySelector("meta[name='csrf-token']")?.content
+          fetch("/theme", {
+            method: "POST",
+            headers: {"x-csrf-token": csrf},
+            body: new URLSearchParams({theme})
+          })
+        }
+      }
+    </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
       export default {
         mounted() { this.el.scrollTop = this.el.scrollHeight },

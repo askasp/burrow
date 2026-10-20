@@ -74,6 +74,7 @@ defmodule BurrowWeb.Layouts do
                 AI login
               </.link>
             </nav>
+            <.theme_switch theme={@current_scope.user.theme} />
             <.link
               navigate={~p"/users/settings"}
               data-kb-go=","
@@ -102,6 +103,40 @@ defmodule BurrowWeb.Layouts do
     </div>
 
     <.flash_group flash={@flash} />
+    """
+  end
+
+  @doc "The signed-in user's theme for `<html data-theme>`; \"system\" follows the device."
+  def theme(assigns) do
+    case assigns[:current_scope] do
+      %{user: %{theme: theme}} -> theme
+      _ -> "system"
+    end
+  end
+
+  attr :theme, :string, required: true
+
+  @doc "System, light or dark, for Burrow and every Peon."
+  def theme_switch(assigns) do
+    ~H"""
+    <.form for={%{}} action={~p"/users/theme"} method="post" class="theme-switch" aria-label="Theme">
+      <button
+        :for={
+          {value, icon, label} <- [
+            {"system", "hero-computer-desktop", "System"},
+            {"light", "hero-sun", "Light"},
+            {"dark", "hero-moon", "Dark"}
+          ]
+        }
+        name="theme"
+        value={value}
+        aria-pressed={to_string(@theme == value)}
+        aria-label={"#{label} theme"}
+        title={"#{label} theme"}
+      >
+        <.icon name={icon} class="size-4" />
+      </button>
+    </.form>
     """
   end
 

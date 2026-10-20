@@ -55,8 +55,10 @@
   --shadow: rgba(40, 25, 15, .10);
 }
 
+/* Dark: the device's choice unless the user pinned light, or pinned dark
+   (data-theme on <html>, the user's theme in Burrow) */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg: #141210; --surface: #1B1816; --sunken: #0E0C0B; --raised: #24201D;
     --border: #2E2925; --border-strong: #433C36;
@@ -66,6 +68,16 @@
     --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
     --shadow: rgba(0, 0, 0, .45);
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141210; --surface: #1B1816; --sunken: #0E0C0B; --raised: #24201D;
+  --border: #2E2925; --border-strong: #433C36;
+  --text: #ECE8E3; --text-2: #B3AAA2; --text-3: #938A82;
+  --accent: #8FBF5A; --accent-ink: #16200B; --accent-text: #A7D278; --accent-soft: #222B19;
+  --rust: #E07A56;
+  --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
+  --shadow: rgba(0, 0, 0, .45);
 }
 
 body {
@@ -224,7 +236,8 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 /* ---- Peon workspace: the Peon UI kit's "4 · Peon: home" board ---- */
 
 :root { --rust-soft: #F2DDD4 }
-@media (prefers-color-scheme: dark) { :root { --rust-soft: #38221B } }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --rust-soft: #38221B } }
+:root[data-theme="dark"] { --rust-soft: #38221B }
 
 .ws-root { height: 100vh; height: 100dvh; display: flex; overflow: hidden; background: var(--bg) }
 .ws-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column }

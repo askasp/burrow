@@ -32,6 +32,8 @@ defmodule PeonWeb.Router do
       live "/", ProjectLive, :index
       live "/c/:id", ProjectLive, :conversation
     end
+
+    post "/theme", SSOController, :theme
   end
 
   # Burrow, with the token it shares with this Peon.

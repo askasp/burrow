@@ -13,6 +13,7 @@ defmodule PeonWeb.SSOController do
         conn
         |> configure_session(renew: true)
         |> put_session(:peon_user, email)
+        |> put_theme(params["theme"])
         |> redirect(to: to)
 
       _ ->
@@ -25,4 +26,16 @@ defmodule PeonWeb.SSOController do
   def show(conn, _params) do
     conn |> put_status(401) |> text("Open this project from Burrow to sign in.")
   end
+
+  # The user's theme from Burrow, for `<html data-theme>`.
+  defp put_theme(conn, theme) when theme in ~w(system light dark),
+    do: put_session(conn, :theme, theme)
+
+  defp put_theme(conn, _theme), do: conn
+
+  @doc "The workspace keeps the theme for the next page load, when it changed meanwhile."
+  def theme(conn, %{"theme" => theme}) when theme in ~w(system light dark),
+    do: conn |> put_session(:theme, theme) |> send_resp(204, "")
+
+  def theme(conn, _params), do: send_resp(conn, 422, "")
 end

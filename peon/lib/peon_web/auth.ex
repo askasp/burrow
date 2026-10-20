@@ -37,8 +37,11 @@ defmodule PeonWeb.Auth do
 
   def on_mount(:default, _params, session, socket) do
     case session["peon_user"] do
-      nil -> {:halt, Phoenix.LiveView.redirect(socket, to: "/sso")}
-      user -> {:cont, Phoenix.Component.assign(socket, :user, user)}
+      nil ->
+        {:halt, Phoenix.LiveView.redirect(socket, to: "/sso")}
+
+      user ->
+        {:cont, Phoenix.Component.assign(socket, user: user, theme: session["theme"] || "system")}
     end
   end
 end

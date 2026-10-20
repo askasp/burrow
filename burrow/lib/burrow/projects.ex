@@ -228,10 +228,14 @@ defmodule Burrow.Projects do
     end
   end
 
-  @doc "A short-lived link that signs the user into the project's Peon, then opens `to` there."
-  def peon_url(project, email, to \\ nil) do
+  @doc """
+  A short-lived link that signs the user into the project's Peon, then opens
+  `to` there, in the user's `theme`.
+  """
+  def peon_url(project, email, to \\ nil, theme \\ nil) do
     token = Phoenix.Token.sign(secret(project, "sso"), "peon sso", email)
-    query = URI.encode_query(Enum.reject([token: token, to: to], &(elem(&1, 1) == nil)))
+    params = [token: token, to: to, theme: theme]
+    query = URI.encode_query(Enum.reject(params, &(elem(&1, 1) == nil)))
     Burrow.Ports.url(project.port) <> "/sso?" <> query
   end
 end

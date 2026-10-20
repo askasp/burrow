@@ -14,6 +14,7 @@ defmodule PeonWeb.ProjectLive.Components do
   attr :rail, :list, required: true
   attr :open, :boolean, required: true
   attr :burrow, :string, doc: "Burrow's project list, nil without Burrow"
+  attr :theme, :string, required: true
 
   @doc """
   Every project the user can open, a tile each with a health bar along its
@@ -75,6 +76,17 @@ defmodule PeonWeb.ProjectLive.Components do
         </a>
         <button
           type="button"
+          class="rbtn"
+          phx-click="theme"
+          title={"Theme: #{theme_name(@theme)}. Click for #{theme_name(next_theme(@theme))}."}
+          aria-label={"Theme: #{theme_name(@theme)}"}
+        >
+          <.icon name={theme_icon(@theme)} class="size-[18px] shrink-0" /><span class="rt">{theme_name(
+            @theme
+          )}</span>
+        </button>
+        <button
+          type="button"
           class="rbtn rcollapse"
           phx-click="toggle_rail"
           aria-expanded={to_string(@open)}
@@ -93,6 +105,18 @@ defmodule PeonWeb.ProjectLive.Components do
     </nav>
     """
   end
+
+  defp theme_name("light"), do: "Light"
+  defp theme_name("dark"), do: "Dark"
+  defp theme_name(_), do: "System theme"
+
+  defp theme_icon("light"), do: "hero-sun"
+  defp theme_icon("dark"), do: "hero-moon"
+  defp theme_icon(_), do: "hero-computer-desktop"
+
+  defp next_theme("system"), do: "light"
+  defp next_theme("light"), do: "dark"
+  defp next_theme(_), do: "system"
 
   defp initial(name), do: name |> to_string() |> String.first() |> to_string() |> String.upcase()
 

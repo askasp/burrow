@@ -17,7 +17,7 @@ defmodule Peon.Burrow do
 
   @doc """
   `%{projects: [%{id, name, slug, url, current, state, label, pct}],
-  rail_open, project}`, `project` being this one's sharing:
+  rail_open, theme, project}`, `project` being this one's sharing:
   `%{owner?, live_only?, team, teams, teammates}`.
   """
   def rail(email) do
@@ -26,11 +26,12 @@ defmodule Peon.Burrow do
         %{
           projects: Enum.map(projects, &project/1),
           rail_open: body["rail_open"] == true,
+          theme: if(body["theme"] in ~w(system light dark), do: body["theme"]),
           project: sharing(body["project"] || %{})
         }
 
       _ ->
-        %{projects: [], rail_open: false, project: nil}
+        %{projects: [], rail_open: false, theme: nil, project: nil}
     end
   end
 
@@ -60,6 +61,9 @@ defmodule Peon.Burrow do
   @doc "Remembers, in Burrow, whether `email`'s rail shows project names."
   def put_rail_open(email, open?),
     do: post("/prefs", %{email: email, rail_open: open?})
+
+  @doc "Sets `email`'s theme in Burrow: \"system\", \"light\" or \"dark\"."
+  def put_theme(email, theme), do: post("/prefs", %{email: email, theme: theme})
 
   @doc "Creates a project for `email`; `{:ok, url}` opens it."
   def create_project(email, attrs) do

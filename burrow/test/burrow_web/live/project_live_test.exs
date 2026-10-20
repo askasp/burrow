@@ -122,13 +122,22 @@ defmodule BurrowWeb.ProjectLiveTest do
       %{project: project}
     end
 
-    test "opens in its workspace once its Peon runs", %{conn: conn, project: project} do
-      {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
-      assert has_element?(lv, "button[disabled]", "Open workspace")
+    test "its row opens its workspace; the arrow shows its details", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, lv, _html} = live(conn, ~p"/projects")
 
-      running!(project)
-      assert has_element?(lv, "#open-workspace[href='/projects/#{project.id}/open']")
-      refute has_element?(lv, "#open-workspace[target]")
+      assert has_element?(
+               lv,
+               "#project-#{project.id} a.prow[href='/projects/#{project.id}/open']"
+             )
+
+      refute has_element?(lv, "#open-workspace")
+
+      lv |> element("#project-#{project.id} .prow-more") |> render_click()
+      assert_patch(lv, ~p"/projects?p=#{project.id}")
+      assert has_element?(lv, "#selected-project #restart-peon")
     end
 
     test "add staging and prod turns it into a pipeline project", %{conn: conn, project: project} do

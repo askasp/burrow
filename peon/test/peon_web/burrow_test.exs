@@ -201,6 +201,43 @@ defmodule PeonWeb.BurrowTest do
     assert Peon.Project.settings()["envs"] == "pipeline"
   end
 
+  test "the theme comes from Burrow and the rail's button sets it there", %{conn: conn} do
+    parent = self()
+
+    Req.Test.stub(Peon.Burrow, fn
+      %{method: "GET"} = conn ->
+        Req.Test.json(conn, Map.put(rail(), "theme", "dark"))
+
+      conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(parent, {conn.request_path, JSON.decode!(body)})
+        Plug.Conn.send_resp(conn, 204, "")
+    end)
+
+    {:ok, view, _html} = open(conn)
+    render_async(view)
+    assert has_element?(view, "#theme[data-theme=dark]")
+
+    # dark -> system -> light
+    view |> element("button[phx-click=theme]") |> render_click()
+    assert has_element?(view, "#theme[data-theme=system]")
+    assert_receive {"/api/peon/7/prefs", %{"email" => "dev", "theme" => "system"}}
+  end
+
+  test "signing in from Burrow keeps the user's theme for every page" do
+    Application.put_env(:peon, :sso_secret, "sso-secret-at-least-twenty-bytes-long-0123456789")
+    on_exit(fn -> Application.delete_env(:peon, :sso_secret) end)
+    Req.Test.stub(Peon.Burrow, &Plug.Conn.send_resp(&1, 503, ""))
+
+    token =
+      Phoenix.Token.sign("sso-secret-at-least-twenty-bytes-long-0123456789", "peon sso", "a@b")
+
+    conn = get(build_conn(), ~p"/sso?#{[token: token, theme: "light"]}")
+    conn = conn |> recycle() |> get(redirected_to(conn))
+    conn = conn |> recycle() |> get(redirected_to(conn))
+    assert html_response(conn, 200) =~ ~s(data-theme="light")
+  end
+
   test "signing in from Burrow can open a chat, and only a chat" do
     Application.put_env(:peon, :sso_secret, "sso-secret-at-least-twenty-bytes-long-0123456789")
     on_exit(fn -> Application.delete_env(:peon, :sso_secret) end)

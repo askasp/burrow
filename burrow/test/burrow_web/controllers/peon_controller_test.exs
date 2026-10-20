@@ -113,4 +113,38 @@ defmodule BurrowWeb.PeonControllerTest do
     assert log_in_user(build_conn(), user) |> get(~p"/") |> redirected_to() ==
              ~p"/projects/#{project.id}/open"
   end
+
+  test "the theme: set in Burrow's header, pinned on every page, passed to Peon", %{
+    user: user,
+    project: project
+  } do
+    conn = log_in_user(build_conn(), user)
+    assert get(conn, ~p"/projects") |> html_response(200) =~ ~s(data-theme="system")
+
+    conn =
+      conn
+      |> put_req_header("referer", "http://localhost/teams")
+      |> post(~p"/users/theme", %{theme: "dark"})
+
+    assert redirected_to(conn) == "/teams"
+    assert Accounts.get_user!(user.id).theme == "dark"
+
+    conn = log_in_user(build_conn(), Accounts.get_user!(user.id))
+    assert get(conn, ~p"/projects") |> html_response(200) =~ ~s(data-theme="dark")
+    assert get(conn, ~p"/projects/#{project.id}/open") |> redirected_to() =~ "theme=dark"
+
+    # From a workspace, through its Peon
+    assert peon(project)
+           |> post(~p"/api/peon/#{project.id}/prefs", %{email: user.email, theme: "light"})
+           |> response(204)
+
+    assert %{"theme" => "light"} =
+             peon(project)
+             |> get(~p"/api/peon/#{project.id}/projects?email=#{user.email}")
+             |> json_response(200)
+
+    assert peon(project)
+           |> post(~p"/api/peon/#{project.id}/prefs", %{email: user.email, theme: "pink"})
+           |> json_response(422)
+  end
 end

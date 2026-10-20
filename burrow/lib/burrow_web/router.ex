@@ -69,6 +69,7 @@ defmodule BurrowWeb.Router do
     end
 
     post "/users/update-password", UserSessionController, :update_password
+    post "/users/theme", ThemeController, :update
   end
 
   scope "/", BurrowWeb do
