@@ -12,10 +12,11 @@ defmodule Peon.Agent.MCP do
 
   @doc "Where Peon serves MCP (`Peon.Agent.MCP.Plug`); mounted into agent containers."
   def socket_path(instance \\ Peon.Instance.current!()),
-    do: Path.join(instance.data_dir, "mcp.sock")
+    do: Path.join(Peon.Instance.socket_dir(instance.data_dir), "mcp.sock")
 
   @doc "Bandit child serving the instance's MCP on its Unix socket."
   def child_spec(instance) do
+    File.mkdir_p!(Path.dirname(socket_path(instance)))
     File.rm(socket_path(instance))
 
     Bandit.child_spec(

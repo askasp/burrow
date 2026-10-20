@@ -139,6 +139,20 @@ defmodule Peon.Instance do
   def broadcast(name, message), do: Phoenix.PubSub.broadcast(Peon.PubSub, topic(name), message)
 
   @doc """
+  A directory for Unix sockets: `dir`, unless a socket in it could pass the
+  107 bytes a socket's path may have; then one in the temp dir, the same for
+  the same `dir`.
+  """
+  def socket_dir(dir) do
+    if byte_size(dir) <= 96 do
+      dir
+    else
+      hash = :crypto.hash(:sha, dir) |> Base.url_encode64(padding: false) |> binary_part(0, 16)
+      Path.join(System.tmp_dir!(), "peon-" <> hash)
+    end
+  end
+
+  @doc """
   The topic every instance reports its project's activity on, for Burrow's
   project rail: `{:activity, id, activity}` (`Peon.Activity`).
   """

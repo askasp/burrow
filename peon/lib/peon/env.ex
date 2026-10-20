@@ -599,19 +599,8 @@ defmodule Peon.Env do
 
   # The socket the probe dials, in a directory mounted into the container:
   # the directory, not the file, so a socket made again after a Peon restart
-  # is the one the container sees. A socket's path has at most 107 bytes;
-  # a data dir too deep for that gets one in the temp dir.
-  defp sock_dir(base) do
-    dir = Path.join(base, "sock")
-
-    if byte_size(dir) <= 100,
-      do: dir,
-      else:
-        Path.join(
-          System.tmp_dir!(),
-          "peon-" <> Base.url_encode64(:crypto.hash(:sha, dir), padding: false)
-        )
-  end
+  # is the one the container sees.
+  defp sock_dir(base), do: Peon.Instance.socket_dir(Path.join(base, "sock"))
 
   defp listen(state) do
     File.mkdir_p!(state.sock)
