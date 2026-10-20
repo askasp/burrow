@@ -97,28 +97,6 @@ defmodule Peon.Sandbox do
     :ok
   end
 
-  @doc """
-  Runs `args` inside a running container and returns a Port connected to its
-  stdin and stdout, delivering output line by line (`{:eol, line}`).
-  """
-  def exec_port(name, args) do
-    Port.open({:spawn_executable, System.find_executable("docker")}, [
-      :binary,
-      :exit_status,
-      :stderr_to_stdout,
-      {:line, 1_048_576},
-      args: ["exec", "-i", name | args]
-    ])
-  end
-
-  @doc "Copies a host file into a running container."
-  def copy_in(name, source, dest) do
-    case System.cmd("docker", ["cp", source, "#{name}:#{dest}"], stderr_to_stdout: true) do
-      {_, 0} -> :ok
-      {output, _} -> {:error, output}
-    end
-  end
-
   @doc "Returns a Port following a running container's output from now on."
   def follow_logs(name) do
     Port.open({:spawn_executable, System.find_executable("docker")}, [

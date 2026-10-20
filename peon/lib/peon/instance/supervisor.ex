@@ -19,17 +19,28 @@ defmodule Peon.Instance.Supervisor do
     # Children start from this process; they see the instance from here.
     Instance.put(instance)
     File.mkdir_p!(instance.data_dir)
+    database = Path.join(instance.data_dir, "peon.db")
+    create_database(database)
 
     children =
       [
-        {Peon.Repo,
-         name: instance.db, database: Path.join(instance.data_dir, "peon.db"), pool_size: 5},
+        {Peon.Repo, name: instance.db, database: database, pool_size: 5},
         %{id: :migrate, start: {__MODULE__, :migrate, [instance]}},
         {DynamicSupervisor, name: Instance.via(:chats), strategy: :one_for_one},
         {Peon.Store, instance}
       ] ++ workers(instance) ++ [ready(instance)]
 
     Supervisor.init(children, strategy: :rest_for_one)
+  end
+
+  # A new database is put in WAL mode by one connection first; the pool's
+  # connections racing to do it find it locked.
+  defp create_database(path) do
+    unless File.exists?(path) do
+      {:ok, conn} = Exqlite.Sqlite3.open(path)
+      :ok = Exqlite.Sqlite3.execute(conn, "PRAGMA journal_mode = WAL")
+      :ok = Exqlite.Sqlite3.close(conn)
+    end
   end
 
   @doc false

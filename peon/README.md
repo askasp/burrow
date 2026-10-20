@@ -1,18 +1,13 @@
 # Peon
 
-To start your Phoenix server:
+The engine behind each Burrow project: its code store, policy, sandboxed
+checks, chats (an opencode agent and a dev preview per chat) and its staging
+and prod environments. Burrow runs one `Peon.Instance` per project inside its
+own BEAM and draws the workspace; Peon has no web layer of its own.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+* `Peon.Instance` - one project's tree, its database and names
+* `Peon.Store`, `Peon.Checks`, `Peon.Verifier`, `Peon.Ship` - from a chat's changeset to main
+* `Peon.Chat` - one chat's workspace, agent and preview containers
+* `Peon.Env` - staging and prod, with `priv/probe.exs` in the app's own node
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
-
-Ready to run in production? Please [check our deployment guides](https://phoenix.hexdocs.pm/deployment.html).
-
-## Learn more
-
-* Official website: https://www.phoenixframework.org/
-* Guides: https://phoenix.hexdocs.pm/overview.html
-* Docs: https://phoenix.hexdocs.pm
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+Run the tests with `mix test` (Docker is needed for none of them).

@@ -1,13 +1,14 @@
 defmodule Peon.Env do
   @moduledoc """
   A running environment of the app, "staging" or "prod": a long-lived
-  container running the app in prod mode as a distributed node, plus Peon's
-  attacher (`priv/attacher.exs`), a hidden node connected to it that Peon
-  talks to over stdin/stdout.
+  container running the app in prod mode. Peon's probe (`priv/probe.exs`)
+  runs inside the app's own node, loaded when the container starts, and
+  dials this process on a Unix socket mounted into the container; nothing
+  runs beside the app.
 
   The env's ref is the desired state. When it moves, the env deploys it:
 
-    * hot when only app code changed: the attacher recompiles inside the
+    * hot when only app code changed: the probe recompiles inside the
       running node, rebuilds assets and runs new migrations, so processes,
       sockets and LiveView sessions survive
     * cold (container restart) when a restart path changed (mix.exs, config,
@@ -21,11 +22,12 @@ defmodule Peon.Env do
   human promotes a healthy staging changeset, or by itself when a human set
   the project's `"auto_promote"` to true.
 
-  Errors the app logs at any time arrive from the attacher and become
+  Errors the app logs at any time arrive from the probe and become
   incidents (`Peon.Incidents`). The container outlives Peon restarts: a new
-  Peon adopts it when it still runs the ref's changeset.
+  Peon adopts it when it still runs the ref's changeset, and its probe dials
+  the new Peon. A probe older than this Peon's is replaced over the socket.
 
-  The attacher also reports the app's usage: requests, LiveView sessions and
+  The probe also reports the app's usage: requests, LiveView sessions and
   visitors (`Peon.Env.Usage`).
 
   Broadcasts `{:env, name, info}` on topic `"envs"`.
@@ -134,7 +136,10 @@ defmodule Peon.Env do
       secret_key_base: secret(base, "secret_key_base", 48),
       app: nil,
       app_status: :stopped,
-      attacher: nil,
+      # The probe's connection, on the socket in `sock`
+      sock: sock_dir(base),
+      listener: nil,
+      probe: nil,
       attached?: false,
       requests: %{},
       next_id: 1,
@@ -152,7 +157,7 @@ defmodule Peon.Env do
       usage: Peon.Env.Usage.new()
     }
 
-    {:ok, state, {:continue, :boot}}
+    {:ok, listen(state), {:continue, :boot}}
   end
 
   @impl true
@@ -168,8 +173,10 @@ defmodule Peon.Env do
         env = Sandbox.running?(state.container) && Sandbox.env(state.container)
         secrets = env && (env["PEON_SECRETS"] || Secrets.fingerprint(%{}))
 
+        # Nor one started before the probe was (with the attacher instead).
         if state.deployed == id and env != false and
              env["PHX_HOST"] == Peon.Ports.host(state.port) and
+             env["PEON_PROBE_SOCKET"] != nil and
              secrets == Secrets.fingerprint() do
           Logger.info("#{state.name}: adopting the running container at ##{id}")
           app = Sandbox.follow_logs(state.container)
@@ -182,7 +189,7 @@ defmodule Peon.Env do
               secrets: secrets
           }
 
-          {:noreply, state |> start_attacher() |> broadcast()}
+          {:noreply, broadcast(state)}
         else
           {:noreply, start_deploy(state, id, [])}
         end
@@ -236,12 +243,12 @@ defmodule Peon.Env do
     state = append_logs(state, data)
 
     if state.app_status == :booting and data =~ "Running " and data =~ "Endpoint with",
-      do: {:noreply, %{state | app_status: :running} |> start_attacher() |> broadcast()},
+      do: {:noreply, broadcast(%{state | app_status: :running})},
       else: {:noreply, state}
   end
 
   def handle_info({port, {:exit_status, code}}, %{app: port} = state) do
-    state = stop_attacher(%{state | app: nil, app_status: {:crashed, code}})
+    state = drop_probe(%{state | app: nil, app_status: {:crashed, code}})
     reason = "the app exited with status #{code}:\n\n#{log_tail(state, 40)}"
 
     if state.deploy do
@@ -264,23 +271,25 @@ defmodule Peon.Env do
 
   def handle_info(:revive, state), do: {:noreply, state}
 
-  # The attacher's output: protocol lines, and anything the app printed for it.
-  def handle_info({port, {:data, {:eol, "@@peon " <> json}}}, %{attacher: port} = state),
-    do: {:noreply, attacher_message(state, Jason.decode!(json))}
-
-  def handle_info({port, {:data, {_eol, line}}}, %{attacher: port} = state),
-    do: {:noreply, append_logs(state, line)}
-
-  def handle_info({port, {:exit_status, _code}}, %{attacher: port} = state) do
-    state = fail_requests(%{state | attacher: nil, attached?: false})
-    if state.app_status == :running, do: Process.send_after(self(), :reattach, 3_000)
-    {:noreply, broadcast(state)}
+  # The probe dialed in (`accept/2`); a new connection replaces an old one.
+  def handle_info({:probe, conn}, state) do
+    state = drop_probe(state)
+    :ok = :inet.setopts(conn, active: true)
+    {:noreply, %{state | probe: conn}}
   end
 
-  def handle_info(:reattach, %{attacher: nil, app_status: :running} = state),
-    do: {:noreply, start_attacher(state)}
+  def handle_info({:tcp, conn, data}, %{probe: conn} = state) do
+    case Jason.decode(data) do
+      {:ok, message} -> {:noreply, probe_message(state, message)}
+      {:error, _} -> {:noreply, state}
+    end
+  end
 
-  def handle_info(:reattach, state), do: {:noreply, state}
+  def handle_info({:tcp_closed, conn}, %{probe: conn} = state),
+    do: {:noreply, broadcast(drop_probe(state))}
+
+  def handle_info({:tcp_error, conn, _reason}, %{probe: conn} = state),
+    do: {:noreply, broadcast(drop_probe(state))}
 
   def handle_info({:health, id}, %{deploy: %{record: %{id: id}, phase: :watching}} = state),
     do: {:noreply, health_check(state)}
@@ -360,15 +369,16 @@ defmodule Peon.Env do
   end
 
   defp boot(state) do
-    state = stop_attacher(state)
+    state = drop_probe(state)
 
     secrets = Secrets.env()
 
+    # The probe comes in with the app's own node (`-r`).
     script =
       Sandbox.unlock_deps() <>
         "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
         "mix ecto.migrate && " <>
-        ~s(exec elixir --sname app --cookie "$PEON_COOKIE" -S mix phx.server)
+        ~s(exec elixir --sname app --cookie "$PEON_COOKIE" -r /peon/probe.exs -S mix phx.server)
 
     app =
       Sandbox.start(state.dir, script,
@@ -384,9 +394,16 @@ defmodule Peon.Env do
             "PORT" => "4000",
             "PEON_COOKIE" => state.cookie,
             "PEON_SECRETS" => Secrets.fingerprint(secrets),
-            "FRAME_ANCESTORS" => frame_ancestors()
+            "FRAME_ANCESTORS" => frame_ancestors(),
+            "PEON_PROBE_SOCKET" => "/peon/sock/p",
+            "PEON_OTP_APP" => state.otp_app,
+            "PEON_ENDPOINT" => state.endpoint
           }),
-        mounts: [{Path.join(state.base, "data"), "/data", :rw}],
+        mounts: [
+          {Path.join(state.base, "data"), "/data", :rw},
+          {probe_file(), "/peon/probe.exs", :ro},
+          {state.sock, "/peon/sock", :rw}
+        ],
         ports: [{state.port, 4000}]
       )
 
@@ -578,56 +595,86 @@ defmodule Peon.Env do
 
   defp phase(%{deploy: deploy} = state, phase), do: %{state | deploy: %{deploy | phase: phase}}
 
-  ## Attacher
+  ## Probe
 
-  # The script is copied in on every start, so a container that outlived a Peon
-  # upgrade (adopted) still runs the new Peon's attacher.
-  defp start_attacher(state) do
-    script = Application.app_dir(:peon, "priv/attacher.exs")
+  # The socket the probe dials, in a directory mounted into the container:
+  # the directory, not the file, so a socket made again after a Peon restart
+  # is the one the container sees. A socket's path has at most 107 bytes;
+  # a data dir too deep for that gets one in the temp dir.
+  defp sock_dir(base) do
+    dir = Path.join(base, "sock")
 
-    case Sandbox.copy_in(state.container, script, "/tmp/peon-attacher.exs") do
-      :ok ->
-        %{
-          state
-          | attacher: Sandbox.exec_port(state.container, attacher_args(state)),
-            attached?: false
-        }
+    if byte_size(dir) <= 100,
+      do: dir,
+      else:
+        Path.join(
+          System.tmp_dir!(),
+          "peon-" <> Base.url_encode64(:crypto.hash(:sha, dir), padding: false)
+        )
+  end
 
-      {:error, output} ->
-        Logger.warning("#{state.name}: could not copy the attacher in: #{output}")
-        Process.send_after(self(), :reattach, 3_000)
-        state
+  defp listen(state) do
+    File.mkdir_p!(state.sock)
+    path = Path.join(state.sock, "p")
+    File.rm(path)
+
+    {:ok, listener} =
+      :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, packet: 4, active: false])
+
+    env = self()
+    Task.start_link(fn -> accept(listener, env) end)
+    %{state | listener: listener}
+  end
+
+  defp accept(listener, env) do
+    case :gen_tcp.accept(listener) do
+      {:ok, conn} ->
+        :ok = :gen_tcp.controlling_process(conn, env)
+        send(env, {:probe, conn})
+        accept(listener, env)
+
+      {:error, :closed} ->
+        :ok
     end
   end
 
-  defp attacher_args(state) do
-    [
-      "elixir",
-      "--sname",
-      "attacher#{System.unique_integer([:positive])}",
-      "--cookie",
-      state.cookie,
-      "--hidden",
-      "/tmp/peon-attacher.exs",
-      "app@app",
-      state.otp_app,
-      state.endpoint
-    ]
+  defp drop_probe(%{probe: nil} = state), do: state
+
+  defp drop_probe(state) do
+    :gen_tcp.close(state.probe)
+    fail_requests(%{state | probe: nil, attached?: false})
   end
 
-  defp stop_attacher(%{attacher: nil} = state), do: state
+  @doc false
+  def probe_file, do: Application.app_dir(:peon, "priv/probe.exs")
 
-  defp stop_attacher(state) do
-    try do
-      Port.close(state.attacher)
-    rescue
-      ArgumentError -> :ok
+  @doc false
+  # The probe's version this Peon has (its `@version`).
+  def probe_version do
+    case :persistent_term.get({__MODULE__, :probe_version}, nil) do
+      nil ->
+        [_, version] = Regex.run(~r/@version (\d+)/, File.read!(probe_file()))
+        version = String.to_integer(version)
+        :persistent_term.put({__MODULE__, :probe_version}, version)
+        version
+
+      version ->
+        version
     end
-
-    fail_requests(%{state | attacher: nil, attached?: false})
   end
 
-  defp attacher_message(state, %{"event" => "connected"}) do
+  # An older probe (a container that outlived a Peon upgrade) gets this one.
+  defp probe_message(state, %{"event" => "connected", "version" => version})
+       when version != nil do
+    if version == probe_version() do
+      probe_message(state, %{"event" => "connected"})
+    else
+      Logger.info("#{state.name}: upgrading the probe from #{version} to #{probe_version()}")
+      request(state, %{"cmd" => "upgrade", "source" => File.read!(probe_file())}, nil)
+    end
+  end
+
+  defp probe_message(state, %{"event" => "connected"}) do
     state = %{state | attached?: true}
 
     case state.deploy do
@@ -636,12 +683,12 @@ defmodule Peon.Env do
     end
   end
 
-  defp attacher_message(state, %{"event" => "stats", "stats" => stats}) do
+  defp probe_message(state, %{"event" => "stats", "stats" => stats}) do
     usage = Usage.add(state.usage, stats["usage"] || %{}, System.os_time(:second))
     broadcast(%{state | stats: Map.delete(stats, "usage"), usage: usage})
   end
 
-  defp attacher_message(state, %{"event" => "error"} = error) do
+  defp probe_message(state, %{"event" => "error"} = error) do
     error = Map.put(error, "at", DateTime.utc_now(:second))
 
     state = %{
@@ -667,12 +714,12 @@ defmodule Peon.Env do
     end
   end
 
-  defp attacher_message(state, %{"reply" => id} = reply) do
+  defp probe_message(state, %{"reply" => id} = reply) do
     {tag, requests} = Map.pop(state.requests, id)
     reply_to(%{state | requests: requests}, tag, reply)
   end
 
-  defp attacher_message(state, _message), do: state
+  defp probe_message(state, _message), do: state
 
   defp reply_to(state, :deploy, %{"ok" => true, "result" => %{"compile" => compile} = result})
        when compile != "error" do
@@ -701,18 +748,18 @@ defmodule Peon.Env do
 
   defp reply_to(state, nil, _reply), do: state
 
-  defp request(%{attacher: nil} = state, _payload, tag),
-    do: reply_to(state, tag, %{"ok" => false, "error" => "the attacher is not connected"})
+  defp request(%{probe: nil} = state, _payload, tag),
+    do: reply_to(state, tag, %{"ok" => false, "error" => "the probe is not connected"})
 
   defp request(state, payload, tag) do
     id = state.next_id
-    Port.command(state.attacher, Jason.encode!(Map.put(payload, "id", id)) <> "\n")
+    :gen_tcp.send(state.probe, Jason.encode!(Map.put(payload, "id", id)))
     %{state | next_id: id + 1, requests: Map.put(state.requests, id, tag)}
   end
 
   defp fail_requests(state) do
     Enum.reduce(state.requests, %{state | requests: %{}}, fn {_id, tag}, state ->
-      reply_to(state, tag, %{"ok" => false, "error" => "the attacher disconnected"})
+      reply_to(state, tag, %{"ok" => false, "error" => "the probe disconnected"})
     end)
   end
 
