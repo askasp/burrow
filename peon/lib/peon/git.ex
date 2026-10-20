@@ -46,7 +46,7 @@ defmodule Peon.Git do
   starting together don't clone twice.
   """
   def sync do
-    :global.trans({__MODULE__, Peon.Instance.fetch!(:id)}, fn ->
+    :global.trans({{__MODULE__, Peon.Instance.fetch!(:id)}, self()}, fn ->
       dir = mirror_dir()
 
       if File.dir?(dir) do

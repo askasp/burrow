@@ -57,7 +57,7 @@ defmodule Peon.Instance.Supervisor do
   # The migration modules, compiled once for every instance in this BEAM
   # (compiling them again redefines them).
   defp migrations do
-    :global.trans({__MODULE__, :migrations}, fn ->
+    :global.trans({{__MODULE__, :migrations}, self()}, fn ->
       with nil <- :persistent_term.get({__MODULE__, :migrations}, nil) do
         dir = Ecto.Migrator.migrations_path(Peon.Repo)
 
