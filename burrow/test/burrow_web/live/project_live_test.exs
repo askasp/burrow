@@ -16,14 +16,15 @@ defmodule BurrowWeb.ProjectLiveTest do
 
   test "creates a project and shows the slug it gets", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
-    # With no projects yet the form is open.
-    refute has_element?(lv, "#new-project")
+    # With no projects yet the dialog is open.
+    assert has_element?(lv, "#new-project-dialog #project_form")
 
     assert lv |> form("#project_form", project: %{name: "Sauna Booking"}) |> render_change() =~
              "slug: sauna_booking"
 
     lv |> form("#project_form", project: %{name: "Sauna Booking"}) |> render_submit()
     assert has_element?(lv, "#selected-project h2", "Sauna Booking")
+    refute has_element?(lv, "#new-project-dialog")
     assert has_element?(lv, "#project-meta", "sauna_booking · live")
     refute has_element?(lv, "#project_form")
 

@@ -1157,55 +1157,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   ## Dialogs
 
-  attr :id, :string, required: true
-  attr :title, :string, required: true
-  attr :return_to, :string, default: nil, doc: "the element that gets focus back"
-  slot :inner_block, required: true
-
-  @doc """
-  A modal: Esc, the scrim and Cancel close it (`"close_dialog"`), and focus
-  goes back to `return_to`.
-  """
-  def modal(assigns) do
-    ~H"""
-    <div id={@id} class="ovl" phx-hook=".Modal" data-return-focus={@return_to}>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby={"#{@id}-title"}>
-        <h2 id={"#{@id}-title"} class="m-0 text-lg font-semibold">{@title}</h2>
-        {render_slot(@inner_block)}
-      </div>
-    </div>
-    <script :type={Phoenix.LiveView.ColocatedHook} name=".Modal">
-      export default {
-        mounted() {
-          this.returnTo = this.el.dataset.returnFocus
-          this.el.addEventListener("mousedown", e => {
-            if (e.target === this.el) this.pushEvent("close_dialog", {})
-          })
-          this.el.addEventListener("keydown", e => {
-            if (e.key === "Escape") { e.preventDefault(); this.pushEvent("close_dialog", {}) }
-            if (e.key !== "Tab") return
-            // Focus stays in the dialog
-            const all = [...this.el.querySelectorAll("a[href], button:not([disabled]), input, select, textarea")]
-              .filter(el => el.offsetParent !== null)
-            if (!all.length) return
-            const [first, last] = [all[0], all[all.length - 1]]
-            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
-            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
-          })
-          if (!this.el.contains(document.activeElement)) {
-            const first = this.el.querySelector("input, select, button")
-            if (first) first.focus()
-          }
-        },
-        destroyed() {
-          const el = this.returnTo && document.getElementById(this.returnTo)
-          if (el) el.focus()
-        }
-      }
-    </script>
-    """
-  end
-
   attr :p, :map, required: true
   attr :teams, :list, required: true
   attr :creating, :boolean, required: true

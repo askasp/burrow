@@ -84,6 +84,9 @@ defmodule BurrowWeb.ProjectLive.Index do
   @impl true
   def handle_event("new_project", _params, socket), do: {:noreply, assign(socket, creating: true)}
 
+  def handle_event("close_dialog", _params, socket),
+    do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil)}
+
   def handle_event("cancel_new", _params, socket),
     do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil)}
 
@@ -215,7 +218,6 @@ defmodule BurrowWeb.ProjectLive.Index do
       <div class="flex items-center justify-between gap-5 flex-wrap">
         <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Projects</h1>
         <button
-          :if={!@creating}
           id="new-project"
           type="button"
           phx-click="new_project"
@@ -228,83 +230,83 @@ defmodule BurrowWeb.ProjectLive.Index do
         </button>
       </div>
 
-      <.form
-        :if={@creating}
-        for={@form}
-        id="project_form"
-        phx-change="validate"
-        phx-submit="create"
-        class="panel flex gap-2 items-start flex-wrap"
-      >
-        <div class="flex-1 min-w-[200px]">
-          <.input
-            field={@form[:name]}
-            label="Name"
-            class="field"
-            placeholder="Sauna booking"
-            autocomplete="off"
-            phx-mounted={JS.focus()}
-            hint={"slug: #{@slug || "…"}"}
-          />
-        </div>
-        <div class="flex-1 min-w-[200px]">
-          <.input
-            field={@form[:repo_url]}
-            label="From a git repo (optional)"
-            class="field"
-            placeholder="https://github.com/you/app.git"
-            autocomplete="off"
-            hint="needs .peon/preview.json for a preview"
-          />
-        </div>
-        <div :if={blank?(@form[:repo_url].value)} class="w-[230px]">
-          <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
-        </div>
-        <div
-          :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
-          class="w-full flex gap-2 flex-wrap"
+      <.modal :if={@creating} id="new-project-dialog" title="New project" return_to="new-project">
+        <.form
+          for={@form}
+          id="project_form"
+          phx-change="validate"
+          phx-submit="create"
+          class="flex flex-col gap-3"
         >
-          <div class="flex-1 min-w-[200px]">
+          <div class="min-w-0">
             <.input
-              field={@form[:basic_username]}
-              label="Username"
+              field={@form[:name]}
+              label="Name"
               class="field"
+              placeholder="Sauna booking"
               autocomplete="off"
+              phx-mounted={JS.focus()}
+              hint={"slug: #{@slug || "…"}"}
             />
           </div>
-          <div class="flex-1 min-w-[200px]">
+          <div class="min-w-0">
             <.input
-              field={@form[:basic_password]}
-              type="password"
-              label="Password"
+              field={@form[:repo_url]}
+              label="From a git repo (optional)"
               class="field"
-              autocomplete="new-password"
-              hint="at least 8 characters; kept as the app's secrets, not in Burrow"
+              placeholder="https://github.com/you/app.git"
+              autocomplete="off"
+              hint="needs .peon/preview.json for a preview"
             />
           </div>
-        </div>
-        <div :if={@teams != []} class="w-[160px]">
-          <.input
-            field={@form[:team_id]}
-            type="select"
-            label="Shared with"
-            options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
-          />
-        </div>
-        <div class="flex gap-2 mt-[27px]">
-          <.button variant="primary" class="btn btn-primary" phx-disable-with="Creating…">
-            Create
-          </.button>
-          <button
-            :if={@projects != []}
-            type="button"
-            phx-click="cancel_new"
-            class="btn btn-ghost"
+          <div :if={blank?(@form[:repo_url].value)} class="min-w-0">
+            <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
+          </div>
+          <div
+            :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
+            class="flex flex-col gap-3"
           >
-            Cancel
-          </button>
-        </div>
-      </.form>
+            <div class="min-w-0">
+              <.input
+                field={@form[:basic_username]}
+                label="Username"
+                class="field"
+                autocomplete="off"
+              />
+            </div>
+            <div class="min-w-0">
+              <.input
+                field={@form[:basic_password]}
+                type="password"
+                label="Password"
+                class="field"
+                autocomplete="new-password"
+                hint="at least 8 characters; kept as the app's secrets, not in Burrow"
+              />
+            </div>
+          </div>
+          <div :if={@teams != []} class="min-w-0">
+            <.input
+              field={@form[:team_id]}
+              type="select"
+              label="Shared with"
+              options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+            />
+          </div>
+          <div class="flex gap-2 justify-end">
+            <.button variant="primary" class="btn btn-primary" phx-disable-with="Creating…">
+              Create
+            </.button>
+            <button
+              type="button"
+              phx-click="cancel_new"
+              class="btn btn-ghost"
+            >
+              Cancel
+            </button>
+          </div>
+        </.form>
+      </.modal>
 
       <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
         <span class="st warn"><span class="dot"></span>No AI login</span>
