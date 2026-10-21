@@ -190,9 +190,12 @@ defmodule Burrow.Sandbox do
       ["-v", "#{Totem.source_dir()}:/opt/totem:ro", "-e", "TOTEM_PATH=/opt/totem"] ++ env
   end
 
-  @doc "Removes every container project `slug` left behind, e.g. after a crash."
-  def remove_all(slug) do
-    {ids, _} = System.cmd("docker", ["ps", "-aq", "--filter", "label=burrow.project=#{slug}"])
+  @doc """
+  Removes every container project `slug` left behind, e.g. after a crash;
+  with `label` "burrow.env", its environments.
+  """
+  def remove_all(slug, label \\ "burrow.project") do
+    {ids, _} = System.cmd("docker", ["ps", "-aq", "--filter", "label=#{label}=#{slug}"])
 
     case String.split(ids) do
       [] -> :ok

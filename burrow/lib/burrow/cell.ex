@@ -69,6 +69,19 @@ defmodule Burrow.Cell do
     :ok
   end
 
+  @doc "Stops the project for good: its processes, chats and every container it has."
+  def stop(project) do
+    Chat.stop_all(project.id)
+
+    case Registry.lookup(@registry, project.id) do
+      [{pid, _}] -> DynamicSupervisor.terminate_child(Burrow.CellSupervisor, pid)
+      [] -> :ok
+    end
+
+    Sandbox.remove_all(project.slug)
+    Sandbox.remove_all(project.slug, "burrow.env")
+  end
+
   ## Server
 
   @impl true

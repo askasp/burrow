@@ -159,6 +159,19 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   def handle_event("close_panel", _params, socket), do: {:noreply, assign(socket, panel: nil)}
 
+  def handle_event("delete_project", _params, socket) do
+    case Projects.delete(socket.assigns.current_scope, socket.assigns.selected) do
+      {:ok, project} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{project.name} is deleted.")
+         |> push_patch(to: ~p"/projects")}
+
+      {:error, :not_owner} ->
+        {:noreply, put_flash(socket, :error, "Only the project's owner can delete it.")}
+    end
+  end
+
   def handle_event("add_envs", _params, socket) do
     socket = assign(socket, menu_open: false)
 
@@ -192,7 +205,7 @@ defmodule BurrowWeb.ProjectLive.Index do
   end
 
   def handle_info({event, _}, socket)
-      when event in [:project_created, :project_updated, :team_changed],
+      when event in [:project_created, :project_updated, :project_deleted, :team_changed],
       do: {:noreply, load(socket)}
 
   @impl true
@@ -400,6 +413,17 @@ defmodule BurrowWeb.ProjectLive.Index do
                     data-confirm={"Add staging and prod to #{@selected.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
                   >
                     Add staging and prod
+                  </button>
+                  <div class="msep" role="separator"></div>
+                  <button
+                    id="delete-project"
+                    type="button"
+                    role="menuitem"
+                    class="text-[var(--err)]"
+                    phx-click="delete_project"
+                    data-confirm={"Delete #{@selected.name} for good? Its chats, code history, environments and secrets go with it."}
+                  >
+                    Delete project
                   </button>
                 </div>
               </div>

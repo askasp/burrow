@@ -130,6 +130,23 @@ defmodule Burrow.Projects do
     end
   end
 
+  @doc """
+  The owner deletes a project, for good: its chats and containers stop, its
+  environments go, and so do its history and files. Its chats, secrets,
+  incidents and runs go with its row.
+  """
+  def delete(%Scope{} = scope, %Project{} = project) do
+    if owner?(scope, project) do
+      Burrow.Cell.stop(project)
+      Repo.delete!(project)
+      File.rm_rf(dir(project))
+      Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_deleted, project})
+      {:ok, project}
+    else
+      {:error, :not_owner}
+    end
+  end
+
   defp put_team(changeset, _scope, team_id) when team_id in [nil, ""], do: changeset
 
   defp put_team(changeset, scope, team_id) do

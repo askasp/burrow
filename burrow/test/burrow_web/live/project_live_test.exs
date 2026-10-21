@@ -151,6 +151,31 @@ defmodule BurrowWeb.ProjectLiveTest do
     end
   end
 
+  describe "deleting" do
+    @tag :tmp_dir
+    test "the owner deletes a project with its chats and history", %{
+      conn: conn,
+      user: user,
+      tmp_dir: dir
+    } do
+      {:ok, project} =
+        Projects.create(Burrow.Accounts.Scope.for_user(user), %{"name" => "Gone soon"})
+
+      Burrow.ProjectHelpers.start_project!(project, dir)
+      chat = Burrow.Chats.create(project.id, "Hello", user.email)
+      assert File.dir?(Projects.repo_dir(project))
+
+      {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
+      lv |> element("#project-menu-button") |> render_click()
+      lv |> element("#delete-project") |> render_click()
+
+      assert render(lv) =~ "Gone soon is deleted."
+      assert Projects.get(project.id) == nil
+      assert Burrow.Chats.get(chat.id) == nil
+      refute File.exists?(Projects.dir(project))
+    end
+  end
+
   # Tests run no cells; tell the page this one runs, as its cell would.
   defp running!(project),
     do: Phoenix.PubSub.broadcast(Burrow.PubSub, "cells", {:cell, project.id, :running})
