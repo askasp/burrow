@@ -13,6 +13,9 @@ defmodule Totem.Server do
 
   @cold_paths ["mix.exs", "mix.lock"]
   @warm_paths ["config/**", "lib/*/application.ex", "lib/*_web/endpoint.ex"]
+  # Changes that need the CSS/JS bundles rebuilt (Tailwind scans the web layer).
+  @asset_paths ["assets/**", "lib/*_web/**", "priv/static/**"]
+  @migration_paths ["priv/repo/migrations/*.exs"]
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -25,7 +28,9 @@ defmodule Totem.Server do
       store: Path.expand(opts[:store] || config(:store) || Path.join(root, ".totem")),
       otp_app: opts[:otp_app] || config(:otp_app) || mix_app(),
       cold_paths: config(:cold_paths) || @cold_paths,
-      warm_paths: config(:warm_paths) || @warm_paths
+      warm_paths: config(:warm_paths) || @warm_paths,
+      asset_paths: config(:asset_paths) || @asset_paths,
+      migration_paths: config(:migration_paths) || @migration_paths
     }
 
     booted(state)
@@ -131,15 +136,16 @@ defmodule Totem.Server do
   end
 
   defp load(state, current, tree, opts) do
-    mode = mode(state, Tree.changed_paths(current.tree, tree))
+    paths = Tree.changed_paths(current.tree, tree)
+    mode = mode(state, paths)
     write_tree(state, current.tree, tree)
 
-    case run(state, mode) do
-      {:ok, output} ->
+    case run(state, mode) |> after_load(state, mode, paths) do
+      {:ok, output, done} ->
         status = if mode == "cold", do: "restart_required", else: "loaded"
         attrs = %{tree: tree, mode: mode, source: opts[:source], status: status}
         version = Store.put_version(state.store, attrs)
-        {:ok, %{version: version.version, mode: mode, output: output}}
+        {:ok, Map.merge(%{version: version.version, mode: mode, output: output}, done)}
 
       {:error, output} ->
         Logger.warning("Totem: #{mode} load failed, back to version #{current.version}")
@@ -148,6 +154,25 @@ defmodule Totem.Server do
         {:error, {:load_failed, mode, output}}
     end
   end
+
+  # Once the code loaded: new migrations, and the bundles in prod.
+  defp after_load({:ok, output}, _state, "cold", _paths),
+    do: {:ok, output, %{migrated: [], assets: false}}
+
+  defp after_load({:ok, output}, state, _mode, paths) do
+    assets? = Enum.any?(paths, &Totem.Glob.matches?(&1, state.asset_paths))
+    migrate? = Enum.any?(paths, &Totem.Glob.matches?(&1, state.migration_paths))
+
+    try do
+      assets = assets? and Loader.assets(state.otp_app)
+      migrated = if migrate?, do: Loader.migrate(state.otp_app), else: []
+      {:ok, output, %{migrated: migrated, assets: assets}}
+    rescue
+      e -> {:error, output <> "\n" <> Exception.format(:error, e, __STACKTRACE__)}
+    end
+  end
+
+  defp after_load(error, _state, _mode, _paths), do: error
 
   defp mode(state, paths) do
     cond do

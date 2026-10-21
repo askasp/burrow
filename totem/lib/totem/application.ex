@@ -6,7 +6,11 @@ defmodule Totem.Application do
   # stopping, so it can stop and start the app (a warm load).
   @impl true
   def start(_type, _args) do
-    children = if Application.get_env(:totem, :server, true), do: [Totem.Server], else: []
+    children =
+      if Application.get_env(:totem, :server, true),
+        do: [Totem.Server, Totem.Monitor, Totem.Link],
+        else: []
+
     Supervisor.start_link(children, strategy: :one_for_one, name: Totem.Supervisor)
   end
 end

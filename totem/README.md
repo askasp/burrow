@@ -35,8 +35,20 @@ Peon keeps the full history; Totem keeps what the node runs and the
 versions before it, with the same hashes, so a deploy sends only the
 contents Totem is missing (`Totem.missing/1`).
 
-The probe (`priv/probe.exs`) is still loaded into apps by Peon with
-`elixir -r`; it becomes part of Totem next.
+## Reaching it
+
+* **Dialing out** (`Totem.Link`): set `TOTEM_LINK` to a Unix socket and
+  Totem dials it, reports errors, stats and readiness, and takes commands
+  (`Totem.Commands`). Nothing listens inside the app. Peon runs apps this way.
+* **HTTP and MCP** (`Totem.Plug`, for apps with Plug): `plug Totem.Plug` in
+  the endpoint, before the router, and a `TOTEM_TOKEN`. It serves
+  `/_totem/...` and an MCP server at `/_totem/mcp`, so an agent can read,
+  search and change the running code with no checkout.
+* **From a terminal**: `mix totem.clone <url>/_totem dir`, edit, `mix
+  totem.push` (sends only what changed; the app loads it), `mix totem.pull`.
+
+Errors, request counts and the observer figures come from `Totem.Monitor`,
+which runs from boot, so errors while the app starts are caught too.
 
 Totem has no dependencies on the rest of this repo, so apps outside it can
 use it straight from GitHub (no tag yet; the first one comes with the

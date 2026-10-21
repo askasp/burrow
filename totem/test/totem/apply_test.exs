@@ -7,53 +7,9 @@ defmodule Totem.ApplyTest do
   @moduletag :tmp_dir
   @moduletag timeout: 180_000
 
-  @counter """
-  defmodule Demo.Counter do
-    use GenServer
-    def start_link(_), do: GenServer.start_link(__MODULE__, 0, name: __MODULE__)
-    def bump, do: GenServer.call(__MODULE__, :bump)
-    def count, do: GenServer.call(__MODULE__, :count)
-    def label, do: "v1"
-    def greeting, do: Application.get_env(:demo, :greeting)
-    @impl true
-    def init(n), do: {:ok, n}
-    @impl true
-    def handle_call(:bump, _from, n), do: {:reply, n + 1, n + 1}
-    def handle_call(:count, _from, n), do: {:reply, n, n}
-  end
-  """
+  import Totem.Fixture
 
-  setup %{tmp_dir: tmp_dir} do
-    totem = Path.expand("../..", __DIR__)
-    # The app's own directory; the scripts stay outside it.
-    dir = Path.join(tmp_dir, "app")
-
-    files = %{
-      "mix.exs" => """
-      defmodule Demo.MixProject do
-        use Mix.Project
-        def project,
-          do: [app: :demo, version: "0.1.0", start_permanent: true, deps: [{:totem, path: #{inspect(totem)}}]]
-        def application, do: [mod: {Demo.Application, []}]
-      end
-      """,
-      "config/config.exs" => ~s(import Config\nconfig :demo, greeting: "hello"\n),
-      "lib/demo/application.ex" => """
-      defmodule Demo.Application do
-        use Application
-        def start(_, _), do: Supervisor.start_link([Demo.Counter], strategy: :one_for_one)
-      end
-      """,
-      "lib/demo/counter.ex" => @counter
-    }
-
-    for {path, content} <- files do
-      File.mkdir_p!(Path.join(dir, Path.dirname(path)))
-      File.write!(Path.join(dir, path), content)
-    end
-
-    %{dir: dir}
-  end
+  setup %{tmp_dir: tmp_dir}, do: %{dir: app!(tmp_dir)}
 
   test "a hot change keeps the process and its state; a compile error rolls back", %{dir: dir} do
     result =
@@ -176,24 +132,5 @@ defmodule Totem.ApplyTest do
 
     assert result["read"]
     assert result["bad"] =~ "bad_path"
-  end
-
-  defp run!(dir, body) do
-    script = Path.join(Path.dirname(dir), "script-#{System.unique_integer([:positive])}.exs")
-    File.write!(script, "result = (\n#{body}\n)\nIO.puts(\"RESULT \" <> JSON.encode!(result))\n")
-
-    {output, status} =
-      System.cmd("mix", ["run", script],
-        cd: dir,
-        env: [{"MIX_ENV", "dev"}],
-        stderr_to_stdout: true
-      )
-
-    File.rm!(script)
-
-    case Regex.run(~r/^RESULT (.*)$/m, output) do
-      [_, json] when status == 0 -> JSON.decode!(json)
-      _ -> flunk("script failed (#{status}):\n#{output}")
-    end
   end
 end

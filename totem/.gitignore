@@ -21,3 +21,6 @@ totem-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Totem's store, when Totem runs in this directory
+/.totem/

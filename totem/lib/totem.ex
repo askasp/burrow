@@ -54,6 +54,10 @@ defmodule Totem do
     end
   end
 
+  @doc "A stored content by its hash."
+  @spec blob(Totem.Blob.hash()) :: {:ok, binary()} | :error
+  def blob(hash), do: Store.get_blob(store(), hash)
+
   @doc "The hashes Totem has no content for; send those, then refer to the rest as `{:blob, hash}`."
   @spec missing([Totem.Blob.hash()]) :: [Totem.Blob.hash()]
   def missing(hashes), do: Store.missing(store(), hashes)

@@ -28,7 +28,12 @@ defmodule Totem.Loader do
     Enum.each(["compile", "compile.all", "compile.protocols" | compilers], &Mix.Task.reenable/1)
     args = if opts[:force], do: ["--return-errors", "--force"], else: ["--return-errors"]
 
-    {{status, diagnostics}, output} = capture(fn -> Mix.Task.run("compile", args) end)
+    # Mix compiles relative to the working directory: the project's, whatever it is now.
+    project = Path.dirname(Mix.Project.project_file())
+
+    {{status, diagnostics}, output} =
+      capture(fn -> File.cd!(project, fn -> Mix.Task.run("compile", args) end) end)
+
     errors = for %{severity: :error} = d <- diagnostics, do: format(d)
     output = Enum.join([output | errors], "\n")
 
@@ -63,6 +68,54 @@ defmodule Totem.Loader do
     case Application.ensure_all_started(otp_app) do
       {:ok, _} -> {:ok, output}
       {:error, reason} -> {:error, output <> "\n" <> inspect(reason)}
+    end
+  end
+
+  @doc """
+  Runs the app's pending Ecto migrations (when it has Ecto). Returns the
+  versions it ran.
+  """
+  @spec migrate(atom()) :: [integer()]
+  def migrate(otp_app) do
+    if Code.ensure_loaded?(Ecto.Migrator) do
+      for repo <- Application.get_env(otp_app, :ecto_repos, []),
+          version <- Kernel.apply(Ecto.Migrator, :run, [repo, :up, [all: true]]),
+          do: version
+    else
+      []
+    end
+  end
+
+  @doc """
+  Rebuilds the CSS/JS bundles in prod, where no watcher does: the steps of
+  the app's `assets.deploy` alias, then each endpoint reloads its static
+  manifest so pages link the new digests. Returns whether it ran.
+  """
+  @spec assets(atom()) :: boolean()
+  def assets(otp_app) do
+    steps = Keyword.get(Mix.Project.config()[:aliases] || [], :"assets.deploy")
+
+    if Mix.env() == :prod and steps do
+      for step <- List.wrap(steps) do
+        case step do
+          step when is_binary(step) ->
+            [task | args] = OptionParser.split(step)
+            Mix.Task.rerun(task, args)
+
+          fun when is_function(fun, 1) ->
+            fun.([])
+        end
+      end
+
+      for {module, _} <- Application.get_all_env(otp_app),
+          is_atom(module),
+          function_exported?(module, :config_change, 2),
+          function_exported?(module, :static_path, 1),
+          do: module.config_change([], [])
+
+      true
+    else
+      false
     end
   end
 
