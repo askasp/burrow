@@ -423,6 +423,79 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp close_confirm(_tab, false), do: "Close this chat? The conversation goes with it."
 
+  ## Peon at work
+
+  attr :kind, :string, default: "mine", doc: ~s("mine" or "chop")
+
+  @doc "A tiny peon at work: carrying gold from the mine to the town hall, or chopping lumber."
+  def peon_at_work(assigns) do
+    ~H"""
+    <svg class="wc3" viewBox="0 0 96 20" width="96" height="20" aria-hidden="true">
+      <%= if @kind == "chop" do %>
+        <g class="logs">
+          <rect x="2" y="15" width="13" height="3" rx="1.5" /><rect
+            x="4"
+            y="12"
+            width="10"
+            height="3"
+            rx="1.5"
+          />
+        </g>
+        <g class="tree">
+          <rect class="trunk" x="77" y="11" width="4" height="8" /><polygon
+            class="leaf"
+            points="79,0 89,13 69,13"
+          />
+        </g>
+        <g transform="translate(66 0)">
+          <rect class="body" x="-2" y="10" width="5" height="6" rx="1" />
+          <circle class="head" cx="0.5" cy="7.5" r="2.6" />
+          <rect class="leg" x="-1.5" y="16" width="1.6" height="3" />
+          <rect class="leg r" x="1" y="16" width="1.6" height="3" />
+          <g class="axe">
+            <line class="haft" x1="2" y1="12" x2="7" y2="6" /><rect
+              class="blade"
+              x="6"
+              y="3.5"
+              width="3"
+              height="3.5"
+            />
+          </g>
+        </g>
+      <% else %>
+        <g class="hall">
+          <polygon class="roof" points="1,9 10,2 19,9" /><rect
+            class="wall"
+            x="3"
+            y="9"
+            width="14"
+            height="10"
+          />
+          <rect class="door" x="8" y="13" width="4" height="6" />
+        </g>
+        <g class="mine">
+          <path class="rock" d="M75 19 Q77 6 85 5 Q94 6 95 19 Z" /><rect
+            class="hole"
+            x="82"
+            y="12"
+            width="6"
+            height="7"
+            rx="2"
+          />
+          <circle class="gold" cx="79" cy="11" r="1" /><circle class="gold" cx="91" cy="13" r="1" />
+        </g>
+        <g class="walker">
+          <rect class="body" x="-2" y="10" width="5" height="6" rx="1" />
+          <circle class="head" cx="0.5" cy="7.5" r="2.6" />
+          <circle class="sack" cx="4.5" cy="11" r="2.4" />
+          <rect class="leg" x="-1.5" y="16" width="1.6" height="3" />
+          <rect class="leg r" x="1" y="16" width="1.6" height="3" />
+        </g>
+      <% end %>
+    </svg>
+    """
+  end
+
   ## Change card
 
   attr :draft, :map, required: true

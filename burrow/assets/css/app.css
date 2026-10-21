@@ -45,7 +45,7 @@
   --border: #D7D1CA; --border-strong: #B5ACA3;
   --text: #1C1917; --text-2: #4D4640; --text-3: #625A53;
   --accent: #8FBF5A; --accent-ink: #18240B; --accent-text: #3B691C; --accent-soft: #E0EAD1;
-  --rust: #9E4128;
+  --rust: #9E4128; --gold: #B07D12; --wood: #8A5A2B;
   --ok: #356818; --ok-soft: #DCE8CE; --warn: #7F4D00; --warn-soft: #F2E2BF; --err: #AD1F3E; --err-soft: #F6D8DE;
   --shadow: rgba(40, 25, 15, .10);
 }
@@ -59,7 +59,7 @@
     --border: #2E2925; --border-strong: #433C36;
     --text: #ECE8E3; --text-2: #B3AAA2; --text-3: #938A82;
     --accent: #8FBF5A; --accent-ink: #16200B; --accent-text: #A7D278; --accent-soft: #222B19;
-    --rust: #E07A56;
+    --rust: #E07A56; --gold: #E3B341; --wood: #B07A45; --gold: #E3B341; --wood: #B07A45;
     --ok: #A7D278; --ok-soft: #202A17; --warn: #E6B65E; --warn-soft: #33281A; --err: #F4889A; --err-soft: #3B1A21;
     --shadow: rgba(0, 0, 0, .45);
   }
@@ -375,6 +375,27 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .out.peon { border-color: var(--accent-soft); background: var(--surface); color: var(--text) }
 .ws-root .say-error { padding: 8px 12px; border-radius: 6px; background: var(--err-soft); color: var(--err); font-size: 13px; white-space: pre-wrap }
 .ws-root .swing { display: flex; animation: bw-swing 1.1s ease-in-out infinite; transform-origin: 25% 85% }
+/* Peon at work: to the gold mine and back, or chopping lumber */
+.ws-root .wc3 { flex-shrink: 0; overflow: visible }
+.ws-root .wc3 .head, .ws-root .wc3 .leaf { fill: var(--accent) }
+.ws-root .wc3 .body, .ws-root .wc3 .wall, .ws-root .wc3 .trunk, .ws-root .wc3 .logs rect { fill: var(--wood) }
+.ws-root .wc3 .leg, .ws-root .wc3 .rock { fill: var(--text-3) }
+.ws-root .wc3 .roof { fill: var(--rust) }
+.ws-root .wc3 .door, .ws-root .wc3 .hole { fill: var(--bg) }
+.ws-root .wc3 .gold, .ws-root .wc3 .sack { fill: var(--gold) }
+.ws-root .wc3 .haft { stroke: var(--text-2); stroke-width: 1.4; stroke-linecap: round }
+.ws-root .wc3 .blade { fill: var(--text-2) }
+.ws-root .wc3 .walker { animation: wc3-walk 4s ease-in-out infinite }
+.ws-root .wc3 .sack { animation: wc3-sack 4s steps(1, end) infinite }
+.ws-root .wc3 .leg { animation: wc3-step .5s steps(2, end) infinite }
+.ws-root .wc3 .leg.r { animation-delay: .25s }
+.ws-root .wc3 .axe { transform-box: fill-box; transform-origin: 0% 100%; animation: wc3-chop .8s ease-in infinite }
+.ws-root .wc3 .tree { transform-box: fill-box; transform-origin: 50% 100%; animation: wc3-hit .8s ease-out infinite }
+@keyframes wc3-walk { 0%, 6% { transform: translateX(20px) } 44%, 56% { transform: translateX(66px) } 94%, 100% { transform: translateX(20px) } }
+@keyframes wc3-sack { 0% { opacity: 0 } 50% { opacity: 1 } 94% { opacity: 0 } }
+@keyframes wc3-step { 0% { transform: translateY(0) } 50% { transform: translateY(-1px) } }
+@keyframes wc3-chop { 0%, 20% { transform: rotate(-55deg) } 55% { transform: rotate(20deg) } 100% { transform: rotate(-55deg) } }
+@keyframes wc3-hit { 0%, 50% { transform: rotate(0) } 58% { transform: rotate(3deg) } 70%, 100% { transform: rotate(0) } }
 
 .ws-root .ws-bottom { flex: none; width: 100%; max-width: 800px; margin: 0 auto; padding: 10px 20px 20px; display: flex; flex-direction: column; gap: 12px }
 .ws-root .framed { background: transparent; border: 1px solid var(--border-strong); border-radius: 8px }
@@ -469,7 +490,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 @keyframes bw-shimmer { to { left: 100% } }
 @keyframes bw-slide { 0% { left: -40% } 100% { left: 100% } }
 @media (prefers-reduced-motion: reduce) {
-  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .rail, .ws-root .rn, .ws-root .rt, .ws-root .rchev { animation: none; transition: none }
+  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .wc3 *, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .rail, .ws-root .rn, .ws-root .rt, .ws-root .rchev { animation: none; transition: none }
 }
 @media (max-width: 640px) {
   .ws-root .env + .env { padding-left: 0; border-left: 0; border-top: 1px solid var(--border) }

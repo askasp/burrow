@@ -885,7 +885,7 @@ defmodule BurrowWeb.WorkspaceLive do
                 <% end %>
                 <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
                 <div :if={@info && @info.busy?} class="ws-working" role="status">
-                  <span class="swing text-[var(--rust)]"><.icon name="hero-wrench" class="size-4" /></span>
+                  <.peon_at_work kind={work_kind(@info.messages)} />
                   <span class="font-medium shrink-0">Peon is working…</span>
                   <span class="mono muted text-[12.5px] truncate">{doing(@info.messages)}</span>
                   <button
@@ -1236,6 +1236,21 @@ defmodule BurrowWeb.WorkspaceLive do
     |> case do
       nil -> "Thinking it over…"
       %{text: text} -> text |> split_tool() |> activity()
+    end
+  end
+
+  # Changing files is chopping lumber; everything else is a trip to the gold mine.
+  defp work_kind(messages) do
+    case messages
+         |> Enum.reverse()
+         |> Enum.take_while(&(&1.role != :user))
+         |> Enum.find(&(&1.role == :tool)) do
+      %{text: text} ->
+        {tool, _} = split_tool(text)
+        if tool in ~w(edit write patch apply_patch multiedit), do: "chop", else: "mine"
+
+      nil ->
+        "mine"
     end
   end
 
