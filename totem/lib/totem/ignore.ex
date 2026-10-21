@@ -9,6 +9,8 @@ defmodule Totem.Ignore do
     "_build/**",
     "deps/**",
     ".git/**",
+    # Totem's own store
+    ".totem/**",
     "**.db",
     "**.db-*",
     "node_modules/**",

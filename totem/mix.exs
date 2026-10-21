@@ -15,6 +15,6 @@ defmodule Totem.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :crypto]]
+    [mod: {Totem.Application, []}, extra_applications: [:logger, :crypto]]
   end
 end
