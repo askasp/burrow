@@ -448,7 +448,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     ~H"""
     <label class="sr-only" for="model-pick">Model</label>
     <select id="model-pick" name="model" phx-change="pick_model" class="field pick">
-      <optgroup :for={group <- @groups} label={provider(hd(group))}>
+      <optgroup :for={group <- @groups} label={provider_label(provider(hd(group)))}>
         <option :for={m <- group} value={m} selected={m == @model}>
           {m |> String.split("/", parts: 2) |> List.last()}
         </option>
@@ -469,6 +469,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   defp provider(model), do: model |> String.split("/", parts: 2) |> hd()
+
+  # The two opencode providers share one login but not how they are paid for.
+  defp provider_label("opencode"), do: "OpenCode Zen · pay per use"
+  defp provider_label("opencode-go"), do: "OpenCode Go · subscription"
+  defp provider_label(provider), do: provider
 
   ## Peon at work
 
