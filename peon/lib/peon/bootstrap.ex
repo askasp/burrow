@@ -78,7 +78,7 @@ defmodule Peon.Bootstrap do
 
     case Sandbox.run(dir, script, env: %{"MIX_ENV" => "test"}) do
       {0, _output, _ms} ->
-        PeonCore.Tree.from_dir(dir, PeonCore.Ignore.matcher(dir))
+        Totem.Tree.from_dir(dir, Peon.Ignore.matcher(dir))
 
       {status, output, _ms} ->
         Logger.warning("could not format the new project (#{inspect(status)}): #{output}")

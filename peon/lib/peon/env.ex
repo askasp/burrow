@@ -1,7 +1,7 @@
 defmodule Peon.Env do
   @moduledoc """
   A running environment of the app, "staging" or "prod": a long-lived
-  container running the app in prod mode. Peon's probe (`priv/probe.exs`)
+  container running the app in prod mode. Peon's probe (`totem/priv/probe.exs`)
   runs inside the app's own node, loaded when the container starts, and
   dials this process on a Unix socket mounted into the container; nothing
   runs beside the app.
@@ -42,7 +42,8 @@ defmodule Peon.Env do
   alias Peon.{Code, Incidents, Project, Repo, Sandbox, Secrets, Store, Template, Workspace}
   alias Peon.Env.{Deploy, Usage}
   alias Peon.Incidents.Incident
-  alias PeonCore.{Policy, Tree}
+  alias Peon.Policy
+  alias Totem.Tree
 
   @boot_timeout :timer.minutes(15)
   @health_every :timer.seconds(5)
@@ -635,7 +636,7 @@ defmodule Peon.Env do
   end
 
   @doc false
-  def probe_file, do: Application.app_dir(:peon, "priv/probe.exs")
+  def probe_file, do: Application.app_dir(:totem, "priv/probe.exs")
 
   @doc false
   # The probe's version this Peon has (its `@version`).
@@ -797,7 +798,7 @@ defmodule Peon.Env do
       )
 
   defp matches_any?(:all, _globs), do: true
-  defp matches_any?(paths, globs), do: Enum.any?(paths, &Policy.matches?(&1, globs))
+  defp matches_any?(paths, globs), do: Enum.any?(paths, &Totem.Glob.matches?(&1, globs))
 
   defp read_deployed(base) do
     case File.read(Path.join(base, "deployed")) do

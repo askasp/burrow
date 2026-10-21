@@ -49,7 +49,7 @@ defmodule Peon.MixProject do
       {:bandit, "~> 1.5"},
       {:plug, "~> 1.16"},
       {:req, "~> 0.5"},
-      {:peon_core, path: "../peon_core"}
+      {:totem, path: "../totem"}
     ]
   end
 

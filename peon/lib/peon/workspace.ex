@@ -10,7 +10,7 @@ defmodule Peon.Workspace do
   """
 
   alias Peon.Code
-  alias PeonCore.{Blob, Tree}
+  alias Totem.{Blob, Tree}
 
   @doc "Writes the tree of `changeset_id` into an empty or new `dir`."
   def checkout(dir, changeset_id) do
@@ -46,7 +46,7 @@ defmodule Peon.Workspace do
   """
   def changes(dir) do
     %{"changeset_id" => base_id, "tree" => base} = read_base(dir)
-    {current, blobs} = Tree.from_dir(dir, PeonCore.Ignore.matcher(dir))
+    {current, blobs} = Tree.from_dir(dir, Peon.Ignore.matcher(dir))
 
     changes =
       for {path, change} <- Tree.changes(base, current) do
@@ -65,7 +65,7 @@ defmodule Peon.Workspace do
   def rebase(dir, target_id) do
     %{"tree" => base} = read_base(dir)
     target = Code.tree(target_id)
-    {current, _blobs} = Tree.from_dir(dir, PeonCore.Ignore.matcher(dir))
+    {current, _blobs} = Tree.from_dir(dir, Peon.Ignore.matcher(dir))
 
     conflicts =
       for {path, change} <- Tree.changes(base, target), reduce: [] do

@@ -37,7 +37,7 @@ defmodule Peon.Store.Changeset do
 
   def statuses, do: @statuses
 
-  @doc "The changeset's files as `PeonCore.Tree` changes."
+  @doc "The changeset's files as `Totem.Tree` changes."
   def changes(%__MODULE__{files: files}) do
     Enum.map(files, fn %{"path" => path, "hash" => hash} -> {path, hash || :deleted} end)
   end

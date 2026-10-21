@@ -8,7 +8,7 @@ defmodule Peon.Code do
 
   alias Peon.Repo
   alias Peon.Store.{Blob, Changeset, ChangesetPath, Ref, TreeCache}
-  alias PeonCore.{Diff, Tree}
+  alias Totem.{Diff, Tree}
 
   @doc "Resolves a ref name or changeset id (`nil` means main)."
   @spec resolve(String.t() | integer() | nil) :: {:ok, Changeset.t()} | {:error, :not_found}
@@ -77,7 +77,7 @@ defmodule Peon.Code do
   def blob(hash) do
     case Repo.get(Blob, hash) do
       nil -> nil
-      %Blob{content: data} -> PeonCore.Blob.decompress(data)
+      %Blob{content: data} -> Totem.Blob.decompress(data)
     end
   end
 
@@ -104,7 +104,7 @@ defmodule Peon.Code do
       matches =
         tree(cs.id)
         |> Enum.filter(fn {path, _} ->
-          is_nil(path_glob) or PeonCore.Policy.matches?(path, [path_glob])
+          is_nil(path_glob) or Totem.Glob.matches?(path, [path_glob])
         end)
         |> Enum.sort()
         |> Stream.flat_map(fn {path, hash} -> search_blob(path, blob(hash), matcher) end)

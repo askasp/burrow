@@ -1,5 +1,5 @@
 defmodule Peon.Env.ProbeTest do
-  # The probe (priv/probe.exs) in a node of its own, as it runs in an
+  # The probe (totem/priv/probe.exs) in a node of its own, as it runs in an
   # environment's container: this test plays Peon's side of the socket.
   use ExUnit.Case, async: true
 

@@ -25,7 +25,7 @@ defmodule Peon.Project do
     |> Repo.update!()
   end
 
-  @doc "Settings overrides for `PeonCore.Policy.check/3`."
+  @doc "Settings overrides for `Peon.Policy.check/3`."
   def policy_settings do
     settings = settings()
 

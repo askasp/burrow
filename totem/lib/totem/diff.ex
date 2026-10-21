@@ -1,4 +1,4 @@
-defmodule PeonCore.Diff do
+defmodule Totem.Diff do
   @moduledoc "Line-based file diffs."
 
   @type op :: {:eq | :ins | :del, [String.t()]}

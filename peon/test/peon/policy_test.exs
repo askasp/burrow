@@ -1,7 +1,7 @@
-defmodule PeonCore.PolicyTest do
+defmodule Peon.PolicyTest do
   use ExUnit.Case, async: true
 
-  alias PeonCore.Policy
+  alias Peon.Policy
 
   @base %{"priv/repo/migrations/20260101_create_bookings.exs" => "h1", "lib/app.ex" => "h2"}
 
@@ -68,11 +68,5 @@ defmodule PeonCore.PolicyTest do
       assert {:error, [%{rule: :secret}]} = Policy.check([{"lib/app.ex", content}], @base),
              content
     end
-  end
-
-  test "glob matching" do
-    assert Policy.matches?("rel/a/b.sh", ["rel/**"])
-    refute Policy.matches?("lib/rel/a", ["rel/**"])
-    refute Policy.matches?("lib/a/b/application.ex", ["lib/*/application.ex"])
   end
 end

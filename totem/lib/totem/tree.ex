@@ -1,10 +1,10 @@
-defmodule PeonCore.Tree do
+defmodule Totem.Tree do
   @moduledoc """
   A tree is a map of path => blob hash. A changeset's tree is its parent's tree
   with the changeset's file changes applied.
   """
 
-  alias PeonCore.Blob
+  alias Totem.Blob
 
   @type t :: %{String.t() => Blob.hash()}
   @type change :: {String.t(), Blob.hash() | :deleted}

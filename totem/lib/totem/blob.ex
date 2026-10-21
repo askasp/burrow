@@ -1,4 +1,4 @@
-defmodule PeonCore.Blob do
+defmodule Totem.Blob do
   @moduledoc "Content-addressed file contents: sha256 hex hash, zlib-compressed storage."
 
   @type hash :: String.t()

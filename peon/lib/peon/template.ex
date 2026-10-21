@@ -35,10 +35,10 @@ defmodule Peon.Template do
   @doc "The logins a new project can start with."
   def auths, do: @auths
 
-  @doc "Returns `{tree, blobs}` for `PeonCore.Tree`, ready to import."
+  @doc "Returns `{tree, blobs}` for `Totem.Tree`, ready to import."
   def instantiate(template_dir, otp_app, auth \\ "accounts") when auth in @auths do
     module = Macro.camelize(otp_app)
-    {tree, blobs} = PeonCore.Tree.from_dir(template_dir, PeonCore.Ignore.matcher(template_dir))
+    {tree, blobs} = Totem.Tree.from_dir(template_dir, Peon.Ignore.matcher(template_dir))
     accounts? = auth == "accounts"
 
     Enum.reduce(tree, {%{}, %{}}, fn {path, hash}, {tree, new_blobs} ->
@@ -48,7 +48,7 @@ defmodule Peon.Template do
 
         {:ok, content} ->
           content = content |> set_mode(path, auth) |> rename(module, otp_app)
-          new_hash = PeonCore.Blob.hash(content)
+          new_hash = Totem.Blob.hash(content)
 
           {Map.put(tree, rename(path, module, otp_app), new_hash),
            Map.put(new_blobs, new_hash, content)}

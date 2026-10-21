@@ -1,7 +1,7 @@
-defmodule PeonCore.BlobTreeTest do
+defmodule Totem.BlobTreeTest do
   use ExUnit.Case, async: true
 
-  alias PeonCore.{Blob, Tree}
+  alias Totem.{Blob, Tree}
 
   test "blob hash is sha256 hex and survives compression" do
     assert Blob.hash("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

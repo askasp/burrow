@@ -22,7 +22,8 @@ defmodule Peon.Store do
 
   alias Peon.{Code, Project, Repo}
   alias Peon.Store.{Blob, Changeset, ChangesetPath, Event, Ref, TreeCache}
-  alias PeonCore.{Policy, Tree}
+  alias Peon.Policy
+  alias Totem.Tree
 
   @topic "store"
   @open ~w(proposed checking passed)
@@ -48,7 +49,7 @@ defmodule Peon.Store do
         {:error, {:invalid, "#{dir} is not a directory"}}
 
       true ->
-        {tree, blobs} = Tree.from_dir(dir, PeonCore.Ignore.matcher(dir))
+        {tree, blobs} = Tree.from_dir(dir, Peon.Ignore.matcher(dir))
         import_tree(tree, blobs, slug, name, author)
     end
   end
@@ -348,7 +349,7 @@ defmodule Peon.Store do
   defp valid_path?(path) do
     path != "" and Path.type(path) == :relative and String.valid?(path) and
       not Enum.any?(Path.split(path), &(&1 in [".", ".."])) and
-      not String.contains?(path, ["\\", <<0>>]) and not PeonCore.Ignore.builtin?(path)
+      not String.contains?(path, ["\\", <<0>>]) and not Peon.Ignore.builtin?(path)
   end
 
   defp require_string(value, _name) when is_binary(value) and value != "", do: {:ok, value}
@@ -392,7 +393,7 @@ defmodule Peon.Store do
     files
     |> Enum.reject(fn
       {path, :deleted} -> not Map.has_key?(base_tree, path)
-      {path, content} -> base_tree[path] == PeonCore.Blob.hash(content)
+      {path, content} -> base_tree[path] == Totem.Blob.hash(content)
     end)
     |> case do
       [] -> {:error, {:invalid, "no changes against main"}}
@@ -428,7 +429,7 @@ defmodule Peon.Store do
           {{path, :deleted}, blobs}
 
         {path, content}, blobs ->
-          hash = PeonCore.Blob.hash(content)
+          hash = Totem.Blob.hash(content)
           {{path, hash}, Map.put(blobs, hash, content)}
       end)
 
@@ -439,7 +440,7 @@ defmodule Peon.Store do
   defp insert_blobs(blobs) do
     blobs
     |> Enum.map(fn {hash, content} ->
-      %{hash: hash, content: PeonCore.Blob.compress(content), size: byte_size(content)}
+      %{hash: hash, content: Totem.Blob.compress(content), size: byte_size(content)}
     end)
     |> Enum.chunk_every(200)
     |> Enum.each(&Repo.insert_all(Blob, &1, on_conflict: :nothing))

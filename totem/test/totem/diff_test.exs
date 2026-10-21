@@ -1,7 +1,7 @@
-defmodule PeonCore.DiffTest do
+defmodule Totem.DiffTest do
   use ExUnit.Case, async: true
 
-  alias PeonCore.Diff
+  alias Totem.Diff
 
   test "line diff" do
     assert Diff.lines("a\nb\nc", "a\nx\nc") == [eq: ["a"], del: ["b"], ins: ["x"], eq: ["c"]]

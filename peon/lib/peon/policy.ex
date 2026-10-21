@@ -1,4 +1,4 @@
-defmodule PeonCore.Policy do
+defmodule Peon.Policy do
   @moduledoc """
   Deterministic changeset rules, applied at submit and again before any ref move.
 
@@ -13,7 +13,7 @@ defmodule PeonCore.Policy do
   (prod needs approval) runs at ref move.
   """
 
-  alias PeonCore.Tree
+  alias Totem.{Glob, Tree}
 
   @default_settings %{
     restart_paths: [
@@ -81,7 +81,8 @@ defmodule PeonCore.Policy do
       [] ->
         {:ok,
          %{
-           restart_required: Enum.any?(files, &matches?(elem(&1, 0), settings.restart_paths)),
+           restart_required:
+             Enum.any?(files, &Glob.matches?(elem(&1, 0), settings.restart_paths)),
            destructive_migrations: destructive
          }}
 
@@ -90,12 +91,8 @@ defmodule PeonCore.Policy do
     end
   end
 
-  @doc "Matches `path` against glob patterns where `*` stays within a segment and `**` spans segments."
-  @spec matches?(String.t(), [String.t()]) :: boolean()
-  def matches?(path, globs), do: Enum.any?(globs, &Regex.match?(glob_regex(&1), path))
-
   defp forbidden(path, :ai, settings) do
-    if matches?(path, settings.forbidden_paths) do
+    if Glob.matches?(path, settings.forbidden_paths) do
       [
         %{
           rule: :forbidden_path,
@@ -111,7 +108,7 @@ defmodule PeonCore.Policy do
   defp forbidden(_path, _author, _settings), do: []
 
   defp edited_migration(path, base_tree, settings) do
-    if matches?(path, settings.migration_paths) and Map.has_key?(base_tree, path) do
+    if Glob.matches?(path, settings.migration_paths) and Map.has_key?(base_tree, path) do
       [
         %{
           rule: :edited_migration,
@@ -125,7 +122,7 @@ defmodule PeonCore.Policy do
   end
 
   defp new_migration?(path, base_tree, settings) do
-    matches?(path, settings.migration_paths) and not Map.has_key?(base_tree, path)
+    Glob.matches?(path, settings.migration_paths) and not Map.has_key?(base_tree, path)
   end
 
   defp destructive_violation(path) do
@@ -144,16 +141,5 @@ defmodule PeonCore.Policy do
     for {name, regex} <- @secret_patterns, Regex.match?(regex, content) do
       %{rule: :secret, path: path, reason: "#{path} contains what looks like a #{name}"}
     end
-  end
-
-  defp glob_regex(glob) do
-    body =
-      glob
-      |> Regex.escape()
-      |> String.replace("\\*\\*", "\0")
-      |> String.replace("\\*", "[^/]*")
-      |> String.replace("\0", ".*")
-
-    Regex.compile!("^" <> body <> "$")
   end
 end

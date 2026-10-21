@@ -24,7 +24,6 @@ defmodule Peon.Ship do
 
   alias Peon.{Chat, Code, Env, Project, Store}
   alias Peon.Store.Changeset
-  alias PeonCore.Policy
 
   # Paths an AI changeset can't land by itself (project setting "review_paths"):
   # dependencies and config. Everything else, authentication included, lands
@@ -54,7 +53,7 @@ defmodule Peon.Ship do
 
   defp pipeline_reasons(cs, settings) do
     globs = settings["review_paths"] || @review_paths
-    paths = for %{"path" => path} <- cs.files, Policy.matches?(path, globs), do: path
+    paths = for %{"path" => path} <- cs.files, Totem.Glob.matches?(path, globs), do: path
 
     if(settings["auto_land"] == false, do: ["auto-landing is off for this project"], else: []) ++
       if(paths == [], do: [], else: ["it changes #{Enum.join(paths, ", ")}"])
