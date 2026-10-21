@@ -174,8 +174,10 @@ defmodule BurrowWeb.WorkspaceLive do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
 
-  def handle_async(:models, {:ok, {:ok, models}}, socket),
-    do: {:noreply, assign(socket, models: models)}
+  def handle_async(:models, {:ok, {:ok, models}}, socket) do
+    default = Burrow.OpenCode.usable(socket.assigns.default_model, Enum.map(models, &elem(&1, 0)))
+    {:noreply, assign(socket, models: Map.new(models), default_model: default)}
+  end
 
   def handle_async(:models, _result, socket), do: {:noreply, socket}
 

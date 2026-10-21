@@ -77,6 +77,13 @@ defmodule Burrow.ChatTest do
     assert [%{role: :user, text: "/deploy"}] = Chat.normalize(user.("/deploy"))
   end
 
+  test "a model without a login falls back to the agent's first model" do
+    ids = ["opencode/minimax-free", "opencode/big-pickle"]
+    assert Burrow.OpenCode.usable("openai/gpt-6-sol", ids) == "opencode/minimax-free"
+    assert Burrow.OpenCode.usable("opencode/big-pickle", ids) == "opencode/big-pickle"
+    assert Burrow.OpenCode.usable("openai/gpt-6-sol", []) == "openai/gpt-6-sol"
+  end
+
   test "ports browsers refuse are never used" do
     refute Burrow.Ports.browser_safe?(5060)
     refute Burrow.Ports.browser_safe?(5061)

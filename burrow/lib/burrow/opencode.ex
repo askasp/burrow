@@ -103,17 +103,26 @@ defmodule Burrow.OpenCode do
   end
 
   @doc """
-  Models the user can pick: provider/model id => the model's variants, its
-  thinking levels (e.g. `["low", "medium", "high"]`).
+  Models the user can pick, in opencode's order: `{provider/model id, the
+  model's variants}`, its thinking levels (e.g. `["low", "medium", "high"]`).
   """
   def models(user_id) do
     with {:ok, %{"data" => models}} <- Server.request(user_id, :get, "/model") do
       {:ok,
-       Map.new(models || [], fn m ->
-         {"#{m["providerID"]}/#{m["id"]}", Enum.map(m["variants"] || [], & &1["id"])}
-       end)}
+       for(
+         m <- models || [],
+         do: {"#{m["providerID"]}/#{m["id"]}", Enum.map(m["variants"] || [], & &1["id"])}
+       )}
     end
   end
+
+  @doc """
+  `model` if it is among `ids` (the models the user's logins give, in
+  opencode's order), else opencode's first: a model whose login is gone, or
+  the default with no login at all, would fail every turn.
+  """
+  def usable(model, []), do: model
+  def usable(model, ids), do: if(model in ids, do: model, else: hd(ids))
 
   @doc """
   Local mode only: copies the logins of this computer's own opencode into the

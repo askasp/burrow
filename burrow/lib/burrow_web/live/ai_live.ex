@@ -31,8 +31,12 @@ defmodule BurrowWeb.AILive do
   def handle_async(:load, {:ok, {:error, reason}}, socket),
     do: {:noreply, assign(socket, error: "Could not reach opencode: #{inspect(reason)}")}
 
-  def handle_async(:load, {:ok, {providers, models}}, socket),
-    do: {:noreply, assign(socket, providers: providers, models: models, error: nil)}
+  def handle_async(:load, {:ok, {providers, models}}, socket) do
+    model = OpenCode.usable(socket.assigns.model, Enum.map(models, &elem(&1, 0)))
+
+    {:noreply,
+     assign(socket, providers: providers, models: Map.new(models), model: model, error: nil)}
+  end
 
   def handle_async(:load, {:exit, reason}, socket),
     do: {:noreply, assign(socket, error: "Could not reach opencode: #{inspect(reason)}")}

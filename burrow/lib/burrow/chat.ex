@@ -360,7 +360,9 @@ defmodule Burrow.Chat do
 
   def handle_call({:prompt, text}, _from, state) do
     prompted_at = System.system_time(:millisecond)
-    {model, effort} = model(state)
+    {picked, effort} = model(state)
+    model = Burrow.OpenCode.usable(picked, Client.model_ids(conn(state)))
+    effort = if model == picked, do: effort
 
     # The model and thinking level picked last go with this message.
     with :ok <- Client.set_model(conn(state), state.session_id, model, effort),

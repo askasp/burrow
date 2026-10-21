@@ -74,6 +74,17 @@ defmodule Burrow.OpenCode.Client do
     end
   end
 
+  @doc "The agent's models (provider/model), in opencode's order; [] if it can't say."
+  def model_ids(conn) do
+    case Req.get(req(conn), url: "/api/model") do
+      {:ok, %{status: 200, body: %{"data" => models}}} ->
+        for m <- models, do: "#{m["providerID"]}/#{m["id"]}"
+
+      _ ->
+        []
+    end
+  end
+
   @doc "The session's messages, oldest first."
   def messages(conn, session_id) do
     case Req.get(req(conn), url: "/api/session/#{session_id}/message") do
