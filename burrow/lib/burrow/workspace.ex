@@ -10,7 +10,8 @@ defmodule Burrow.Workspace do
   alias Totem.{Repo, Tree}
 
   @doc "What is never part of the app's code in `dir`."
-  def ignore(dir), do: Totem.Ignore.matcher(dir, file: ".peonignore", extra: [".peon/**", ".opencode/**"])
+  def ignore(dir),
+    do: Totem.Ignore.matcher(dir, file: ".peonignore", extra: [".peon/**", ".opencode/**"])
 
   def checked_out?(dir), do: File.exists?(base_path(dir))
 
@@ -25,7 +26,9 @@ defmodule Burrow.Workspace do
     base = if checked_out?(dir), do: read_base(dir)["tree"], else: %{}
 
     for {path, change} <- Tree.changes(base, target) do
-      if change == :deleted, do: File.rm(Path.join(dir, path)), else: write(repo, dir, path, change)
+      if change == :deleted,
+        do: File.rm(Path.join(dir, path)),
+        else: write(repo, dir, path, change)
     end
 
     mark(repo, dir, id)
@@ -74,7 +77,9 @@ defmodule Burrow.Workspace do
     File.rm_rf!(main)
 
     conflicts =
-      for {path, change} <- Tree.changes(base, target), current[path] != target[path], reduce: [] do
+      for {path, change} <- Tree.changes(base, target),
+          current[path] != target[path],
+          reduce: [] do
         conflicts ->
           cond do
             current[path] == base[path] and change == :deleted ->

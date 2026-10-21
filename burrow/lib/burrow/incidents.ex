@@ -36,7 +36,13 @@ defmodule Burrow.Incidents do
   def subscribe(project_id), do: Projects.subscribe(project_id, "incidents")
 
   def list(project_id, limit \\ 20),
-    do: Repo.all(from i in __MODULE__, where: i.project_id == ^project_id, order_by: [desc: i.last_seen_at, desc: i.id], limit: ^limit)
+    do:
+      Repo.all(
+        from i in __MODULE__,
+          where: i.project_id == ^project_id,
+          order_by: [desc: i.last_seen_at, desc: i.id],
+          limit: ^limit
+      )
 
   def get(id), do: Repo.get(__MODULE__, id)
 
@@ -47,22 +53,38 @@ defmodule Burrow.Incidents do
 
     case Repo.get_by(__MODULE__, project_id: project.id, env: env, fingerprint: fingerprint) do
       nil ->
-        %__MODULE__{project_id: project.id, env: env, fingerprint: fingerprint, title: title(event),
-                    detail: detail(event), change_id: change_id, last_seen_at: now}
+        %__MODULE__{
+          project_id: project.id,
+          env: env,
+          fingerprint: fingerprint,
+          title: title(event),
+          detail: detail(event),
+          change_id: change_id,
+          last_seen_at: now
+        }
         |> Repo.insert!()
         |> broadcast()
         |> maybe_fix(project)
 
       %{status: "resolved"} = incident ->
         incident
-        |> Ecto.Changeset.change(count: incident.count + 1, status: "open", chat_id: nil,
-          detail: detail(event), change_id: change_id, last_seen_at: now)
+        |> Ecto.Changeset.change(
+          count: incident.count + 1,
+          status: "open",
+          chat_id: nil,
+          detail: detail(event),
+          change_id: change_id,
+          last_seen_at: now
+        )
         |> Repo.update!()
         |> broadcast()
         |> maybe_fix(project)
 
       incident ->
-        incident |> Ecto.Changeset.change(count: incident.count + 1, last_seen_at: now) |> Repo.update!() |> broadcast()
+        incident
+        |> Ecto.Changeset.change(count: incident.count + 1, last_seen_at: now)
+        |> Repo.update!()
+        |> broadcast()
     end
   end
 
@@ -70,7 +92,13 @@ defmodule Burrow.Incidents do
   def fix(%__MODULE__{} = incident, project, created_by \\ "peon") do
     if Chats.room?(project.id) do
       chat = Chats.create(project.id, "Fix: " <> incident.title, created_by)
-      incident = incident |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id) |> Repo.update!() |> broadcast()
+
+      incident =
+        incident
+        |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id)
+        |> Repo.update!()
+        |> broadcast()
+
       Ship.tell_chat(project.id, chat.id, prompt(incident))
       {:ok, incident}
     else
@@ -90,12 +118,21 @@ defmodule Burrow.Incidents do
 
       incident =
         incident
-        |> Ecto.Changeset.change(status: if(retry?, do: "fixing", else: "open"),
-          detail: "Fix chat stopped#{if retry?, do: " (asked again)"}: #{reason}\n\n" <> incident.detail)
+        |> Ecto.Changeset.change(
+          status: if(retry?, do: "fixing", else: "open"),
+          detail:
+            "Fix chat stopped#{if retry?, do: " (asked again)"}: #{reason}\n\n" <> incident.detail
+        )
         |> Repo.update!()
         |> broadcast()
 
-      if retry?, do: Ship.tell_chat(project_id, chat_id, "The last attempt stopped (#{reason}). Try again.\n\n" <> prompt(incident))
+      if retry?,
+        do:
+          Ship.tell_chat(
+            project_id,
+            chat_id,
+            "The last attempt stopped (#{reason}). Try again.\n\n" <> prompt(incident)
+          )
     end
 
     :ok
@@ -103,7 +140,11 @@ defmodule Burrow.Incidents do
 
   def chat_deleted(project_id, chat_id) do
     for incident <- fixing(project_id, chat_id),
-        do: incident |> Ecto.Changeset.change(status: "open", chat_id: nil) |> Repo.update!() |> broadcast()
+        do:
+          incident
+          |> Ecto.Changeset.change(status: "open", chat_id: nil)
+          |> Repo.update!()
+          |> broadcast()
 
     :ok
   end
@@ -115,7 +156,11 @@ defmodule Burrow.Incidents do
   def deployed(project, env, change_id) do
     dir = Projects.repo_dir(project)
 
-    for i <- Repo.all(from i in __MODULE__, where: i.project_id == ^project.id and i.env == ^env and i.status == "fixing"),
+    for i <-
+          Repo.all(
+            from i in __MODULE__,
+              where: i.project_id == ^project.id and i.env == ^env and i.status == "fixing"
+          ),
         draft = Totem.Repo.draft(dir, i.chat_id),
         draft && draft.change && draft.change <= change_id,
         do: resolve(i)
@@ -124,7 +169,11 @@ defmodule Burrow.Incidents do
   end
 
   defp fixing(project_id, chat_id),
-    do: Repo.all(from i in __MODULE__, where: i.project_id == ^project_id and i.chat_id == ^chat_id and i.status == "fixing")
+    do:
+      Repo.all(
+        from i in __MODULE__,
+          where: i.project_id == ^project_id and i.chat_id == ^chat_id and i.status == "fixing"
+      )
 
   defp title(event) do
     message = event["message"] |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
@@ -143,7 +192,11 @@ defmodule Burrow.Incidents do
   end
 
   defp maybe_fix(incident, project) do
-    fixing = Repo.aggregate(from(i in __MODULE__, where: i.project_id == ^project.id and i.status == "fixing"), :count)
+    fixing =
+      Repo.aggregate(
+        from(i in __MODULE__, where: i.project_id == ^project.id and i.status == "fixing"),
+        :count
+      )
 
     with true <- Projects.settings(project)["auto_fix"] != false and fixing < @max_fixing,
          {:ok, incident} <- fix(incident, project) do

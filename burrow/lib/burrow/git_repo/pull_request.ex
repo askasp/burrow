@@ -155,7 +155,9 @@ defmodule Burrow.GitRepo.PullRequest do
         :ok
 
       {:error, output} ->
-        if GitRepo.needs_token?(project, output), do: no_token(project, chat_id), else: {:error, output}
+        if GitRepo.needs_token?(project, output),
+          do: no_token(project, chat_id),
+          else: {:error, output}
     end
   end
 

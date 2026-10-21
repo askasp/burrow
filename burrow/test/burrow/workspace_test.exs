@@ -1,71 +1,75 @@
-defmodule Peon.WorkspaceTest do
-  use Peon.DataCase, async: false
+defmodule Burrow.WorkspaceTest do
+  use ExUnit.Case, async: true
 
-  alias Peon.{Code, Store, Workspace}
+  alias Burrow.Workspace
+  alias Totem.{Blob, Repo}
 
   @moduletag :tmp_dir
 
   setup %{tmp_dir: dir} do
-    src = Path.join(dir, "src")
-    File.mkdir_p!(Path.join(src, "lib"))
-    File.write!(Path.join(src, "lib/a.ex"), "a1")
-    File.write!(Path.join(src, "lib/b.ex"), "b1")
-    {:ok, base} = Store.import_dir(src, "app", "App", %{kind: :human, id: "aksel"})
+    repo = Path.join(dir, "repo")
+
+    files = %{
+      "lib/a.ex" => "a1\na2\na3\n",
+      "lib/b.ex" => "b\n",
+      "lib/c.ex" => "c1\nc2\nc3\n"
+    }
+
+    tree = Map.new(files, fn {path, content} -> {path, Blob.hash(content)} end)
+
+    {:ok, _} =
+      Repo.init(repo, tree, Map.new(files, &{Blob.hash(elem(&1, 1)), elem(&1, 1)}), "Import", "t")
 
     ws = Path.join(dir, "ws")
-    Workspace.checkout(ws, base.id)
-    %{base: base, ws: ws}
+    Workspace.reset(repo, ws, 1)
+    %{repo: repo, ws: ws}
   end
 
-  test "changes are the agent's edits against the base, ignoring build output", %{
-    base: base,
+  test "changes are the edits against the base, ignoring build output and Burrow's files", %{
     ws: ws
   } do
-    assert Workspace.changes(ws) == {base.id, []}
+    assert Workspace.base_id(ws) == 1
+    assert Workspace.changes(ws) == {1, []}
 
-    File.write!(Path.join(ws, "lib/a.ex"), "a2")
+    File.write!(Path.join(ws, "lib/a.ex"), "changed\n")
     File.rm!(Path.join(ws, "lib/b.ex"))
-    File.write!(Path.join(ws, "lib/c.ex"), "c1")
+    File.write!(Path.join(ws, "lib/new.ex"), "new\n")
     File.mkdir_p!(Path.join(ws, "_build/dev"))
-    File.write!(Path.join(ws, "_build/dev/x"), "x")
-    File.write!(Path.join(ws, "app_dev.db"), "db")
+    File.write!(Path.join(ws, "_build/dev/x.beam"), "beam")
+    File.write!(Path.join(ws, ".peon/preview.log"), "log")
 
-    assert {_, changes} = Workspace.changes(ws)
-    assert Enum.sort(changes) == [{"lib/a.ex", "a2"}, {"lib/b.ex", :deleted}, {"lib/c.ex", "c1"}]
+    assert {1, changes} = Workspace.changes(ws)
+
+    assert Enum.sort(changes) == [
+             {"lib/a.ex", "changed\n"},
+             {"lib/b.ex", :deleted},
+             {"lib/new.ex", "new\n"}
+           ]
   end
 
-  test "restore puts files back as they are in the base", %{ws: ws} do
-    File.write!(Path.join(ws, "lib/a.ex"), "a2")
-    File.write!(Path.join(ws, "lib/new.ex"), "n")
-    :ok = Workspace.restore(ws, ["lib/a.ex", "lib/new.ex"])
-    assert File.read!(Path.join(ws, "lib/a.ex")) == "a1"
-    refute File.exists?(Path.join(ws, "lib/new.ex"))
+  test "restore puts files back as the base has them", %{repo: repo, ws: ws} do
+    File.write!(Path.join(ws, "lib/a.ex"), "changed\n")
+    File.write!(Path.join(ws, "lib/new.ex"), "new\n")
+
+    :ok = Workspace.restore(repo, ws, ["lib/a.ex", "lib/new.ex"])
+    assert Workspace.changes(ws) == {1, []}
   end
 
-  test "rebase takes main's changes to untouched files and reports conflicts", %{
-    base: base,
+  test "rebase: untouched files take main's version, lines merge, the same lines conflict", %{
+    repo: repo,
     ws: ws
   } do
-    {:ok, cs} =
-      Store.submit(%{
-        parent: base.id,
-        intent: "change a and b",
-        files: [
-          %{"path" => "lib/a.ex", "content" => "a-main"},
-          %{"path" => "lib/b.ex", "content" => "b-main"}
-        ],
-        author: %{kind: :human, id: "aksel"}
-      })
+    files = [{"lib/a.ex", "a1\na2\nA3\n"}, {"lib/b.ex", "B\n"}, {"lib/c.ex", "c1\nC2\nc3\n"}]
+    {:ok, main} = Repo.commit(repo, 1, files, "main moved", "t")
 
-    {:ok, _} = Store.set_status(cs.id, "passed", %{})
-    {:ok, _} = Store.move_ref("main", cs.id, Code.ref("main").version, "aksel")
+    File.write!(Path.join(ws, "lib/a.ex"), "A1\na2\na3\n")
+    File.write!(Path.join(ws, "lib/c.ex"), "c1\nmine\nc3\n")
 
-    File.write!(Path.join(ws, "lib/b.ex"), "b-agent")
-    assert Workspace.rebase(ws, cs.id) == ["lib/b.ex"]
-
-    assert File.read!(Path.join(ws, "lib/a.ex")) == "a-main"
-    assert File.read!(Path.join(ws, "lib/b.ex")) == "b-agent"
-    assert File.read!(Path.join(ws, ".peon/main/lib/b.ex")) == "b-main"
-    assert Workspace.changes(ws) == {cs.id, [{"lib/b.ex", "b-agent"}]}
+    assert Workspace.rebase(repo, ws, main.id) == ["lib/c.ex"]
+    assert Workspace.base_id(ws) == main.id
+    assert File.read!(Path.join(ws, "lib/b.ex")) == "B\n"
+    assert File.read!(Path.join(ws, "lib/a.ex")) == "A1\na2\nA3\n"
+    assert File.read!(Path.join(ws, "lib/c.ex")) == "c1\nmine\nc3\n"
+    assert File.read!(Path.join(ws, ".peon/main/lib/c.ex")) == "c1\nC2\nc3\n"
   end
 end

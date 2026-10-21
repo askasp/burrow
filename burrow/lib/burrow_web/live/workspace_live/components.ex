@@ -358,9 +358,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           </button>
         </div>
       </div>
-      <span title={
-        if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat"
-      }>
+      <span title={if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat"}>
         <button
           id="new-chat"
           type="button"
@@ -443,7 +441,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     # Once on main, main's own check is the last step.
     main =
       if draft.change && check && check.change_id >= draft.change,
-        do: [%{"name" => "main", "status" => if(check.status == "running", do: "running", else: check.status)}],
+        do: [
+          %{
+            "name" => "main",
+            "status" => if(check.status == "running", do: "running", else: check.status)
+          }
+        ],
         else: []
 
     assigns =
@@ -500,7 +503,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             Discard
           </button>
           <div :if={@phase in ~w(landing staged)} class="dep" role="status">
-            <span :if={@phase == "staged"} class="live"><.icon name="hero-check" class="size-4" /> On staging</span>
+            <span :if={@phase == "staged"} class="live"><.icon name="hero-check" class="size-4" />
+            On staging</span>
             <span :if={@phase == "landing" and !@promote}>On main</span>
             <span :if={@phase == "landing" and !@promote} class="dbar" aria-hidden="true"><i></i></span>
             <button
@@ -768,7 +772,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         <div class="ws-logs-head">
           <.icon name="hero-command-line" class="size-4 muted" />
           <span class="font-semibold text-[13px]">Logs</span>
-          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(@view, @live_only?, @number)}</span>
+          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(
+            @view,
+            @live_only?,
+            @number
+          )}</span>
           <button
             type="button"
             phx-click="toggle_logs"
@@ -1046,7 +1054,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp sync_text(%{promote: id, live_only?: true}) when id != nil,
     do: "Main ##{id} passed its check and is ready to ship."
 
-  defp sync_text(%{promote: id}) when id != nil, do: "Staging is ahead of prod: ##{id} is ready to ship."
+  defp sync_text(%{promote: id}) when id != nil,
+    do: "Staging is ahead of prod: ##{id} is ready to ship."
+
   defp sync_text(%{auto_promote: true}), do: "Every change that passes ships by itself."
   defp sync_text(%{live_only?: true}), do: "Live runs main's latest shipped change."
   defp sync_text(_assigns), do: "Staging and prod match."

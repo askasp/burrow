@@ -1,7 +1,7 @@
-defmodule Peon.HostPreviewTest do
+defmodule Burrow.GitRepo.HostPreviewTest do
   use ExUnit.Case, async: true
 
-  alias Peon.HostPreview
+  alias Burrow.GitRepo.HostPreview
 
   @moduletag :tmp_dir
 
@@ -35,7 +35,7 @@ defmodule Peon.HostPreviewTest do
     refute HostPreview.up?(port, "/")
   end
 
-  test "commands get the pack's env, not Peon's own", %{tmp_dir: dir} do
+  test "commands get the pack's env, not Burrow's own", %{tmp_dir: dir} do
     System.put_env("PEON_HOST_PREVIEW_TEST", "leaked")
     on_exit(fn -> System.delete_env("PEON_HOST_PREVIEW_TEST") end)
 

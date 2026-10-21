@@ -72,20 +72,30 @@ defmodule Burrow.Ship do
 
   # In the chat's agent container, on its own files, stopping at the first failure.
   defp check(project, chat_id, draft) do
-    format = for {path, hash} <- draft.files, hash != :deleted, Path.extname(path) in @formattable, do: quote_arg(path)
+    format =
+      for {path, hash} <- draft.files,
+          hash != :deleted,
+          Path.extname(path) in @formattable,
+          do: quote_arg(path)
 
     steps = [
       {"deps", "mix deps.get"},
       {"compile", "mix compile --warnings-as-errors"},
-      {"format", if(format == [], do: "true", else: "mix format --check-formatted " <> Enum.join(format, " "))},
+      {"format",
+       if(format == [],
+         do: "true",
+         else: "mix format --check-formatted " <> Enum.join(format, " ")
+       )},
       {"test", "rm -f *_test.db *_test.db-*; mix test"}
     ]
 
     container = Chat.agent_name(project, chat_id)
+    # Tests run the checks without a container.
+    exec = Application.get_env(:burrow, :check_runner, &Sandbox.exec/3)
 
     Enum.reduce_while(steps, {"passed", []}, fn {name, script}, {_, done} ->
       started = System.monotonic_time(:millisecond)
-      {output, code} = Sandbox.exec(container, script, env: %{"MIX_ENV" => "test"})
+      {output, code} = exec.(container, script, env: %{"MIX_ENV" => "test"})
       status = if code == 0, do: "passed", else: "failed"
       Projects.broadcast(project.id, "ship", {:check_step, chat_id, name, status})
 
@@ -96,7 +106,9 @@ defmodule Burrow.Ship do
         "output" => if(code == 0, do: "", else: trim(output))
       }
 
-      if code == 0, do: {:cont, {"passed", done ++ [step]}}, else: {:halt, {"failed", done ++ [step]}}
+      if code == 0,
+        do: {:cont, {"passed", done ++ [step]}},
+        else: {:halt, {"failed", done ++ [step]}}
     end)
   end
 
@@ -128,7 +140,9 @@ defmodule Burrow.Ship do
 
   defp draft(project, chat_id, fields) do
     Repo.update_draft(Projects.repo_dir(project), chat_id, fields)
-    if status = fields[:status], do: Projects.broadcast(project.id, "ship", {:draft, chat_id, status})
+
+    if status = fields[:status],
+      do: Projects.broadcast(project.id, "ship", {:draft, chat_id, status})
   end
 
   defp failed(steps) do
@@ -176,6 +190,14 @@ defmodule Burrow.Ship do
   def tell_chat(_project_id, nil, _text), do: :ok
 
   def tell_chat(project_id, chat_id, text) do
+    # Without running projects (tests) there are no agents to tell.
+    if Application.get_env(:burrow, :start_cells, true),
+      do: start_telling(project_id, chat_id, text)
+
+    :ok
+  end
+
+  defp start_telling(project_id, chat_id, text) do
     Task.Supervisor.start_child(Burrow.TaskSupervisor, fn ->
       with %{} = project <- Projects.get(project_id),
            :ok <- Chat.send_message(project, chat_id, "[Peon] " <> text) do
@@ -211,7 +233,11 @@ defmodule Burrow.Ship do
     Process.demonitor(ref, [:flush])
     run = Runs.finish(run, status: status, detail: detail)
     Projects.broadcast(state.project.id, "ship", {:main_check, run})
-    if status == "passed", do: advance(state.project, run.change_id), else: blame(state.project, run)
+
+    if status == "passed",
+      do: advance(state.project, run.change_id),
+      else: blame(state.project, run)
+
     {:noreply, next(%{state | task: nil})}
   end
 
@@ -229,7 +255,10 @@ defmodule Burrow.Ship do
     if tip && (last == nil or last.change_id != tip or last.status == "running") do
       run = Runs.start(project.id, "check", "main", tip)
       Projects.broadcast(project.id, "ship", {:main_check, run})
-      task = Task.Supervisor.async_nolink(Burrow.TaskSupervisor, fn -> check_main(project, run) end)
+
+      task =
+        Task.Supervisor.async_nolink(Burrow.TaskSupervisor, fn -> check_main(project, run) end)
+
       %{state | task: {task.ref, tip}}
     else
       state
@@ -255,8 +284,10 @@ defmodule Burrow.Ship do
     }
 
     steps = [
-      {"test", %{"MIX_ENV" => "test"}, Sandbox.unlock_deps() <> "mix deps.get && rm -f *_test.db *_test.db-*; mix test"},
-      {"build", prod, "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy"},
+      {"test", %{"MIX_ENV" => "test"},
+       Sandbox.unlock_deps() <> "mix deps.get && rm -f *_test.db *_test.db-*; mix test"},
+      {"build", prod,
+       "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy"},
       {"boot", prod,
        "mix ecto.migrate && (mix phx.server > /tmp/boot.log 2>&1 &) && " <>
          "for i in $(seq 60); do curl -sf -o /dev/null http://localhost:4000/health && exit 0; sleep 2; done; " <>
@@ -267,7 +298,9 @@ defmodule Burrow.Ship do
       {code, output, _ms} =
         Sandbox.run(dir, script, project: project.slug, env: env, timeout: :timer.minutes(20))
 
-      if code == 0, do: {:cont, acc}, else: {:halt, {run, "failed", "#{name} failed:\n\n" <> trim(to_string(output))}}
+      if code == 0,
+        do: {:cont, acc},
+        else: {:halt, {run, "failed", "#{name} failed:\n\n" <> trim(to_string(output))}}
     end)
   end
 
@@ -288,15 +321,22 @@ defmodule Burrow.Ship do
     end
   end
 
+  @doc false
   # Main failed: the newest change, a chat's, comes out again and its chat is told.
-  defp blame(project, run) do
+  def blame(project, run) do
     repo = Projects.repo_dir(project)
 
     with %{draft: chat_id} = change when chat_id != nil <- Repo.change(repo, run.change_id),
          true <- Repo.ref(repo, "main") == change.id,
          {:ok, _} <- revert(project, change.id, "peon") do
       main = %{"name" => "main", "status" => "failed", "output" => run.detail}
-      Repo.update_draft(repo, chat_id, status: "failed", change: nil, checks: %{"steps" => [main]})
+
+      Repo.update_draft(repo, chat_id,
+        status: "failed",
+        change: nil,
+        checks: %{"steps" => [main]}
+      )
+
       Projects.broadcast(project.id, "ship", {:draft, chat_id, "failed"})
 
       tell_chat(project.id, chat_id, """
@@ -320,7 +360,10 @@ defmodule Burrow.Ship do
       end
 
     text = Enum.join(lines, "\n")
-    if byte_size(text) > @output_limit, do: binary_part(text, 0, @output_limit) <> "\n...", else: text
+
+    if byte_size(text) > @output_limit,
+      do: binary_part(text, 0, @output_limit) <> "\n...",
+      else: text
   end
 
   defp quote_arg(arg), do: "'" <> String.replace(arg, "'", ~S('\'')) <> "'"

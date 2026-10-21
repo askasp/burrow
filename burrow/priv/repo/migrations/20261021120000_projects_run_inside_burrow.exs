@@ -4,6 +4,7 @@ defmodule Burrow.Repo.Migrations.ProjectsRunInsideBurrow do
   # What each project's Peon kept in a database of its own now lives here;
   # its code lives in a Totem history per project (Totem.Repo).
   def change do
+    # SQLite can't drop a column an index still covers.
     drop_if_exists index(:projects, [:port])
 
     alter table(:projects) do

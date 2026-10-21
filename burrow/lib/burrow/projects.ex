@@ -51,6 +51,7 @@ defmodule Burrow.Projects do
 
   def put_settings(%Project{id: id}, changes) do
     project = get(id)
+
     {1, _} =
       Repo.update_all(from(p in Project, where: p.id == ^id),
         set: [settings: Map.merge(project.settings || %{}, changes)]
@@ -226,7 +227,6 @@ defmodule Burrow.Projects do
     base = Application.fetch_env!(:burrow, BurrowWeb.Endpoint)[:secret_key_base]
     :crypto.mac(:hmac, :sha256, base, "#{purpose}:#{id}") |> Base.url_encode64(padding: false)
   end
-
 
   @doc """
   Gives a project a staging environment in front of prod, for good: main

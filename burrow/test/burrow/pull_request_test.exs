@@ -1,7 +1,10 @@
-defmodule Peon.PullRequestTest do
-  use Peon.DataCase, async: false
+defmodule Burrow.GitRepo.PullRequestTest do
+  use Burrow.DataCase, async: false
 
-  alias Peon.{Git, PullRequest, Secrets}
+  import Burrow.ProjectFixtures
+
+  alias Burrow.{GitRepo, Secrets}
+  alias Burrow.GitRepo.PullRequest
 
   @moduletag :tmp_dir
 
@@ -15,22 +18,23 @@ defmodule Peon.PullRequestTest do
     sh!(["remote", "add", "origin", origin], work)
     sh!(["push", "origin", "main"], work)
 
-    put_instance(repo: %{url: origin, branch: "main"}, data_dir: Path.join(dir, "data"))
-    previous = Application.get_env(:peon, :github_req)
-    Application.put_env(:peon, :github_req, plug: {Req.Test, PullRequest})
-    on_exit(fn -> Application.put_env(:peon, :github_req, previous) end)
+    project = project_fixture(%{repo_url: origin})
+    previous = Application.get_env(:burrow, :github_req)
+    Application.put_env(:burrow, :github_req, plug: {Req.Test, PullRequest})
+    on_exit(fn -> Application.put_env(:burrow, :github_req, previous) end)
 
     chat = Path.join(dir, "chats/a/workspace")
-    :ok = Git.checkout(chat, "a")
-    %{origin: origin, work: work, chat: chat}
+    :ok = GitRepo.checkout(project, chat, "a")
+    %{origin: origin, work: work, chat: chat, project: project}
   end
 
   test "a submit commits, merges main and pushes the chat's branch", %{
     origin: origin,
     work: work,
-    chat: chat
+    chat: chat,
+    project: project
   } do
-    assert {:error, :no_changes} = PullRequest.submit("a", chat, "Nothing", "")
+    assert {:error, :no_changes} = PullRequest.submit(project, "a", chat, "Nothing", "")
 
     File.write!(Path.join(chat, "index.html"), "one\ntwo\nthree\n")
     File.write!(Path.join(chat, "new.txt"), "hi")
@@ -38,39 +42,45 @@ defmodule Peon.PullRequestTest do
     commit!(work, "meanwhile")
     sh!(["push", "origin", "main"], work)
 
-    assert {:ok, nil} = PullRequest.submit("a", chat, "Add a third line", "")
+    assert {:ok, nil} = PullRequest.submit(project, "a", chat, "Add a third line", "")
 
     assert git!(["show", "peon/a:index.html"], origin) == "one\ntwo\nthree"
     assert git!(["show", "peon/a:other.txt"], origin) == "from main"
     assert git!(["log", "-2", "--format=%an %s", "peon/a"], origin) =~ "Peon Add a third line"
 
-    assert {:error, :no_changes} = PullRequest.submit("a", chat, "Again", "")
+    assert {:error, :no_changes} = PullRequest.submit(project, "a", chat, "Again", "")
   end
 
   test "a conflict with main is left for the agent to resolve", %{
     origin: origin,
     work: work,
-    chat: chat
+    chat: chat,
+    project: project
   } do
     File.write!(Path.join(work, "index.html"), "one\nTWO\n")
     commit!(work, "main's two")
     sh!(["push", "origin", "main"], work)
     File.write!(Path.join(chat, "index.html"), "one\nzwei\n")
 
-    assert {:error, {:conflict, ["index.html"]}} = PullRequest.submit("a", chat, "Zwei", "")
+    assert {:error, {:conflict, ["index.html"]}} =
+             PullRequest.submit(project, "a", chat, "Zwei", "")
+
     assert File.read!(Path.join(chat, "index.html")) =~ "<<<<<<<"
-    assert {:error, {:unresolved, ["index.html"]}} = PullRequest.submit("a", chat, "Zwei", "")
+
+    assert {:error, {:unresolved, ["index.html"]}} =
+             PullRequest.submit(project, "a", chat, "Zwei", "")
 
     File.write!(Path.join(chat, "index.html"), "one\nTWO zwei\n")
-    assert {:ok, nil} = PullRequest.submit("a", chat, "Zwei", "")
+    assert {:ok, nil} = PullRequest.submit(project, "a", chat, "Zwei", "")
     assert git!(["show", "peon/a:index.html"], origin) == "one\nTWO zwei"
   end
 
-  test "a failing check pushes nothing", %{origin: origin, chat: chat} do
+  test "a failing check pushes nothing", %{origin: origin, chat: chat, project: project} do
     File.write!(Path.join(chat, "index.html"), "broken")
 
     assert {:error, {:check_failed, "nope " <> _}} =
              PullRequest.submit(
+               project,
                "a",
                chat,
                "Break it",
@@ -88,14 +98,14 @@ defmodule Peon.PullRequestTest do
     origin: origin,
     chat: chat
   } do
-    put_instance(repo: %{url: "https://github.com/acme/shop.git", branch: "main"})
+    project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
     # The push still goes to the local origin; only the API is GitHub's.
     sh!(["remote", "set-url", "origin", origin], chat)
     File.write!(Path.join(chat, "index.html"), "new")
 
-    assert {:error, :no_token} = PullRequest.submit("a", chat, "New", "Body")
-    assert [%{name: "GITHUB_TOKEN", chat_id: "a"}] = Secrets.requested()
-    :ok = Secrets.put("GITHUB_TOKEN", "github_pat_x", "ada")
+    assert {:error, :no_token} = PullRequest.submit(project, "a", chat, "New", "Body")
+    assert [%{name: "GITHUB_TOKEN", chat_id: "a"}] = Secrets.list(project.id)
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
 
     test = self()
 
@@ -124,7 +134,7 @@ defmodule Peon.PullRequestTest do
     end)
 
     assert {:ok, "https://github.com/acme/shop/pull/12"} =
-             PullRequest.submit("a", chat, "New", "Body")
+             PullRequest.submit(project, "a", chat, "New", "Body")
 
     assert_received {"GET", "/user", ["Bearer github_pat_x"]}
 
@@ -144,7 +154,7 @@ defmodule Peon.PullRequestTest do
     File.write!(Path.join(chat, "index.html"), "newer")
 
     assert {:ok, "https://github.com/acme/shop/pull/12"} =
-             PullRequest.submit("a", chat, "Newer", "Body")
+             PullRequest.submit(project, "a", chat, "Newer", "Body")
   end
 
   defp commit!(dir, message) do

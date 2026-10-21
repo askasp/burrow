@@ -68,7 +68,8 @@ if config_env() != :test do
     # Chats running at once per project (agent and preview)
     max_running_chats: String.to_integer(System.get_env("BURROW_MAX_RUNNING_CHATS", "4")),
     # How long a deploy is watched for new errors
-    health_window: :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
+    health_window:
+      :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
     # The workspace (Burrow's own site) may show previews in a frame.
     frame_ancestors: [System.get_env("BURROW_PUBLIC_URL") || "http://localhost:#{burrow_port}"]
 end

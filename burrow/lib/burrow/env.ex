@@ -50,7 +50,10 @@ defmodule Burrow.Env do
   def subscribe(project_id), do: Projects.subscribe(project_id, "envs")
 
   def start_link({project, name}),
-    do: GenServer.start_link(__MODULE__, {project, name}, name: Burrow.Cell.via(project.id, {__MODULE__, name}))
+    do:
+      GenServer.start_link(__MODULE__, {project, name},
+        name: Burrow.Cell.via(project.id, {__MODULE__, name})
+      )
 
   def child_spec({project, name}),
     do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [{project, name}]}}
@@ -86,7 +89,9 @@ defmodule Burrow.Env do
     |> Enum.map(fn url ->
       uri = URI.parse(url)
       default? = {uri.scheme, uri.port} in [{"https", 443}, {"http", 80}]
-      "#{uri.scheme}://#{uri.host}" <> if(default? or uri.port == nil, do: "", else: ":#{uri.port}")
+
+      "#{uri.scheme}://#{uri.host}" <>
+        if(default? or uri.port == nil, do: "", else: ":#{uri.port}")
     end)
     |> Enum.uniq()
     |> Enum.join(" ")
@@ -149,17 +154,25 @@ defmodule Burrow.Env do
     env = Sandbox.running?(state.container) && Sandbox.env(state.container)
     secrets = Secrets.fingerprint(Secrets.env(state.project.id))
 
-    if state.deployed == id and env && env["PHX_HOST"] == Burrow.Ports.host(state.port) and
+    if ((state.deployed == id and env) && env["PHX_HOST"] == Burrow.Ports.host(state.port)) and
          env["TOTEM_LINK"] != nil and env["PEON_SECRETS"] == secrets do
       Logger.info("#{state.project.slug} #{state.name}: adopting the running container at ##{id}")
-      broadcast(%{state | app: Sandbox.follow_logs(state.container), app_status: :running, good: id, secrets: secrets})
+
+      broadcast(%{
+        state
+        | app: Sandbox.follow_logs(state.container),
+          app_status: :running,
+          good: id,
+          secrets: secrets
+      })
     end
   end
 
   @impl true
   def handle_call(:info, _from, state), do: {:reply, info_map(state), state}
 
-  def handle_call(:logs, _from, state), do: {:reply, state.logs |> :queue.to_list() |> Enum.join("\n"), state}
+  def handle_call(:logs, _from, state),
+    do: {:reply, state.logs |> :queue.to_list() |> Enum.join("\n"), state}
 
   def handle_call(:restart, _from, %{deploy: nil, deployed: id} = state) when id != nil,
     do: {:reply, :ok, start_deploy(state, id, cold: true)}
@@ -167,12 +180,23 @@ defmodule Burrow.Env do
   def handle_call(:restart, _from, state), do: {:reply, {:error, :busy}, state}
 
   def handle_call({:runtime, "overview", _opts}, _from, state),
-    do: {:reply, {:ok, Map.take(info_map(state), [:name, :status, :deployed, :good, :stats, :errors, :deploy])}, state}
+    do:
+      {:reply,
+       {:ok,
+        Map.take(info_map(state), [:name, :status, :deployed, :good, :stats, :errors, :deploy])},
+       state}
 
   def handle_call({:runtime, "processes", opts}, from, state),
-    do: {:noreply, request(state, %{"cmd" => "processes", "sort" => opts["sort"], "limit" => opts["limit"] || 15}, {:call, from})}
+    do:
+      {:noreply,
+       request(
+         state,
+         %{"cmd" => "processes", "sort" => opts["sort"], "limit" => opts["limit"] || 15},
+         {:call, from}
+       )}
 
-  def handle_call({:runtime, what, _opts}, _from, state), do: {:reply, {:error, "unknown: #{inspect(what)}"}, state}
+  def handle_call({:runtime, what, _opts}, _from, state),
+    do: {:reply, {:error, "unknown: #{inspect(what)}"}, state}
 
   @impl true
   def handle_info({:ref_moved, name, id}, %{name: name} = state) do
@@ -199,15 +223,21 @@ defmodule Burrow.Env do
     if state.deploy do
       {:noreply, fail(state, reason)}
     else
-      event = %{"fingerprint" => "exit:#{state.name}", "message" => "The app exited", "text" => reason}
+      event = %{
+        "fingerprint" => "exit:#{state.name}",
+        "message" => "The app exited",
+        "text" => reason
+      }
+
       Incidents.report(state.project, state.name, event, state.deployed)
       Process.send_after(self(), :revive, @revive_after)
       {:noreply, broadcast(state)}
     end
   end
 
-  def handle_info(:revive, %{deploy: nil, app_status: {:crashed, _}, deployed: id} = state) when id != nil,
-    do: {:noreply, start_deploy(state, id, cold: true)}
+  def handle_info(:revive, %{deploy: nil, app_status: {:crashed, _}, deployed: id} = state)
+      when id != nil,
+      do: {:noreply, start_deploy(state, id, cold: true)}
 
   def handle_info({:link, conn}, state) do
     state = drop_link(state)
@@ -225,10 +255,13 @@ defmodule Burrow.Env do
   def handle_info({closed, conn}, %{link: conn} = state) when closed in [:tcp_closed, :tcp_error],
     do: {:noreply, broadcast(drop_link(state))}
 
-  def handle_info({:tcp_error, conn, _}, %{link: conn} = state), do: {:noreply, broadcast(drop_link(state))}
+  def handle_info({:tcp_error, conn, _}, %{link: conn} = state),
+    do: {:noreply, broadcast(drop_link(state))}
 
   def handle_info({:watched, id}, %{deploy: %{run: %{id: id}, phase: :watching}} = state) do
-    if healthy?(state), do: {:noreply, succeed(state)}, else: {:noreply, fail(state, "/health or / did not answer")}
+    if healthy?(state),
+      do: {:noreply, succeed(state)},
+      else: {:noreply, fail(state, "/health or / did not answer")}
   end
 
   def handle_info({:boot_timeout, id}, %{deploy: %{run: %{id: id}, phase: :booting}} = state),
@@ -239,10 +272,25 @@ defmodule Burrow.Env do
   ## Deploying
 
   defp start_deploy(state, target, opts) do
-    totem? = opts[:cold] != true and state.app_status == :running and state.linked? and state.totem != nil
-    run = Runs.start(state.project.id, "deploy", state.name, target, status: "deploying", mode: if(totem?, do: "hot", else: "cold"))
+    totem? =
+      opts[:cold] != true and state.app_status == :running and state.linked? and
+        state.totem != nil
+
+    run =
+      Runs.start(state.project.id, "deploy", state.name, target,
+        status: "deploying",
+        mode: if(totem?, do: "hot", else: "cold")
+      )
+
     File.write!(Path.join(state.base, "deployed"), to_string(target))
-    state = %{state | deployed: target, queued: nil, deploy: %{run: run, target: target, phase: nil, known: known(state)}}
+
+    state = %{
+      state
+      | deployed: target,
+        queued: nil,
+        deploy: %{run: run, target: target, phase: nil, known: known(state)}
+    }
+
     Logger.info("#{state.project.slug} #{state.name}: deploying ##{target} (#{run.mode})")
     broadcast(if totem?, do: send_change(phase(state, :loading)), else: boot(state))
   end
@@ -258,7 +306,12 @@ defmodule Burrow.Env do
 
     if changes == [],
       do: loaded(state, %{"mode" => "hot"}),
-      else: request(state, %{"cmd" => "missing", "hashes" => hashes}, {:deploy, :missing, {theirs, changes}})
+      else:
+        request(
+          state,
+          %{"cmd" => "missing", "hashes" => hashes},
+          {:deploy, :missing, {theirs, changes}}
+        )
   end
 
   defp send_blobs(state, [], change), do: send_apply(state, change)
@@ -332,7 +385,15 @@ defmodule Burrow.Env do
     Process.send_after(self(), {:boot_timeout, state.deploy.run.id}, @boot_timeout)
     run = Runs.finish(state.deploy.run, mode: "cold")
     deploy = %{state.deploy | run: run, phase: :booting}
-    %{state | app: app, app_status: :booting, linked?: false, deploy: deploy, secrets: Secrets.fingerprint(secrets)}
+
+    %{
+      state
+      | app: app,
+        app_status: :booting,
+        linked?: false,
+        deploy: deploy,
+        secrets: Secrets.fingerprint(secrets)
+    }
   end
 
   # Loading through Totem didn't work: restart the container instead.
@@ -345,7 +406,12 @@ defmodule Burrow.Env do
 
   # Booted and linked: watch it for the health window.
   defp app_ready(%{deploy: %{phase: :booting}} = state) do
-    Process.send_after(self(), {:watched, state.deploy.run.id}, Application.get_env(:burrow, :health_window, :timer.seconds(30)))
+    Process.send_after(
+      self(),
+      {:watched, state.deploy.run.id},
+      Application.get_env(:burrow, :health_window, :timer.seconds(30))
+    )
+
     broadcast(phase(%{state | app_status: :running}, :watching))
   end
 
@@ -375,7 +441,10 @@ defmodule Burrow.Env do
 
   defp fail(%{deploy: deploy} = state, reason) do
     Runs.finish(deploy.run, status: "failed", detail: reason)
-    Logger.warning("#{state.project.slug} #{state.name}: deploying ##{deploy.target} failed: #{reason}")
+
+    Logger.warning(
+      "#{state.project.slug} #{state.name}: deploying ##{deploy.target} failed: #{reason}"
+    )
 
     event = %{
       "fingerprint" => "deploy:#{state.name}:#{deploy.target}",
@@ -397,13 +466,15 @@ defmodule Burrow.Env do
       true ->
         # Back to the last healthy change; the ref moving deploys it.
         with :ok <- Repo.move_ref(state.repo, state.name, state.good, deploy.target),
-             do: Projects.broadcast(state.project.id, "refs", {:ref_moved, state.name, state.good})
+             do:
+               Projects.broadcast(state.project.id, "refs", {:ref_moved, state.name, state.good})
 
         broadcast(state)
     end
   end
 
-  defp maybe_restart_for_secrets(%{deploy: nil, deployed: id, app: app} = state) when id != nil and app != nil do
+  defp maybe_restart_for_secrets(%{deploy: nil, deployed: id, app: app} = state)
+       when id != nil and app != nil do
     if state.secrets == Secrets.fingerprint(Secrets.env(state.project.id)),
       do: state,
       else: start_deploy(state, id, cold: true)
@@ -412,7 +483,14 @@ defmodule Burrow.Env do
   defp maybe_restart_for_secrets(state), do: state
 
   # Incidents already open: a new error among them doesn't fail a deploy.
-  defp known(state), do: for(i <- Incidents.list(state.project.id, 100), i.status != "resolved", into: MapSet.new(), do: i.fingerprint)
+  defp known(state),
+    do:
+      for(
+        i <- Incidents.list(state.project.id, 100),
+        i.status != "resolved",
+        into: MapSet.new(),
+        do: i.fingerprint
+      )
 
   defp phase(%{deploy: deploy} = state, phase), do: %{state | deploy: %{deploy | phase: phase}}
 
@@ -424,14 +502,22 @@ defmodule Burrow.Env do
   defp socket_dir(dir) do
     if byte_size(dir) <= 96,
       do: dir,
-      else: Path.join(System.tmp_dir!(), "peon-" <> (:crypto.hash(:sha, dir) |> Base.url_encode64(padding: false) |> binary_part(0, 16)))
+      else:
+        Path.join(
+          System.tmp_dir!(),
+          "peon-" <>
+            (:crypto.hash(:sha, dir) |> Base.url_encode64(padding: false) |> binary_part(0, 16))
+        )
   end
 
   defp listen(state) do
     File.mkdir_p!(state.sock)
     path = Path.join(state.sock, "p")
     File.rm(path)
-    {:ok, listener} = :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, packet: 4, active: false])
+
+    {:ok, listener} =
+      :gen_tcp.listen(0, [:binary, ifaddr: {:local, path}, packet: 4, active: false])
+
     env = self()
     Task.start_link(fn -> accept(listener, env) end)
     state
@@ -450,7 +536,8 @@ defmodule Burrow.Env do
   defp drop_link(state) do
     :gen_tcp.close(state.link)
 
-    Enum.reduce(state.requests, %{state | link: nil, linked?: false, requests: %{}}, fn {_id, tag}, state ->
+    Enum.reduce(state.requests, %{state | link: nil, linked?: false, requests: %{}}, fn {_id, tag},
+                                                                                        state ->
       reply_to(state, tag, %{"ok" => false, "error" => "Totem disconnected"})
     end)
   end
@@ -469,14 +556,21 @@ defmodule Burrow.Env do
 
   defp link_message(state, %{"event" => "error"} = error) do
     error = Map.put(error, "at", DateTime.utc_now(:second))
-    state = %{state | errors: Enum.take([error | state.errors], 20), usage: Usage.error(state.usage, System.os_time(:second))}
+
+    state = %{
+      state
+      | errors: Enum.take([error | state.errors], 20),
+        usage: Usage.error(state.usage, System.os_time(:second))
+    }
+
     Incidents.report(state.project, state.name, error, state.deployed)
 
     case state.deploy do
       %{phase: :watching, known: known} ->
         if MapSet.member?(known, error["fingerprint"]),
           do: broadcast(state),
-          else: fail(state, "it logged a new error:\n\n#{error["message"]}\n#{error["stacktrace"]}")
+          else:
+            fail(state, "it logged a new error:\n\n#{error["message"]}\n#{error["stacktrace"]}")
 
       _ ->
         broadcast(state)
@@ -501,7 +595,9 @@ defmodule Burrow.Env do
   # Totem put the old code back after a new error: a failed deploy. Anything
   # else (a file changed under it, a compile error): restart instead.
   defp reply_to(state, {:deploy, _step, _change}, %{"error" => %{"error" => "reverted"} = error}) do
-    errors = Enum.map_join(error["errors"] || [], "\n\n", &"#{&1["message"]}\n#{&1["stacktrace"]}")
+    errors =
+      Enum.map_join(error["errors"] || [], "\n\n", &"#{&1["message"]}\n#{&1["stacktrace"]}")
+
     fail(state, "it logged a new error, so Totem put the previous code back:\n\n" <> errors)
   end
 
@@ -512,7 +608,9 @@ defmodule Burrow.Env do
         error -> inspect(error)
       end
 
-    state |> append_logs(output) |> cold("loading failed:\n\n" <> String.slice(output, -2000, 2000))
+    state
+    |> append_logs(output)
+    |> cold("loading failed:\n\n" <> String.slice(output, -2000, 2000))
   end
 
   defp reply_to(state, {:call, from}, %{"ok" => true, "result" => result}) do
@@ -545,11 +643,14 @@ defmodule Burrow.Env do
       status: status(state),
       deployed: state.deployed,
       good: state.good,
-      deploy: state.deploy && %{target: state.deploy.target, mode: state.deploy.run.mode, phase: state.deploy.phase},
+      deploy:
+        state.deploy &&
+          %{target: state.deploy.target, mode: state.deploy.run.mode, phase: state.deploy.phase},
       stats: state.stats,
       usage: Usage.summary(state.usage, System.os_time(:second)),
       errors: Enum.take(state.errors, 10),
-      attach: "docker exec -it #{state.container} iex --sname debug --cookie #{state.cookie} --remsh app@app"
+      attach:
+        "docker exec -it #{state.container} iex --sname debug --cookie #{state.cookie} --remsh app@app"
     }
   end
 

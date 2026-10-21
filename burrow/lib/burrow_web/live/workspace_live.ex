@@ -18,7 +18,20 @@ defmodule BurrowWeb.WorkspaceLive do
 
   import BurrowWeb.WorkspaceLive.Components
 
-  alias Burrow.{Accounts, Activity, Cell, Chat, Chats, Env, Incidents, Projects, Runs, Secrets, Ship, Teams}
+  alias Burrow.{
+    Accounts,
+    Activity,
+    Cell,
+    Chat,
+    Chats,
+    Env,
+    Incidents,
+    Projects,
+    Runs,
+    Secrets,
+    Ship,
+    Teams
+  }
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -193,7 +206,8 @@ defmodule BurrowWeb.WorkspaceLive do
     project = socket.assigns.project
 
     with %{} = chat <- Chats.get(id),
-         do: Task.Supervisor.start_child(Burrow.TaskSupervisor, fn -> Chat.delete(project, chat) end)
+         do:
+           Task.Supervisor.start_child(Burrow.TaskSupervisor, fn -> Chat.delete(project, chat) end)
 
     {:noreply, socket}
   end
@@ -237,8 +251,11 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_event("revert", %{"id" => id}, socket) do
     case Ship.revert(socket.assigns.project, String.to_integer(id), socket.assigns.user) do
-      {:ok, change} -> {:noreply, info(socket, "Taken out of main as ##{change.id}.")}
-      {:error, reason} -> {:noreply, put_flash(socket, :error, "Could not undo it: #{inspect(reason)}")}
+      {:ok, change} ->
+        {:noreply, info(socket, "Taken out of main as ##{change.id}.")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not undo it: #{inspect(reason)}")}
     end
   end
 
@@ -246,8 +263,11 @@ defmodule BurrowWeb.WorkspaceLive do
     %{project: project, user: user} = socket.assigns
 
     case Ship.ship(project, String.to_integer(id), user) do
-      :ok -> {:noreply, socket |> info("Shipping ##{id}.") |> assign(view: "prod")}
-      {:error, reason} -> {:noreply, put_flash(socket, :error, "Could not ship: #{inspect(reason)}")}
+      :ok ->
+        {:noreply, socket |> info("Shipping ##{id}.") |> assign(view: "prod")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not ship: #{inspect(reason)}")}
     end
   end
 
@@ -264,7 +284,11 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   def handle_event("fix_incident", %{"id" => id}, socket) do
-    case Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.project, socket.assigns.user) do
+    case Incidents.fix(
+           Incidents.get(String.to_integer(id)),
+           socket.assigns.project,
+           socket.assigns.user
+         ) do
       {:ok, incident} -> {:noreply, push_patch(socket, to: chat_path(socket, incident.chat_id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
@@ -488,11 +512,17 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   # The project is up: open the workspace.
-  def handle_info({:cell, id, :running}, %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket),
-    do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
+  def handle_info(
+        {:cell, id, :running},
+        %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket
+      ),
+      do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
 
-  def handle_info({:cell, id, status}, %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket),
-    do: {:noreply, assign(socket, cell: status)}
+  def handle_info(
+        {:cell, id, status},
+        %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket
+      ),
+      do: {:noreply, assign(socket, cell: status)}
 
   def handle_info({:cell, _id, _status}, socket), do: {:noreply, socket}
 
@@ -638,7 +668,10 @@ defmodule BurrowWeb.WorkspaceLive do
 
   # The chat tabs, each with its draft and phase (Burrow.Activity).
   defp load_tabs(socket),
-    do: socket |> assign(tabs: Activity.chats(socket.assigns.project, socket.assigns.busy)) |> select_tab()
+    do:
+      socket
+      |> assign(tabs: Activity.chats(socket.assigns.project, socket.assigns.busy))
+      |> select_tab()
 
   defp select_tab(%{assigns: %{chat: nil}} = socket), do: assign(socket, tab: nil)
 
@@ -656,7 +689,15 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp load_ship(%{assigns: %{repo?: true}} = socket),
-    do: assign(socket, incidents: [], main_check: nil, shippable: nil, auto_ship: false, nothing_built?: false, deploys: [])
+    do:
+      assign(socket,
+        incidents: [],
+        main_check: nil,
+        shippable: nil,
+        auto_ship: false,
+        nothing_built?: false,
+        deploys: []
+      )
 
   defp load_ship(socket) do
     project = socket.assigns.project
@@ -688,7 +729,13 @@ defmodule BurrowWeb.WorkspaceLive do
     |> Enum.map(fn run ->
       where = Enum.find(Enum.reverse(names), &Totem.Repo.contains?(repo, &1, run.change_id))
       change = Totem.Repo.change(repo, run.change_id)
-      %{id: run.change_id, intent: (change && change.intent) || "", where: where, at: run.inserted_at}
+
+      %{
+        id: run.change_id,
+        intent: (change && change.intent) || "",
+        where: where,
+        at: run.inserted_at
+      }
     end)
   end
 
@@ -1053,7 +1100,10 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp repo_name(project),
-    do: (URI.parse(project.repo_url).path || "") |> String.trim_leading("/") |> String.trim_trailing(".git")
+    do:
+      (URI.parse(project.repo_url).path || "")
+      |> String.trim_leading("/")
+      |> String.trim_trailing(".git")
 
   defp hello(project, true), do: "What should #{project && project.name} do?"
   defp hello(project, false), do: "What should change in #{project && project.name}?"

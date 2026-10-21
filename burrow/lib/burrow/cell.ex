@@ -44,7 +44,10 @@ defmodule Burrow.Cell do
     }
 
   def start_link(project),
-    do: GenServer.start_link(__MODULE__, project, name: {:via, Registry, {@registry, project.id, :starting}})
+    do:
+      GenServer.start_link(__MODULE__, project,
+        name: {:via, Registry, {@registry, project.id, :starting}}
+      )
 
   def subscribe, do: Phoenix.PubSub.subscribe(Burrow.PubSub, "cells")
 
@@ -108,7 +111,11 @@ defmodule Burrow.Cell do
       [%{id: :setup, start: {__MODULE__, :setup, [project]}}] ++
         if(Projects.Project.repo?(project), do: [], else: [{Ship, project}]) ++
         Enum.map(Env.names(project), &{Env, {project, &1}}) ++
-        [Supervisor.child_spec({Task, fn -> Chat.start_kept_running(project) end}, id: :kept_running)]
+        [
+          Supervisor.child_spec({Task, fn -> Chat.start_kept_running(project) end},
+            id: :kept_running
+          )
+        ]
 
     case Supervisor.start_link(children, strategy: :one_for_one) do
       {:ok, sup} ->

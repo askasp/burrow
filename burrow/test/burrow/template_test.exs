@@ -1,7 +1,7 @@
-defmodule Peon.TemplateTest do
+defmodule Burrow.TemplateTest do
   use ExUnit.Case, async: true
 
-  alias Peon.Template
+  alias Burrow.Template
 
   @template Path.expand("../../../template", __DIR__)
 

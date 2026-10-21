@@ -16,7 +16,12 @@ defmodule Burrow.Ports do
   `http://localhost:<port>`.
   """
   def url(port),
-    do: String.replace(Application.get_env(:burrow, :port_url, "http://localhost:{port}"), "{port}", to_string(port))
+    do:
+      String.replace(
+        Application.get_env(:burrow, :port_url, "http://localhost:{port}"),
+        "{port}",
+        to_string(port)
+      )
 
   def host(port), do: URI.parse(url(port)).host
 end

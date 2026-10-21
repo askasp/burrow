@@ -35,7 +35,10 @@ defmodule Burrow.GitRepo do
         File.rm_rf!(tmp)
 
         with {:ok, _} <- git(project, ["clone", "--bare", project.repo_url, tmp]),
-             {:ok, _} <- git(project, ["config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"], cd: tmp) do
+             {:ok, _} <-
+               git(project, ["config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"],
+                 cd: tmp
+               ) do
           File.rename!(tmp, dir)
           :ok
         end
@@ -53,7 +56,9 @@ defmodule Burrow.GitRepo do
 
   @doc "Whether git failed for want of the token: no token is set and access was refused."
   def needs_token?(project, output),
-    do: token(project) == nil and output =~ ~r/auth|could not read|not found|does not exist|denied|403|404/i
+    do:
+      token(project) == nil and
+        output =~ ~r/auth|could not read|not found|does not exist|denied|403|404/i
 
   @doc "Asks the user for the token; `chat_id` is told once it is set."
   def request_token(project, chat_id) do
@@ -77,7 +82,15 @@ defmodule Burrow.GitRepo do
     File.rm_rf!(dir)
 
     with :ok <- sync(project),
-         {:ok, _} <- git(project, ["clone", "--local", "--branch", branch(project), mirror_dir(project), dir]),
+         {:ok, _} <-
+           git(project, [
+             "clone",
+             "--local",
+             "--branch",
+             branch(project),
+             mirror_dir(project),
+             dir
+           ]),
          {:ok, _} <- git(project, ["checkout", "-b", "peon/#{chat_id}"], cd: dir),
          {:ok, _} <- git(project, ["remote", "set-url", "origin", project.repo_url], cd: dir) do
       :ok

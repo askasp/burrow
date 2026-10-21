@@ -60,18 +60,27 @@ defmodule Burrow.Chats do
     title = text |> String.trim() |> String.replace(~r/\s+/, " ") |> String.slice(0, 80)
     query = from c in Chat, where: c.id == ^chat.id
 
-    Repo.update_all(where(query, [c], is_nil(c.started_at)), set: [started_at: DateTime.utc_now(:second)])
+    Repo.update_all(where(query, [c], is_nil(c.started_at)),
+      set: [started_at: DateTime.utc_now(:second)]
+    )
+
     Repo.update_all(where(query, [c], c.title == ""), set: [title: title])
     Projects.broadcast(chat.project_id, "chats", {:chat_started, chat.id})
   end
 
   @doc "A project's chats, oldest first: the order of the tabs."
   def list(project_id),
-    do: Repo.all(from c in Chat, where: c.project_id == ^project_id, order_by: [asc: c.inserted_at, asc: c.id])
+    do:
+      Repo.all(
+        from c in Chat,
+          where: c.project_id == ^project_id,
+          order_by: [asc: c.inserted_at, asc: c.id]
+      )
 
   def get(id), do: Repo.get(Chat, id)
 
-  def set(%Chat{id: id}, fields), do: Repo.update_all(from(c in Chat, where: c.id == ^id), set: fields)
+  def set(%Chat{id: id}, fields),
+    do: Repo.update_all(from(c in Chat, where: c.id == ^id), set: fields)
 
   @doc "Keeps the chat running for `hours` from now; nil goes back to the idle stop."
   def keep_running(%Chat{} = chat, hours) do

@@ -172,7 +172,8 @@ defmodule Burrow.Agent.Tools do
       else: {"Unknown tool or missing arguments: #{name}", true}
   end
 
-  defp run("submit_changeset", %{"intent" => intent} = args, project, chat_id) when is_binary(intent) do
+  defp run("submit_changeset", %{"intent" => intent} = args, project, chat_id)
+       when is_binary(intent) do
     if Projects.Project.repo?(project),
       do: submit_pr(project, chat_id, intent, args["description"]),
       else: Ship.submit(project, chat_id, intent)
@@ -237,7 +238,8 @@ defmodule Burrow.Agent.Tools do
     end
   end
 
-  defp run(name, _args, _project, _chat_id), do: {"Unknown tool or missing arguments: #{name}", true}
+  defp run(name, _args, _project, _chat_id),
+    do: {"Unknown tool or missing arguments: #{name}", true}
 
   defp submit_pr(project, chat_id, intent, description) do
     check =
@@ -250,7 +252,14 @@ defmodule Burrow.Agent.Tools do
     chat = Chats.get(chat_id)
     body = String.trim("#{description}\n\nMade in Peon, chat \"#{chat.title}\".")
 
-    case PullRequest.submit(project, chat_id, Chat.workspace_dir(project, chat_id), title, body, check) do
+    case PullRequest.submit(
+           project,
+           chat_id,
+           Chat.workspace_dir(project, chat_id),
+           title,
+           body,
+           check
+         ) do
       {:ok, nil} ->
         {"Pushed branch peon/#{chat_id}. The repo is not on GitHub, so there is no PR; " <>
            "tell the user the branch.", false}

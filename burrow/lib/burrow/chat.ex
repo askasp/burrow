@@ -52,10 +52,15 @@ defmodule Burrow.Chat do
     unless whereis(id), do: make_room(project, id)
 
     case DynamicSupervisor.start_child(Burrow.ChatSupervisor, {__MODULE__, {project, id}}) do
-      {:ok, pid} -> GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
-      {:error, {:already_started, pid}} -> GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
+      {:ok, pid} ->
+        GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
+
+      {:error, {:already_started, pid}} ->
+        GenServer.call(pid, :await_ready, @boot_timeout + 5_000)
+
       # e.g. :no_free_preview_port when every preview port is in use
-      {:error, reason} -> {:error, reason}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -140,7 +145,10 @@ defmodule Burrow.Chat do
   @doc "Starts the chats kept running, e.g. after Burrow restarted."
   def start_kept_running(project) do
     for chat <- Chats.list_kept_running(project.id),
-        do: Task.Supervisor.start_child(Burrow.TaskSupervisor, fn -> ensure_started(project, chat.id) end)
+        do:
+          Task.Supervisor.start_child(Burrow.TaskSupervisor, fn ->
+            ensure_started(project, chat.id)
+          end)
 
     :ok
   end
@@ -153,7 +161,10 @@ defmodule Burrow.Chat do
     case File.ls(Path.join(Projects.dir(project), "chats")) do
       {:ok, ids} ->
         ids
-        |> Task.async_stream(&stop_left_behind(project, &1), timeout: :infinity, max_concurrency: 4)
+        |> Task.async_stream(&stop_left_behind(project, &1),
+          timeout: :infinity,
+          max_concurrency: 4
+        )
         |> Stream.run()
 
       {:error, _} ->
@@ -167,7 +178,13 @@ defmodule Burrow.Chat do
     with {:ok, %PreviewPack{stop: stop} = pack} when is_binary(stop) <- PreviewPack.load(dir) do
       ports = Map.new(pack.ports ++ pack.local_ports, &{&1, 0})
       name = "peon-preview-#{project.slug}-#{id}"
-      env = Map.merge(Secrets.env(project.id), PreviewPack.env(pack, ports, &Burrow.Ports.url/1, name))
+
+      env =
+        Map.merge(
+          Secrets.env(project.id),
+          PreviewPack.env(pack, ports, &Burrow.Ports.url/1, name)
+        )
+
       HostPreview.run(dir, stop, env, :timer.minutes(2))
     end
   end
@@ -225,7 +242,11 @@ defmodule Burrow.Chat do
   end
 
   def child_spec({project, id}),
-    do: %{id: {__MODULE__, id}, start: {__MODULE__, :start_link, [project, id]}, restart: :temporary}
+    do: %{
+      id: {__MODULE__, id},
+      start: {__MODULE__, :start_link, [project, id]},
+      restart: :temporary
+    }
 
   def start_link(project, id),
     do:
@@ -304,7 +325,11 @@ defmodule Burrow.Chat do
 
   @impl true
   def handle_continue(:boot, %{repo: true} = state) do
-    with :ok <- if(GitRepo.checked_out?(state.dir), do: :ok, else: GitRepo.checkout(state.project, state.dir, state.id)),
+    with :ok <-
+           if(GitRepo.checked_out?(state.dir),
+             do: :ok,
+             else: GitRepo.checkout(state.project, state.dir, state.id)
+           ),
          {:ok, state} <- load_pack(state) do
       Sandbox.create_network(state.project.slug, state.network)
       state = state |> start_preview() |> start_agent() |> touch()
@@ -707,13 +732,22 @@ defmodule Burrow.Chat do
   # for the template app, next to the opencode config for a repo, whose .peon
   # is the repo's.
   defp write_instructions(%{repo: true} = state, config_dir) do
-    File.write!(Path.join(config_dir, "peon.md"), Prompt.repo_instructions(state.project, prompt_facts(state)))
+    File.write!(
+      Path.join(config_dir, "peon.md"),
+      Prompt.repo_instructions(state.project, prompt_facts(state))
+    )
+
     "/opencode/config/opencode/peon.md"
   end
 
   defp write_instructions(state, _config_dir) do
     File.mkdir_p!(Path.join(state.dir, ".peon"))
-    File.write!(Path.join([state.dir, ".peon", "instructions.md"]), Prompt.instructions(state.project))
+
+    File.write!(
+      Path.join([state.dir, ".peon", "instructions.md"]),
+      Prompt.instructions(state.project)
+    )
+
     ".peon/instructions.md"
   end
 
@@ -860,7 +894,13 @@ defmodule Burrow.Chat do
 
   defp fail_boot(state, reason) do
     Logger.error("chat #{state.id} could not start its agent: #{inspect(reason)}")
-    Incidents.chat_failed(state.project.id, state.id, "the agent could not start: #{inspect(reason)}")
+
+    Incidents.chat_failed(
+      state.project.id,
+      state.id,
+      "the agent could not start: #{inspect(reason)}"
+    )
+
     state = put_in(state.agent.status, {:error, reason})
     Enum.each(state.waiting, &GenServer.reply(&1, ready_reply(state)))
     {:stop, :normal, %{state | waiting: []}}

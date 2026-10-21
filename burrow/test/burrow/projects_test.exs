@@ -6,14 +6,13 @@ defmodule Burrow.ProjectsTest do
   alias Burrow.{Projects, Teams}
   alias Burrow.Projects.Project
 
-  test "create assigns a unique slug and its own ports" do
+  test "create assigns a unique slug and its own port range" do
     scope = user_scope_fixture()
     {:ok, a} = Projects.create(scope, %{"name" => "Sauna Booking"})
     {:ok, b} = Projects.create(scope, %{"name" => "Sauna booking!"})
 
     assert a.slug == "sauna_booking"
     assert b.slug == "sauna_booking_2"
-    assert a.port != b.port
     assert a.preview_ports != b.preview_ports
     assert {:error, %Ecto.Changeset{}} = Projects.create(scope, %{"name" => "1"})
   end
@@ -38,7 +37,7 @@ defmodule Burrow.ProjectsTest do
   test "staging and prod get ports a browser opens" do
     ports = &Burrow.Cell.ports(%Project{preview_ports: &1})
     assert ports.("5000-5009") == {5000..5007, %{"staging" => 5008, "prod" => 5009}}
-    # 5060 and 5061 are blocked (SIP); the range end is fine, previews skip them in Peon.
+    # 5060 and 5061 are blocked (SIP); the range end is fine, previews skip them.
     assert ports.("5060-5069") == {5060..5067, %{"staging" => 5068, "prod" => 5069}}
     assert ports.("6660-6669") == {6660..6662, %{"staging" => 6663, "prod" => 6664}}
   end
@@ -76,7 +75,7 @@ defmodule Burrow.ProjectsTest do
       assert %{auth: [_]} = errors_on(changeset)
     end
 
-    test "basic auth needs a username and password, which go to Peon and aren't stored" do
+    test "basic auth needs a username and password, which become the app's secrets and aren't stored" do
       scope = user_scope_fixture()
 
       assert {:error, changeset} =
@@ -101,7 +100,7 @@ defmodule Burrow.ProjectsTest do
         "basic_password" => "correct horse"
       }
 
-      # What the Peon is started with.
+      # What the new app is set up with.
       {:ok, made} = attrs |> Projects.change() |> Ecto.Changeset.apply_action(:insert)
 
       assert made.auth == "basic"
@@ -114,7 +113,7 @@ defmodule Burrow.ProjectsTest do
       assert project.basic_password == nil
       stored = Projects.get(project.id)
       assert stored.auth == "basic" and stored.basic_password == nil
-      # Restarts don't have it: Peon kept it as the app's secrets.
+      # Restarts don't have it: it became the app's secrets.
       assert Project.basic_login(stored) == nil
     end
 

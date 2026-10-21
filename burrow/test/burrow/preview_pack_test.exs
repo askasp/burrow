@@ -1,7 +1,7 @@
-defmodule Peon.PreviewPackTest do
+defmodule Burrow.GitRepo.PreviewPackTest do
   use ExUnit.Case, async: true
 
-  alias Peon.PreviewPack
+  alias Burrow.GitRepo.PreviewPack
 
   @moduletag :tmp_dir
 

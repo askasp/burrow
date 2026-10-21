@@ -21,7 +21,14 @@ defmodule Burrow.Bootstrap do
 
     if Totem.Repo.empty?(repo) and not Projects.Project.repo?(project) do
       otp_app = Template.otp_app(project.slug)
-      {tree, blobs} = Template.instantiate(Application.fetch_env!(:burrow, :template_dir), otp_app, project.auth)
+
+      {tree, blobs} =
+        Template.instantiate(
+          Application.fetch_env!(:burrow, :template_dir),
+          otp_app,
+          project.auth
+        )
+
       {tree, blobs} = formatted(project, tree, blobs)
       {:ok, change} = Totem.Repo.init(repo, tree, blobs, "Create #{project.name}", "burrow")
       if project.auth == "basic", do: put_basic_auth(project)

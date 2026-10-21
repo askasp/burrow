@@ -1,7 +1,9 @@
-defmodule Peon.GitTest do
-  use Peon.DataCase, async: false
+defmodule Burrow.GitRepoTest do
+  use Burrow.DataCase, async: false
 
-  alias Peon.{Git, Secrets}
+  import Burrow.ProjectFixtures
+
+  alias Burrow.{GitRepo, Secrets}
 
   @moduletag :tmp_dir
 
@@ -15,20 +17,18 @@ defmodule Peon.GitTest do
     sh!(["remote", "add", "origin", origin], work)
     sh!(["push", "origin", "main"], work)
 
-    put_instance(repo: %{url: origin, branch: "main"}, data_dir: Path.join(dir, "data"))
-
-    %{origin: origin, work: work}
+    %{origin: origin, work: work, project: project_fixture(%{repo_url: origin})}
   end
 
   test "each chat gets its own branch from main, fetched fresh", %{
     tmp_dir: dir,
     origin: origin,
-    work: work
+    work: work,
+    project: project
   } do
     a = Path.join(dir, "chats/a/workspace")
-    refute Git.checked_out?(a)
-    assert :ok = Git.checkout(a, "a")
-    assert Git.checked_out?(a)
+    refute GitRepo.checked_out?(a)
+    assert :ok = GitRepo.checkout(project, a, "a")
     assert File.read!(Path.join(a, "index.html")) == "v1"
     assert git!(["branch", "--show-current"], a) == "peon/a"
     assert git!(["remote", "get-url", "origin"], a) == origin
@@ -38,7 +38,7 @@ defmodule Peon.GitTest do
     sh!(["push", "origin", "main"], work)
 
     b = Path.join(dir, "chats/b/workspace")
-    assert :ok = Git.checkout(b, "b")
+    assert :ok = GitRepo.checkout(project, b, "b")
     assert File.read!(Path.join(b, "index.html")) == "v2"
     assert File.read!(Path.join(a, "index.html")) == "v1"
   end
@@ -46,14 +46,14 @@ defmodule Peon.GitTest do
   test "a repo it can't read asks for a GitHub token, which never reaches the app", %{
     tmp_dir: dir
   } do
-    put_instance(repo: %{url: Path.join(dir, "missing.git"), branch: "main"})
+    project = project_fixture(%{repo_url: Path.join(dir, "missing.git")})
 
-    assert {:error, "git clone" <> _} = Git.checkout(Path.join(dir, "ws"), "c")
-    assert [%{name: "GITHUB_TOKEN", set?: false}] = Secrets.requested()
+    assert {:error, "git clone" <> _} = GitRepo.checkout(project, Path.join(dir, "ws"), "c")
+    assert [%{name: "GITHUB_TOKEN", set?: false}] = Secrets.list(project.id)
 
-    :ok = Secrets.put("GITHUB_TOKEN", "github_pat_x", "ada")
-    assert Secrets.env_value("GITHUB_TOKEN") == "github_pat_x"
-    assert Secrets.env() == %{}
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+    assert GitRepo.token(project) == "github_pat_x"
+    assert Secrets.env(project.id) == %{}
   end
 
   defp commit!(dir, message) do

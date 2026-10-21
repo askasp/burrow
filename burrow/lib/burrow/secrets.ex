@@ -62,8 +62,12 @@ defmodule Burrow.Secrets do
 
   @doc "A short hash of `env/1`, to tell whether a container has the current values."
   def fingerprint(env) do
-    env |> Enum.sort() |> :erlang.term_to_binary() |> then(&:crypto.hash(:sha256, &1))
-    |> Base.url_encode64(padding: false) |> binary_part(0, 16)
+    env
+    |> Enum.sort()
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.url_encode64(padding: false)
+    |> binary_part(0, 16)
   end
 
   @doc "Sets (or replaces) a secret, and tells the chat that asked for it."
@@ -109,10 +113,14 @@ defmodule Burrow.Secrets do
 
   def validate_name(name) when is_binary(name) do
     cond do
-      not Regex.match?(@name, name) -> {:error, "Use capital letters, digits and _ (like SLACK_TOKEN)."}
+      not Regex.match?(@name, name) ->
+        {:error, "Use capital letters, digits and _ (like SLACK_TOKEN)."}
+
       name in @reserved or String.starts_with?(name, ["PEON_", "TOTEM_", "RELEASE_", "ERL_"]) ->
         {:error, "#{name} is set by Burrow itself."}
-      true -> :ok
+
+      true ->
+        :ok
     end
   end
 
@@ -129,7 +137,15 @@ defmodule Burrow.Secrets do
   defp get(project_id, name), do: Repo.get_by(__MODULE__, project_id: project_id, name: name)
 
   defp public(s),
-    do: %{name: s.name, set?: s.value != nil, why: s.why, chat_id: s.chat_id, set_by: s.set_by, updated_at: s.updated_at}
+    do: %{
+      name: s.name,
+      set?: s.value != nil,
+      why: s.why,
+      chat_id: s.chat_id,
+      set_by: s.set_by,
+      updated_at: s.updated_at
+    }
 
-  defp broadcast(project_id), do: Projects.broadcast(project_id, "secrets", {:secrets, list(project_id)})
+  defp broadcast(project_id),
+    do: Projects.broadcast(project_id, "secrets", {:secrets, list(project_id)})
 end
