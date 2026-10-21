@@ -433,7 +433,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     <svg class="wc3" viewBox="0 0 96 20" width="96" height="20" aria-hidden="true">
       <%= if @kind == "chop" do %>
         <g class="logs">
-          <rect x="2" y="15" width="13" height="3" rx="1.5" /><rect
+          <rect x="46" y="15" width="13" height="3" rx="1.5" /><rect
             x="4"
             y="12"
             width="10"
