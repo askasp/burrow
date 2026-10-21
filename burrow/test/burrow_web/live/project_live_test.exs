@@ -104,7 +104,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
     assert has_element?(lv, "#restart-peon")
     assert has_element?(lv, "#selected-project", "Only you can see it.")
-    assert has_element?(lv, "#project-meta", "staging and prod")
+    assert has_element?(lv, "#project-meta", "staging · prod")
 
     lv |> element("#project-menu-button") |> render_click()
     refute has_element?(lv, "#add-envs")

@@ -319,7 +319,7 @@ defmodule BurrowWeb.ProjectLive.Index do
             <.link
               navigate={~p"/projects/#{p.id}"}
               data-kb="item"
-              class={["prow pr-12", @selected && @selected.id == p.id && "sel"]}
+              class={["prow", @selected && @selected.id == p.id && "sel"]}
               title={"Open #{p.name}"}
             >
               <span class="r1">
@@ -328,7 +328,7 @@ defmodule BurrowWeb.ProjectLive.Index do
               </span>
               <span class="r2 mono">
                 <span>{p.slug}</span>
-                <span>{if Project.live_only?(p), do: "live", else: "staging · prod"}</span>
+                <span>{envs_label(p)}</span>
                 <span :if={p.team}>shared · <b>{p.team.name}</b></span>
                 <span :if={!p.team}>private</span>
                 <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
@@ -361,7 +361,7 @@ defmodule BurrowWeb.ProjectLive.Index do
                 {@selected.name}
               </h2>
               <span id="project-meta" class="mono text-[12.5px] text-[var(--text-3)]">
-                {@selected.slug} · {if live?, do: "live", else: "staging and prod"}
+                {@selected.slug} · {envs_label(@selected)}
               </span>
             </div>
             <div class="flex items-center gap-2">
@@ -548,4 +548,12 @@ defmodule BurrowWeb.ProjectLive.Index do
   defp status_text({:exited, code}), do: "exited (#{code})"
   defp status_text(nil), do: "stopped"
   defp status_text(status), do: to_string(status)
+
+  defp envs_label(project) do
+    cond do
+      Project.repo?(project) -> "git repo"
+      Project.live_only?(project) -> "live"
+      true -> "staging · prod"
+    end
+  end
 end

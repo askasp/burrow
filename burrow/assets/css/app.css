@@ -259,6 +259,8 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .theme-switch button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px }
 
 /* A project row opens its workspace; this shows its details instead */
+/* Project rows have the details arrow on their right: keep text clear of it. */
+#projects .prow { padding-right: 52px }
 .prow-more { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); color: var(--text-3) }
 .prow-more[aria-current="true"] { color: var(--text); border-color: var(--border-strong) }
 
