@@ -52,6 +52,8 @@ defmodule Peon.Sandbox do
   `:mounts` (`{host_path, container_path, :ro | :rw}`), `:hosts`
   (`{name, address}` entries for /etc/hosts), `:hostname`, and `:label`
   (default `peon.project=<slug>`, which `remove_all/0` cleans up).
+  `outlive: true` keeps the container running when this process dies (the
+  `docker run` client no longer passes signals on), so it can be adopted.
   """
   def start(dir, script, opts) do
     name = Keyword.fetch!(opts, :name)
@@ -69,7 +71,8 @@ defmodule Peon.Sandbox do
         end) ++
         if(opts[:network], do: ["--network", opts[:network]], else: []) ++
         if(opts[:alias], do: ["--network-alias", opts[:alias]], else: []) ++
-        if(opts[:hostname], do: ["--hostname", opts[:hostname]], else: [])
+        if(opts[:hostname], do: ["--hostname", opts[:hostname]], else: []) ++
+        if(opts[:outlive], do: ["--sig-proxy=false"], else: [])
 
     args =
       ["run", "--rm", "--init", "--name", name] ++

@@ -175,10 +175,17 @@ defmodule Peon.Env do
         secrets = env && (env["PEON_SECRETS"] || Secrets.fingerprint(%{}))
 
         # Nor one started before the probe was (with the attacher instead).
-        if state.deployed == id and env != false and
-             env["PHX_HOST"] == Peon.Ports.host(state.port) and
-             env["PEON_PROBE_SOCKET"] != nil and
-             secrets == Secrets.fingerprint() do
+        stale =
+          cond do
+            state.deployed != id -> "it runs ##{inspect(state.deployed)}"
+            env == false -> "it isn't running"
+            env["PHX_HOST"] != Peon.Ports.host(state.port) -> "its host changed"
+            env["PEON_PROBE_SOCKET"] == nil -> "it has no probe"
+            secrets != Secrets.fingerprint() -> "its secrets changed"
+            true -> nil
+          end
+
+        if stale == nil do
           Logger.info("#{state.name}: adopting the running container at ##{id}")
           app = Sandbox.follow_logs(state.container)
 
@@ -192,6 +199,7 @@ defmodule Peon.Env do
 
           {:noreply, broadcast(state)}
         else
+          Logger.info("#{state.name}: not adopting the container, #{stale}")
           {:noreply, start_deploy(state, id, [])}
         end
     end
@@ -385,6 +393,7 @@ defmodule Peon.Env do
       Sandbox.start(state.dir, script,
         name: state.container,
         hostname: "app",
+        outlive: true,
         label: "peon.env=#{state.slug}",
         env:
           Map.merge(secrets, %{
