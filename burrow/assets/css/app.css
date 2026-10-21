@@ -377,25 +377,34 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .swing { display: flex; animation: bw-swing 1.1s ease-in-out infinite; transform-origin: 25% 85% }
 /* Peon at work: to the gold mine and back, or chopping lumber */
 .ws-root .wc3 { flex-shrink: 0; overflow: visible }
-.ws-root .wc3 .head, .ws-root .wc3 .leaf { fill: var(--accent) }
-.ws-root .wc3 .body, .ws-root .wc3 .wall, .ws-root .wc3 .trunk, .ws-root .wc3 .logs rect { fill: var(--wood) }
-.ws-root .wc3 .leg, .ws-root .wc3 .rock { fill: var(--text-3) }
-.ws-root .wc3 .roof { fill: var(--rust) }
-.ws-root .wc3 .door, .ws-root .wc3 .hole { fill: var(--bg) }
-.ws-root .wc3 .gold, .ws-root .wc3 .sack { fill: var(--gold) }
-.ws-root .wc3 .haft { stroke: var(--text-2); stroke-width: 1.4; stroke-linecap: round }
-.ws-root .wc3 .blade { fill: var(--text-2) }
-.ws-root .wc3 .walker { animation: wc3-walk 4s ease-in-out infinite }
-.ws-root .wc3 .sack { animation: wc3-sack 4s steps(1, end) infinite }
-.ws-root .wc3 .leg { animation: wc3-step .5s steps(2, end) infinite }
-.ws-root .wc3 .leg.r { animation-delay: .25s }
-.ws-root .wc3 .axe { transform-box: fill-box; transform-origin: 0% 100%; animation: wc3-chop .8s ease-in infinite }
-.ws-root .wc3 .tree { transform-box: fill-box; transform-origin: 50% 100%; animation: wc3-hit .8s ease-out infinite }
-@keyframes wc3-walk { 0%, 6% { transform: translateX(20px) } 44%, 56% { transform: translateX(66px) } 94%, 100% { transform: translateX(20px) } }
-@keyframes wc3-sack { 0% { opacity: 0 } 50% { opacity: 1 } 94% { opacity: 0 } }
-@keyframes wc3-step { 0% { transform: translateY(0) } 50% { transform: translateY(-1px) } }
-@keyframes wc3-chop { 0%, 20% { transform: rotate(-55deg) } 55% { transform: rotate(20deg) } 100% { transform: rotate(-55deg) } }
-@keyframes wc3-hit { 0%, 50% { transform: rotate(0) } 58% { transform: rotate(3deg) } 70%, 100% { transform: rotate(0) } }
+.ws-root .wc3 * { fill: var(--bg); stroke: var(--text-2); stroke-width: 1.5px; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke }
+.ws-root .wc3 .thin { fill: none; stroke-width: 1px }
+.ws-root .wc3 .bold { fill: none; stroke-width: 2.2px }
+.ws-root .wc3 .ground { stroke: var(--border-strong); stroke-width: 1px }
+.ws-root .wc3 g { stroke: none; fill: none }
+.ws-root .wc3 .flag { fill: var(--bg); stroke: var(--text-2); stroke-width: 1px }
+.ws-root .wc3 .gold, .ws-root .wc3 .sack * { stroke: var(--gold) }
+.ws-root .wc3 .glow { stroke: var(--gold); stroke-width: 1px; animation: wc3-glow 1.6s ease-in-out infinite alternate }
+.ws-root .wc3 .orc *, .ws-root .wc3 .arm, .ws-root .wc3 .walker circle:not(.sack *), .ws-root .wc3 .axe circle { stroke: var(--accent-text) }
+.ws-root .wc3 .orc *, .ws-root .wc3 .walker circle, .ws-root .wc3 .axe * { stroke-width: 1.25px }
+.ws-root .wc3 .orc .thin { stroke-width: 1px }
+.ws-root .wc3 .leg, .ws-root .wc3 .arm { fill: none }
+.ws-root .wc3 .eye { fill: var(--accent-text); stroke: none }
+.ws-root .wc3 .haft { stroke: var(--accent-text); stroke-width: 1.8px }
+.ws-root .wc3 .walker { transform: translate(27px, 36px); animation: wc3-walk 7s linear infinite }
+.ws-root .wc3 .face { animation: wc3-face 7s linear infinite }
+.ws-root .wc3 .sack { opacity: 0; animation: wc3-sack 7s linear infinite }
+.ws-root .wc3 .leg { transform-box: fill-box; transform-origin: 50% 0; animation: wc3-stride .45s ease-in-out infinite alternate }
+.ws-root .wc3 .leg.r { animation-direction: alternate-reverse }
+.ws-root .wc3 .axe { animation: wc3-chop .9s ease-in infinite }
+.ws-root .wc3 .tree { transform-box: fill-box; transform-origin: 50% 100%; animation: wc3-hit .9s ease-out infinite }
+@keyframes wc3-walk { 0%, 4% { transform: translate(27px, 36px) } 42% { transform: translate(87px, 36px); opacity: 1 } 44%, 56% { transform: translate(87px, 36px); opacity: 0 } 58% { transform: translate(87px, 36px); opacity: 1 } 96%, 100% { transform: translate(27px, 36px) } }
+@keyframes wc3-face { 0%, 49.9% { transform: none } 50%, 100% { transform: scaleX(-1) } }
+@keyframes wc3-sack { 0%, 49.9% { opacity: 0 } 50%, 100% { opacity: 1 } }
+@keyframes wc3-stride { from { transform: rotate(-16deg) } to { transform: rotate(16deg) } }
+@keyframes wc3-chop { 0%, 20% { transform: rotate(-72deg) } 55% { transform: rotate(12deg) } 100% { transform: rotate(-72deg) } }
+@keyframes wc3-glow { from { opacity: .45 } to { opacity: 1 } }
+@keyframes wc3-hit { 0%, 55% { transform: rotate(0) } 62% { transform: rotate(-4deg) } 75%, 100% { transform: rotate(0) } }
 
 .ws-root .ws-bottom { flex: none; width: 100%; max-width: 800px; margin: 0 auto; padding: 10px 20px 20px; display: flex; flex-direction: column; gap: 12px }
 .ws-root .framed { background: transparent; border: 1px solid var(--border-strong); border-radius: 8px }

@@ -474,72 +474,94 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   attr :kind, :string, default: "mine", doc: ~s("mine" or "chop")
 
-  @doc "A tiny peon at work: carrying gold from the mine to the town hall, or chopping lumber."
+  @doc """
+  A peon at work, drawn in lines from the side like Warcraft III: by the
+  great hall, the gold mine and a pine, one peon carries gold home, or
+  (`kind="chop"`) chops the pine.
+  """
   def peon_at_work(assigns) do
     ~H"""
-    <svg class="wc3" viewBox="0 0 96 20" width="96" height="20" aria-hidden="true">
+    <svg class="wc3" viewBox="0 0 120 38" width="126" height="40" aria-hidden="true">
+      <path class="ground" d="M0 36H120" />
+      <g class="hall" transform="translate(2 0)">
+        <path class="thin" d="M17 6V1" />
+        <path class="flag" d="M17 1.2L21.5 2L17 3.6Z" />
+        <rect x="5.5" y="25" width="23" height="11" />
+        <path class="thin" d="M10.5 26V35.5M23.5 26V35.5" />
+        <path d="M14 36V31.5A3 3 0 0 1 20 31.5V36" />
+        <path d="M15.8 6.2Q17 4.8 18.2 6.2L33.5 24.6Q17 27.4 0.5 24.6Z" />
+        <path class="thin" d="M17 6.5L10.5 26M17 6.5L23.5 26" />
+        <path class="bold" d="M7.6 16.8Q17 18.4 26.4 16.8" />
+        <path d="M2.6 24.8Q-2 23.6 -1 17.4Q0.2 22 3.8 23.4Z" />
+        <path d="M31.4 24.8Q36 23.6 35 17.4Q33.8 22 30.2 23.4Z" />
+        <path
+          :for={x <- [1.4, 4.8, 8.2, 11.6, 22.4, 25.8, 29.2, 32.6]}
+          d={"M#{x - 1.3} 36V32.4L#{x} 30.4L#{x + 1.3} 32.4V36"}
+        />
+        <path d="M-0.5 33.8H12.9M21.1 33.8H34" />
+      </g>
+      <g class="tree">
+        <rect x="69" y="32.8" width="2" height="3.2" />
+        <path d="M65.9 33.2Q68.7 29.1 70 27.1Q71.3 29.1 74.1 33.2Q70 34.1 65.9 33.2Z" />
+        <path d="M66.8 29.8Q69 25.8 70 23.8Q71 25.8 73.2 29.8Q70 30.7 66.8 29.8Z" />
+        <path d="M67.8 26.5Q69.3 22.4 70 20.4Q70.7 22.4 72.2 26.5Q70 27.4 67.8 26.5Z" />
+      </g>
+      <g class="mine">
+        <path d="M100.1 36A8.5 8.5 0 1 1 105.9 36" />
+        <path d="M107 36A6 6 0 1 1 115 36" />
+        <path d="M88.9 36A6.5 6.5 0 1 1 97.2 36" />
+        <rect x="93.5" y="26.5" width="10" height="9.5" />
+        <rect class="glow" x="96" y="29.5" width="5" height="6.5" />
+        <path class="bold" d="M92 26H105M93.5 26.5V36M103.5 26.5V36" />
+        <circle class="gold" cx="88" cy="34.8" r="1" /><circle
+          class="gold"
+          cx="85.6"
+          cy="35.1"
+          r="0.8"
+        />
+      </g>
       <%= if @kind == "chop" do %>
-        <g class="logs">
-          <rect x="46" y="15" width="13" height="3" rx="1.5" /><rect
-            x="48"
-            y="12"
-            width="10"
-            height="3"
-            rx="1.5"
-          />
-        </g>
-        <g class="tree">
-          <rect class="trunk" x="77" y="11" width="4" height="8" /><polygon
-            class="leaf"
-            points="79,0 89,13 69,13"
-          />
-        </g>
-        <g transform="translate(66 0)">
-          <rect class="body" x="-2" y="10" width="5" height="6" rx="1" />
-          <circle class="head" cx="0.5" cy="7.5" r="2.6" />
-          <rect class="leg" x="-1.5" y="16" width="1.6" height="3" />
-          <rect class="leg r" x="1" y="16" width="1.6" height="3" />
-          <g class="axe">
-            <line class="haft" x1="2" y1="12" x2="7" y2="6" /><rect
-              class="blade"
-              x="6"
-              y="3.5"
-              width="3"
-              height="3.5"
-            />
+        <g transform="translate(82.5 36) scale(-1.45 1.45)">
+          <.orc />
+          <g transform="translate(2.4 -9.4)">
+            <g class="axe">
+              <path class="haft" d="M0 0H5.4" />
+              <path d="M4.6 -2Q6.8 -1 6.8 0Q6.8 1 4.6 2Z" />
+              <circle cx="1.3" cy="0" r="1.15" />
+            </g>
           </g>
         </g>
       <% else %>
-        <g class="hall">
-          <polygon class="roof" points="1,9 10,2 19,9" /><rect
-            class="wall"
-            x="3"
-            y="9"
-            width="14"
-            height="10"
-          />
-          <rect class="door" x="8" y="13" width="4" height="6" />
-        </g>
-        <g class="mine">
-          <path class="rock" d="M75 19 Q77 6 85 5 Q94 6 95 19 Z" /><rect
-            class="hole"
-            x="82"
-            y="12"
-            width="6"
-            height="7"
-            rx="2"
-          />
-          <circle class="gold" cx="79" cy="11" r="1" /><circle class="gold" cx="91" cy="13" r="1" />
-        </g>
         <g class="walker">
-          <rect class="body" x="-2" y="10" width="5" height="6" rx="1" />
-          <circle class="head" cx="0.5" cy="7.5" r="2.6" />
-          <circle class="sack" cx="4.5" cy="11" r="2.4" />
-          <rect class="leg" x="-1.5" y="16" width="1.6" height="3" />
-          <rect class="leg r" x="1" y="16" width="1.6" height="3" />
+          <g class="face">
+            <g transform="scale(1.45)">
+              <g class="sack">
+                <circle cx="-4" cy="-9.2" r="2.9" /><path d="M-4.8 -12.1L-3.2 -12.6" />
+              </g>
+              <.orc />
+              <path class="arm" d="M2.4 -10.2Q4.4 -8.4 4 -5.8" />
+              <circle cx="4.1" cy="-5" r="1.2" />
+            </g>
+          </g>
         </g>
       <% end %>
     </svg>
+    """
+  end
+
+  # A Warcraft III peon in profile, facing right, standing on the origin:
+  # a hunched back, a low head with a heavy brow, an underbite and a tusk.
+  defp orc(assigns) do
+    ~H"""
+    <g class="orc">
+      <path class="leg" d="M-1.2 -3.6L-1 -1.6L-0.6 0H0.9" />
+      <path class="leg r" d="M0.8 -3.6L1 -1.6L0.8 0H2.3" />
+      <path d="M-2.4 -4.6L-2 -2.4L0 -3.2L2.2 -2.6L2.4 -4.6Z" />
+      <path d="M-2.6 -4.6Q-4.4 -8.8 -2.2 -11.6Q0.6 -13.2 3 -11.2Q4.2 -9.2 3 -6.6Q2.8 -5 2.4 -4.6Z" />
+      <path d="M2.2 -10.8C1.8 -14.2 6.2 -14.8 6.7 -11.9L7.5 -11.3L6.7 -10.8L7.8 -9.8L7.5 -8.9Q5.2 -8.2 3.4 -9.2Z" />
+      <path class="thin" d="M7.3 -9.7L7.7 -11M2.9 -12.7L0.4 -14L2.5 -11.5" />
+      <circle class="eye" cx="5.6" cy="-11.6" r="0.4" />
+    </g>
     """
   end
 
