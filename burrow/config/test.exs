@@ -41,7 +41,5 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :burrow, start_cells: false
-# Workspace tests start Peon instances themselves, without workers that
-# touch Docker.
-config :peon, start_workers: false, fix_retries: 0, port_url: "http://localhost:{port}"
+config :burrow, fix_retries: 0, port_url: "http://localhost:{port}"
 config :burrow, opencode_model: "openai/gpt-test"

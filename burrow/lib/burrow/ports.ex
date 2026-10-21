@@ -9,4 +9,14 @@ defmodule Burrow.Ports do
            |> Enum.map(&(&1 |> Atom.to_string() |> String.to_integer()))
 
   def browser_safe?(port), do: port not in @blocked
+
+  @doc """
+  Where a browser reaches a local port: `:port_url` with `{port}` filled in
+  (e.g. `https://peon-{port}.example.com` behind a tunnel), or plain
+  `http://localhost:<port>`.
+  """
+  def url(port),
+    do: String.replace(Application.get_env(:burrow, :port_url, "http://localhost:{port}"), "{port}", to_string(port))
+
+  def host(port), do: URI.parse(url(port)).host
 end

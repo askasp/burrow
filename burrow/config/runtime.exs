@@ -55,21 +55,20 @@ if config_env() != :test do
         to_string(config_env() == :dev and is_nil(System.get_env("BURROW_PUBLIC_URL")))
       ) == "true"
 
-  # Each project's Peon, run inside Burrow (`Burrow.Cell`, `Peon.Instance`).
-  config :peon,
+  # Projects' chats and environments (`Burrow.Cell`).
+  config :burrow,
     template_dir: System.get_env("BURROW_TEMPLATE_DIR") || Path.join(root, "template"),
-    sandbox_image: System.get_env("PEON_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
+    sandbox_image: System.get_env("BURROW_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
     # Where a browser reaches a preview's or an environment's port: its own
     # address behind a tunnel (e.g. https://peon-{port}.example.com), or the
     # port on BURROW_PEON_HOST
     port_url:
       System.get_env("BURROW_PORT_URL") ||
         "http://#{System.get_env("BURROW_PEON_HOST", "localhost")}:{port}",
-    opencode_bin: opencode_bin || "opencode",
-    check_slots: String.to_integer(System.get_env("PEON_CHECK_SLOTS", "2")),
     # Chats running at once per project (agent and preview)
-    max_running_chats: String.to_integer(System.get_env("PEON_MAX_RUNNING_CHATS", "4")),
-    health_window: :timer.seconds(String.to_integer(System.get_env("PEON_HEALTH_WINDOW", "60"))),
+    max_running_chats: String.to_integer(System.get_env("BURROW_MAX_RUNNING_CHATS", "4")),
+    # How long a deploy is watched for new errors
+    health_window: :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
     # The workspace (Burrow's own site) may show previews in a frame.
     frame_ancestors: [System.get_env("BURROW_PUBLIC_URL") || "http://localhost:#{burrow_port}"]
 end

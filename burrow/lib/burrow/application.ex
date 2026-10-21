@@ -14,12 +14,18 @@ defmodule Burrow.Application do
        repos: Application.fetch_env!(:burrow, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:burrow, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Burrow.PubSub},
+      {Task.Supervisor, name: Burrow.TaskSupervisor},
       {Registry, keys: :unique, name: Burrow.CellRegistry},
+      {Registry, keys: :unique, name: Burrow.ProjectRegistry},
+      {Registry, keys: :unique, name: Burrow.ChatRegistry},
+      {DynamicSupervisor, name: Burrow.ChatSupervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: Burrow.CellSupervisor, strategy: :one_for_one},
+      # The agents' tools, on one Unix socket every agent container mounts.
+      Burrow.Agent.MCP,
       {Registry, keys: :unique, name: Burrow.OpenCodeRegistry},
       {DynamicSupervisor, name: Burrow.OpenCodeSupervisor, strategy: :one_for_one},
       Burrow.Activity,
-      # Desired state is the projects table: start a Peon for every project.
+      # Desired state is the projects table: start every project.
       {Task,
        fn ->
          if start_cells?(), do: Enum.each(Burrow.Projects.all(), &Burrow.Cell.ensure_started/1)

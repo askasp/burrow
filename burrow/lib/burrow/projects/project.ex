@@ -5,7 +5,6 @@ defmodule Burrow.Projects.Project do
   schema "projects" do
     field :name, :string
     field :slug, :string
-    field :port, :integer
     field :preview_ports, :string
     # "live" (main is live, no staging) or "pipeline" (staging and prod)
     field :envs, :string, default: "live"
@@ -13,8 +12,10 @@ defmodule Burrow.Projects.Project do
     field :repo_url, :string
     # The login a new app starts with (see `auths/0`); repo projects keep their own.
     field :auth, :string, default: "accounts"
+    # Human-edited switches: "auto_ship", "auto_ship_by", "auto_fix"
+    field :settings, :map, default: %{}
     # For "basic": the login the app asks for. Never stored: Burrow hands it
-    # to the project's Peon once (`Burrow.Cell`), which keeps it as secrets.
+    # to the new app once (`Burrow.Bootstrap`), as its secrets.
     field :basic_username, :string, virtual: true, redact: true
     field :basic_password, :string, virtual: true, redact: true
     belongs_to :user, Burrow.Accounts.User
@@ -84,7 +85,7 @@ defmodule Burrow.Projects.Project do
 
   def live_only?(%__MODULE__{envs: envs} = project), do: envs == "live" and not repo?(project)
 
-  @doc "The basic auth login to hand to the project's Peon, or nil."
+  @doc "The basic auth login to hand to a new app, or nil."
   def basic_login(%__MODULE__{auth: "basic", basic_username: user, basic_password: pw})
       when is_binary(user) and is_binary(pw),
       do: {user, pw}

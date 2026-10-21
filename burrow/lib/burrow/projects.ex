@@ -1,13 +1,17 @@
 defmodule Burrow.Projects do
   @moduledoc """
-  Users' projects. Every project gets its own Peon, run by a `Burrow.Cell`.
+  Users' projects. Each runs in a `Burrow.Cell`: its history (a
+  `Totem.Repo` under `dir/1`), its chats and its environments.
 
   A project is private to its owner, or shared with one of the owner's teams
   (`team_id`): then everyone in that team can see, open and restart it. Its
-  Peon still runs on the owner's AI login.
+  chats still run on the owner's AI login.
 
-  Per-project secrets (the secret Peon signs its agents' tokens with) are
-  derived from Burrow's secret, so none are stored.
+  Per-project secrets are derived from Burrow's secret, so none are stored.
+
+  What happens in a project is broadcast on its own topics
+  (`subscribe/2`, `broadcast/3`), and every such event redraws the project
+  rails (`Burrow.Activity`).
   """
 
   import Ecto.Query
@@ -17,14 +21,44 @@ defmodule Burrow.Projects do
   alias Burrow.Projects.Project
   alias Burrow.Teams
 
-  @peon_port_base 4100
-  # Project N gets ports 21000 + 50·N … +49. Projects made before keep the
-  # 5000 + 10·N block they were given (`preview_ports` is stored). The tunnel
-  # routes peon-<port>.<domain> to any of them, so a block can be this big.
+  # Project N gets ports 21000 + 50·N … +49 (`preview_ports` is stored). The
+  # tunnel routes peon-<port>.<domain> to any of them.
   @preview_port_base 21000
   @previews_per_project 50
 
   def subscribe, do: Phoenix.PubSub.subscribe(Burrow.PubSub, "projects")
+
+  @doc "Subscribes to one of a project's topics, e.g. `\"chats\"` or `\"chat:<id>\"`."
+  def subscribe(project_id, name),
+    do: Phoenix.PubSub.subscribe(Burrow.PubSub, "project:#{project_id}:#{name}")
+
+  def unsubscribe(project_id, name),
+    do: Phoenix.PubSub.unsubscribe(Burrow.PubSub, "project:#{project_id}:#{name}")
+
+  def broadcast(project_id, name, message) do
+    Phoenix.PubSub.broadcast(Burrow.PubSub, "project:#{project_id}:#{name}", message)
+    Burrow.Activity.push()
+  end
+
+  @doc "Where the project keeps its files: history, chats, environments."
+  def dir(%Project{slug: slug}),
+    do: Path.join([Application.fetch_env!(:burrow, :data_dir), "projects", slug])
+
+  @doc "The project's history (`Totem.Repo`)."
+  def repo_dir(project), do: Path.join(dir(project), "repo")
+
+  def settings(%Project{id: id}), do: (get(id) || %Project{}).settings || %{}
+
+  def put_settings(%Project{id: id}, changes) do
+    project = get(id)
+    {1, _} =
+      Repo.update_all(from(p in Project, where: p.id == ^id),
+        set: [settings: Map.merge(project.settings || %{}, changes)]
+      )
+
+    broadcast(id, "project", :settings_changed)
+    :ok
+  end
 
   @doc "The user's own projects and those shared with their teams, newest first."
   def list(%Scope{} = scope),
@@ -43,9 +77,6 @@ defmodule Burrow.Projects do
       where: p.user_id == ^user.id or p.team_id in subquery(Teams.ids_query(user.id))
   end
 
-  @doc "The project whose Peon was on `port`, for links from before workspaces moved into Burrow."
-  def get_by_port(port), do: Repo.get_by(Project, port: port)
-
   def visible?(%Scope{} = scope, id),
     do: Repo.exists?(from p in visible(scope), where: p.id == ^id)
 
@@ -56,12 +87,12 @@ defmodule Burrow.Projects do
   def change(attrs \\ %{}), do: Project.create_changeset(%Project{}, attrs)
 
   @doc """
-  Creates a project and starts its Peon. A `"team_id"` in `attrs` shares it
+  Creates a project and starts it (`Burrow.Cell`). A `"team_id"` in `attrs` shares it
   with that team, which must be one of the user's.
 
   `"auth"` picks the new app's login (`Project.auths/0`, default
   `"accounts"`); `"basic"` needs `"basic_username"` and `"basic_password"`,
-  which go to the Peon and are not stored here.
+  which become the app's secrets and are not stored here.
   """
   def create(%Scope{user: user} = scope, attrs) do
     Repo.transaction(fn ->
@@ -78,7 +109,6 @@ defmodule Burrow.Projects do
         changeset
         |> Ecto.Changeset.change(
           slug: unique_slug(name),
-          port: peon_port(@peon_port_base + index),
           preview_ports: "#{first}-#{first + @previews_per_project - 1}"
         )
         |> Repo.insert!()
@@ -88,7 +118,7 @@ defmodule Burrow.Projects do
     end)
     |> case do
       {:ok, project} ->
-        # Only the first Peon start gets a basic auth login (`Burrow.Cell.auth_env/1`).
+        # Only the first start gets a basic auth login (`Burrow.Bootstrap`).
         Burrow.Cell.ensure_started(project)
         project = %{project | basic_username: nil, basic_password: nil}
         Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_created, project})
@@ -133,7 +163,7 @@ defmodule Burrow.Projects do
 
   @doc """
   The owner hands the project to another member of its team. The project
-  keeps its team, and its Peon restarts on the new owner's AI login.
+  keeps its team, and its chats restart on the new owner's AI login.
   """
   def hand_over(%Scope{} = scope, %Project{} = project, user_id) do
     user_id = parse_id(user_id)
@@ -197,17 +227,10 @@ defmodule Burrow.Projects do
     :crypto.mac(:hmac, :sha256, base, "#{purpose}:#{id}") |> Base.url_encode64(padding: false)
   end
 
-  # The first port from `port` on that a browser opens and no project has.
-  defp peon_port(port) do
-    if Burrow.Ports.browser_safe?(port) and
-         not Repo.exists?(from p in Project, where: p.port == ^port),
-       do: port,
-       else: peon_port(port + 1)
-  end
 
   @doc """
-  Turns a live-only project into one with staging and prod, for good. Its
-  Peon does the work (`Peon.Ship.add_envs/1`); this records it.
+  Gives a project a staging environment in front of prod, for good: main
+  goes to staging first, and a person ships staging to prod.
   """
   def add_envs(%Scope{} = scope, %Project{} = project) do
     cond do
@@ -218,23 +241,13 @@ defmodule Burrow.Projects do
         {:ok, project}
 
       true ->
-        with :ok <- add_peon_envs(project, scope.user.email) do
-          {1, _} =
-            Repo.update_all(from(p in Project, where: p.id == ^project.id),
-              set: [envs: "pipeline"]
-            )
+        {1, _} =
+          Repo.update_all(from(p in Project, where: p.id == ^project.id), set: [envs: "pipeline"])
 
-          project = %{project | envs: "pipeline"}
-          Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
-          {:ok, project}
-        end
-    end
-  end
-
-  defp add_peon_envs(project, email) do
-    case Peon.Instance.run(project.id, fn -> Peon.Ship.add_envs(email) end) do
-      :ok -> :ok
-      {:error, :not_running} -> {:error, "The project's Peon isn't running."}
+        project = %{project | envs: "pipeline"}
+        Burrow.Cell.restart(project.id)
+        Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
+        {:ok, project}
     end
   end
 end
