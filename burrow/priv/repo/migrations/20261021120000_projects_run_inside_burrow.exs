@@ -4,6 +4,8 @@ defmodule Burrow.Repo.Migrations.ProjectsRunInsideBurrow do
   # What each project's Peon kept in a database of its own now lives here;
   # its code lives in a Totem history per project (Totem.Repo).
   def change do
+    drop_if_exists index(:projects, [:port])
+
     alter table(:projects) do
       add :settings, :map, default: %{}
       # Each project's Peon had a port of its own; it runs inside Burrow now.

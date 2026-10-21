@@ -44,10 +44,6 @@ defmodule BurrowWeb.Router do
   scope "/", BurrowWeb do
     pipe_through [:browser, :require_authenticated_user]
 
-    # Links from before workspaces were Burrow's own pages
-    get "/projects/:id/open", ProjectController, :open
-    get "/w/:port/*rest", ProjectController, :old_workspace
-
     live_session :require_authenticated_user,
       on_mount: [{BurrowWeb.UserAuth, :require_authenticated}] do
       live "/projects", ProjectLive.Index, :index

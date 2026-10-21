@@ -1,13 +1,13 @@
 defmodule BurrowWeb.WorkspaceLive.Components do
   @moduledoc """
   The workspace's parts (`BurrowWeb.WorkspaceLive`): the project rail, the
-  project bar, the chat tabs and changeset card, the preview pane, "Deploys
+  project bar, the chat tabs and change card, the preview pane, "Deploys
   and usage", and the dialogs.
   """
 
   use BurrowWeb, :html
 
-  alias Peon.Chats
+  alias Burrow.Chats
 
   ## Project rail
 
@@ -17,7 +17,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   @doc """
   Every project the user can open, a tile each with a health bar along its
-  bottom (`Peon.Activity`); names show when the rail is open.
+  bottom (`Burrow.Activity`); names show when the rail is open.
   """
   def rail(assigns) do
     ~H"""
@@ -296,9 +296,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               type="button"
               role="menuitem"
               phx-click={hide_menu() |> JS.push("add_envs")}
-              data-confirm="Add staging and prod? From then on main goes to staging first, and you promote it to prod. This can't be undone."
+              data-confirm="Add staging? From then on main goes to staging first, and you ship it to prod. This can't be undone."
             >
-              Add staging and prod
+              Add staging
             </button>
           </div>
         </div>
@@ -324,7 +324,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
 
-  @doc "A tab per chat, with where its changeset stands; up to `Peon.Chats.max/0`."
+  @doc "A tab per chat, with where its change stands; up to `Burrow.Chats.max/0`."
   def chat_tabs(assigns) do
     assigns = assign(assigns, full?: length(assigns.tabs) >= Chats.max())
 
@@ -342,7 +342,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             title={tab_tip(t, @project, @nothing_built?)}
           >
             <span class={["cdot", dot(t.phase)]} aria-hidden="true"></span>
-            <span :if={t.changeset} class="n">#{t.changeset.id}</span>
+            <span :if={number(t)} class="n">#{number(t)}</span>
             <span class="t">{tab_title(t, @project, @nothing_built?)}</span>
           </.link>
           <button
@@ -359,7 +359,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         </div>
       </div>
       <span title={
-        if @full?, do: "Up to #{Chats.max()} chats. Merge or close one first.", else: "New chat"
+        if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat"
       }>
         <button
           id="new-chat"
@@ -387,17 +387,21 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp tab_title(%{chat: %{title: title}}, _project, _nothing_built?), do: title
 
   defp tab_tip(t, project, nothing_built?) do
-    number = if t.changeset, do: "##{t.changeset.id} · ", else: ""
+    number = if number(t), do: "##{number(t)} · ", else: ""
     "#{number}#{tab_title(t, project, nothing_built?)} · #{phase_text(t.phase)}"
   end
 
+  # A chat's change has a number once it is on main.
+  defp number(%{draft: %{change: id}}) when id != nil, do: id
+  defp number(_tab), do: nil
+
   defp phase_text("working"), do: "working"
   defp phase_text("failed"), do: "checks failed"
-  defp phase_text("ready"), do: "ready to merge"
-  defp phase_text("landing"), do: "merging"
+  defp phase_text("ready"), do: "pull request open"
+  defp phase_text("landing"), do: "on main"
   defp phase_text("staged"), do: "on staging"
   defp phase_text("live"), do: "live"
-  defp phase_text("idle"), do: "no changeset yet"
+  defp phase_text("idle"), do: "nothing submitted yet"
   defp phase_text(_), do: "new"
 
   defp dot(phase) when phase in ~w(working landing), do: "working"
@@ -405,7 +409,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp dot("live"), do: "done"
   defp dot(_), do: "new"
 
-  # Merged (live) chats and chats with no changeset close; a repo chat's
+  # Shipped (live) chats and chats with nothing submitted close; a repo chat's
   # pull request stays open.
   defp closable?(%{phase: phase}, true), do: phase in ~w(new idle ready)
   defp closable?(%{phase: phase}, false), do: phase in ~w(new idle live)
@@ -421,47 +425,47 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp close_confirm(_tab, false), do: "Close this chat? The conversation goes with it."
 
-  ## Changeset card
+  ## Change card
 
-  attr :changeset, :map, required: true
+  attr :draft, :map, required: true
   attr :tab, :map
-  attr :landed?, :boolean, required: true
-  attr :held, :list
   attr :step, :any
   attr :live_only?, :boolean, required: true
   attr :promote, :any
+  attr :main_check, :any
 
-  @doc "The chat's changeset: its checks, how far it got, and merging it."
-  def changeset_card(assigns) do
-    cs = assigns.changeset
+  @doc "The chat's change: its checks, how far it got, and shipping it."
+  def change_card(assigns) do
+    draft = assigns.draft
     phase = (assigns.tab && assigns.tab.phase) || "idle"
+    check = assigns.main_check
 
-    steps =
-      (cs.checks["steps"] || []) ++
-        if(assigns.landed? and cs.verify,
-          do: [Map.put(cs.verify, "name", "test") |> Map.put_new("duration_ms", nil)],
-          else: []
-        )
+    # Once on main, main's own check is the last step.
+    main =
+      if draft.change && check && check.change_id >= draft.change,
+        do: [%{"name" => "main", "status" => if(check.status == "running", do: "running", else: check.status)}],
+        else: []
 
     assigns =
       assign(assigns,
         phase: phase,
-        steps: steps,
+        steps: (draft.checks["steps"] || []) ++ main,
         end_name: env_label("prod", assigns.live_only?),
-        reached: reached(phase)
+        reached: reached(phase),
+        title: if(draft.change, do: "Change ##{draft.change}", else: "Change")
       )
 
     ~H"""
-    <section class="framed ws-cs" aria-label={"Changeset ##{@changeset.id}"}>
+    <section class="framed ws-cs" aria-label={@title}>
       <div class="csrow">
         <span class="text-[var(--rust)] flex"><.icon
           name="hero-arrows-right-left"
           class="size-[17px]"
         /></span>
-        <h2 class="m-0 text-[15px] leading-[22px] font-semibold">Changeset #{@changeset.id}</h2>
+        <h2 class="m-0 text-[15px] leading-[22px] font-semibold">{@title}</h2>
         <span class={["st", badge_tone(@phase)]}><span class="dot"></span>{badge(@phase, @live_only?)}</span>
         <div class="flow mono ml-auto">
-          <span class="on">dev #{@changeset.id}</span>
+          <span class="on">dev</span>
           <.icon name="hero-arrow-right" class="size-3" />
           <span class={@reached >= 1 && "on"}>main</span>
           <span :if={!@live_only?} class="contents">
@@ -472,57 +476,35 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           <span class={@reached >= 3 && "on"}>{@end_name}</span>
         </div>
       </div>
-      <div class="truncate muted text-[13px]">{@changeset.intent}</div>
-      <div :if={@held not in [nil, []] and not @landed?} class="text-[13px] text-[var(--warn)]">
-        Needs your review: {Enum.join(@held, "; ")}
-      </div>
+      <div class="truncate muted text-[13px]">{@draft.intent}</div>
       <div class="csrow">
         <div class="steps">
           <span :for={step <- @steps} class={["step", step_kind(step["status"])]}>
             <span class="i"><.step_icon status={step["status"]} /></span>
             <span class="mono">{step["name"]}</span>
           </span>
-          <span :if={@changeset.status == "checking"} class="step run">
+          <span :if={@draft.status == "checking"} class="step run">
             <span class="i"><.step_icon status="running" /></span>
             <span class="mono">{step_text(@step)}</span>
           </span>
         </div>
         <div class="acts">
           <button
-            :if={@phase in ~w(ready failed) and @tab}
+            :if={@phase == "failed" and @tab}
             type="button"
             class="btn btn-ghost btn-sm"
             phx-click="close_chat"
             phx-value-id={@tab.chat.id}
-            data-confirm="Discard this changeset? The chat closes with it."
+            data-confirm="Discard this change? The chat closes with it."
           >
             Discard
           </button>
-          <button
-            :if={@phase in ~w(working ready) and not @landed?}
-            type="button"
-            class="btn btn-secondary btn-sm btn-ink"
-            phx-click="land"
-            phx-value-id={@changeset.id}
-            disabled={@changeset.status != "passed"}
-            data-kb-key="a"
-            data-kb-label="Merge to main"
-            data-kb-group="Ship"
-            data-confirm={
-              if @live_only?,
-                do: "Merge ##{@changeset.id} to main? It goes live.",
-                else: "Merge ##{@changeset.id} to main?"
-            }
-          >
-            <.icon name="hero-arrows-right-left" class="size-4" /> Merge to main
-          </button>
-          <div :if={@phase == "landing"} class="dep" role="status">
-            <span>{if @live_only?, do: "Going live", else: "Landing on staging"}</span>
-            <span class="dbar" aria-hidden="true"><i></i></span>
-          </div>
-          <div :if={@phase == "staged"} class="dep" role="status">
-            <span class="live"><.icon name="hero-check" class="size-4" /> On staging</span>
+          <div :if={@phase in ~w(landing staged)} class="dep" role="status">
+            <span :if={@phase == "staged"} class="live"><.icon name="hero-check" class="size-4" /> On staging</span>
+            <span :if={@phase == "landing" and !@promote}>On main</span>
+            <span :if={@phase == "landing" and !@promote} class="dbar" aria-hidden="true"><i></i></span>
             <button
+              :if={@phase == "staged"}
               type="button"
               class="btn btn-secondary btn-sm"
               phx-click="view"
@@ -534,11 +516,14 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               :if={@promote}
               type="button"
               class="btn btn-primary btn-sm"
-              phx-click="promote"
+              phx-click="ship"
               phx-value-id={@promote}
-              data-confirm={"Deploy ##{@promote} (healthy on staging) to prod?"}
+              data-kb-key="a"
+              data-kb-label="Ship"
+              data-kb-group="Ship"
+              data-confirm={"Ship ##{@promote} to #{@end_name}?"}
             >
-              Promote to prod
+              Ship
             </button>
           </div>
           <span :if={@phase == "live"} class="live" role="status">
@@ -559,13 +544,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp badge("working", _), do: "checking"
   defp badge("failed", _), do: "checks failed"
-  defp badge("ready", _), do: "checks passed"
-  defp badge("landing", true), do: "going live"
+  defp badge("ready", _), do: "pull request open"
+  defp badge("landing", true), do: "on main"
   defp badge("landing", false), do: "on main"
   defp badge("staged", _), do: "on staging"
   defp badge("live", true), do: "live"
   defp badge("live", false), do: "on prod"
-  defp badge(_, _), do: "superseded"
+  defp badge(_, _), do: "not submitted"
 
   defp badge_tone(phase) when phase in ~w(working landing), do: "warn"
   defp badge_tone("failed"), do: "err"
@@ -600,7 +585,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :env_names, :list, required: true
   attr :live_only?, :boolean, required: true
   attr :dev?, :boolean, required: true
-  attr :changeset, :map
+  attr :number, :any, doc: "the chat's change number, once on main"
   attr :chat, :map
   attr :info, :map
   attr :frame_key, :integer, required: true
@@ -630,7 +615,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           disabled={!@dev?}
           title={if !@dev?, do: "The chat's dev preview starts with its first message"}
         >
-          {if @changeset && @dev?, do: "dev ##{@changeset.id}", else: "dev"}
+          {if @number && @dev?, do: "dev ##{@number}", else: "dev"}
         </button>
       </div>
       <span :if={@preview.status} class={["st", st_tone(@preview.status)]}>
@@ -679,8 +664,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         rel="noopener"
         data-kb="row"
         class="icon-btn"
-        aria-label={"Open #{view_name(@view, @live_only?, @changeset)} in a new tab"}
-        title={"Open #{view_name(@view, @live_only?, @changeset)} in a new tab"}
+        aria-label={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
+        title={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
       >
         <.icon name="hero-arrow-top-right-on-square" class="size-4" />
       </a>
@@ -775,7 +760,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           data-kb="row"
           class="btn btn-primary"
         >
-          Open {view_name(@view, @live_only?, @changeset)} in a new tab
+          Open {view_name(@view, @live_only?, @number)} in a new tab
           <.icon name="hero-arrow-top-right-on-square" class="size-4" />
         </a>
       </div>
@@ -783,11 +768,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         <div class="ws-logs-head">
           <.icon name="hero-command-line" class="size-4 muted" />
           <span class="font-semibold text-[13px]">Logs</span>
-          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(
-            @view,
-            @live_only?,
-            @changeset
-          )}</span>
+          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(@view, @live_only?, @number)}</span>
           <button
             type="button"
             phx-click="toggle_logs"
@@ -803,7 +784,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
-  defp view_name("dev", _live_only?, %{id: id}), do: "dev ##{id}"
+  defp view_name("dev", _live_only?, id) when is_integer(id), do: "dev ##{id}"
   defp view_name("dev", _live_only?, _cs), do: "dev"
   defp view_name(env, live_only?, _cs), do: env_label(env, live_only?)
 
@@ -837,13 +818,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       assign(assigns,
         prod: prod,
         prod_name: env_label("prod", assigns.live_only?),
-        open:
-          for(
-            t <- assigns.tabs,
-            t.changeset,
-            t.phase in ~w(working ready failed),
-            do: t.changeset.id
-          ),
+        open: Enum.count(assigns.tabs, &(&1.phase in ~w(idle working failed))),
         running?: match?(%{status: :running, deployed: id} when id != nil, prod),
         usage: prod && prod[:usage],
         stats: prod && prod.stats,
@@ -865,15 +840,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <div class="env">
               <div class="flex items-center gap-2.5">
                 <span class="eyebrow">dev</span>
-                <span :if={@open != []} class="st ok"><span class="dot"></span>open</span>
+                <span :if={@open > 0} class="st ok"><span class="dot"></span>open</span>
               </div>
               <div class="tip">
-                {if @open == [], do: "—", else: Enum.map_join(@open, ", ", &"##{&1}")}<small>{if @open ==
-                                                                                                   [],
-                                                                                                 do:
-                                                                                                   "nothing open",
-                                                                                                 else:
-                                                                                                   "open changesets"}</small>
+                {if @open == 0, do: "—", else: @open}<small>{if @open == 0,
+                  do: "nothing open",
+                  else: "chats at work"}</small>
               </div>
               <a
                 :if={@info && @info.preview_url}
@@ -899,23 +871,23 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               :if={@promote}
               type="button"
               class="btn btn-secondary btn-sm"
-              phx-click="promote"
+              phx-click="ship"
               phx-value-id={@promote}
               data-kb-key="P"
-              data-kb-label="Promote to prod"
+              data-kb-label="Ship"
               data-kb-group="Ship"
-              data-confirm={"Deploy ##{@promote} (healthy on staging) to prod?"}
+              data-confirm={"Ship ##{@promote} to #{@prod_name}?"}
             >
-              Promote to prod
+              Ship
             </button>
-            <label :if={!@live_only? and "staging" in @env_names} class="check ml-auto">
+            <label class="check ml-auto">
               <input
-                id="auto-promote"
+                id="auto-ship"
                 type="checkbox"
                 data-kb="row"
                 checked={@auto_promote}
-                phx-click="toggle_auto_promote"
-              /> auto-promote healthy staging
+                phx-click="toggle_auto_ship"
+              /> ship automatically
             </label>
           </div>
         </div>
@@ -946,11 +918,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             </div>
             <div class="stat">
               <span class="l">Memory</span>
-              <span class="v">{mb(@stats && @stats["total"])}<span class="u">MB of {Peon.Sandbox.memory_mb()}</span></span>
+              <span class="v">{mb(@stats && @stats["total"])}<span class="u">MB of {Burrow.Sandbox.memory_mb()}</span></span>
               <span
                 class="meter"
                 role="img"
-                aria-label={"#{mb(@stats && @stats["total"])} of #{Peon.Sandbox.memory_mb()} megabytes used"}
+                aria-label={"#{mb(@stats && @stats["total"])} of #{Burrow.Sandbox.memory_mb()} megabytes used"}
               >
                 <i style={"width: #{memory_pct(@stats)}%"}></i>
               </span>
@@ -1071,12 +1043,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp env_note(_name, _info, _envs), do: ""
 
-  defp sync_text(%{live_only?: true}), do: "Merging to main puts a change live."
+  defp sync_text(%{promote: id, live_only?: true}) when id != nil,
+    do: "Main ##{id} passed its check and is ready to ship."
 
-  defp sync_text(%{promote: id}) when id != nil,
-    do: "Staging is ahead of prod: ##{id} is not on prod yet."
-
-  defp sync_text(%{auto_promote: true}), do: "Prod follows every healthy staging deploy."
+  defp sync_text(%{promote: id}) when id != nil, do: "Staging is ahead of prod: ##{id} is ready to ship."
+  defp sync_text(%{auto_promote: true}), do: "Every change that passes ships by itself."
+  defp sync_text(%{live_only?: true}), do: "Live runs main's latest shipped change."
   defp sync_text(_assigns), do: "Staging and prod match."
 
   attr :label, :string, required: true
@@ -1132,7 +1104,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp fmt(n), do: :erlang.float_to_binary(n / 1, decimals: 1)
 
   defp memory_pct(%{"total" => total}) when is_integer(total),
-    do: min(100, round(total / 1_048_576 / Peon.Sandbox.memory_mb() * 100))
+    do: min(100, round(total / 1_048_576 / Burrow.Sandbox.memory_mb() * 100))
 
   defp memory_pct(_stats), do: 0
 

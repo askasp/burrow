@@ -3,11 +3,10 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
   import Phoenix.LiveViewTest
   import Burrow.AccountsFixtures
-  import Burrow.PeonHelpers
+  import Burrow.ProjectHelpers
 
   alias Burrow.Accounts.Scope
-  alias Burrow.{Accounts, Projects, Teams}
-  alias Peon.{Chats, Code, Store, Verifier}
+  alias Burrow.{Accounts, Chats, Projects, Runs, Secrets, Teams}
 
   @moduletag :tmp_dir
   # The AI login check has no opencode to talk to in tests.
@@ -17,8 +16,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
   setup %{user: user, tmp_dir: dir} do
     {:ok, project} = Projects.create(Scope.for_user(user), %{"name" => "App"})
-    start_peon!(project, dir, env_ports: %{"staging" => 1, "prod" => 2})
-    %{project: project, base: import_app!(dir, "App")}
+    %{project: start_project!(project, dir)}
   end
 
   describe "the workspace" do
@@ -30,7 +28,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, ".pbar-meta", "app · nothing built yet")
       assert has_element?(view, ".ws-prev-empty", "Nothing here yet")
       # Its agent starts with the first message, not before.
-      assert [%{started_at: nil}] = Chats.list()
+      assert [%{started_at: nil}] = Chats.list(project.id)
     end
 
     test "is the project opened last, after the next login", %{conn: conn, project: project} do
@@ -38,7 +36,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert redirected_to(get(conn, ~p"/")) == ~p"/projects/#{project.id}"
     end
 
-    test "says its Peon is starting until it is up", %{conn: conn, user: user} do
+    test "says it is starting until it is up", %{conn: conn, user: user} do
       {:ok, other} = Projects.create(Scope.for_user(user), %{"name" => "Later"})
       {:ok, view, html} = live(conn, ~p"/projects/#{other.id}")
       assert html =~ "Starting Later"
@@ -52,16 +50,6 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       conn = log_in_user(build_conn(), stranger)
       assert_raise Ecto.NoResultsError, fn -> live(conn, ~p"/projects/#{project.id}") end
     end
-
-    test "old links still find it", %{conn: conn, project: project} do
-      assert redirected_to(get(conn, ~p"/projects/#{project.id}/open")) ==
-               ~p"/projects/#{project.id}"
-
-      assert redirected_to(get(conn, "/w/#{project.port}/c/abc")) ==
-               ~p"/projects/#{project.id}/c/abc"
-
-      assert redirected_to(get(conn, "/w/1/")) == ~p"/projects"
-    end
   end
 
   describe "chats" do
@@ -69,62 +57,41 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       {:ok, view, _html} = open(conn, project)
 
       for _ <- 1..3, do: view |> element("#new-chat") |> render_click()
-      assert length(Chats.list()) == 4
+      assert length(Chats.list(project.id)) == 4
       assert has_element?(view, "#new-chat[disabled]")
-      assert has_element?(view, "span[title='Up to 4 chats. Merge or close one first.']")
+      assert has_element?(view, "span[title='Up to 4 chats. Close one first.']")
 
-      [first | _] = Chats.list()
+      [first | _] = Chats.list(project.id)
       view |> element("#tab-#{first.id} .cx") |> render_click()
-      assert_eventually(fn -> length(Chats.list()) == 3 end)
+      assert_eventually(fn -> length(Chats.list(project.id)) == 3 end)
       refute has_element?(view, "#new-chat[disabled]")
     end
 
-    test "a held changeset is merged from its chat, which then closes for changes", %{
+    test "a landed change ships from its card, and its chat closes for changes", %{
       conn: conn,
-      project: project,
-      base: base
+      project: project
     } do
-      chat = Chats.create("Bump deps", "aksel")
-      cs = passed(base.id, "mix.exs", "defmodule App.MixProject do @x 1 end", chat.id)
+      chat = Chats.create(project.id, "Say hello", "aksel")
+      change = land!(project, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      run = Runs.start(project.id, "check", "main", change.id)
+      Runs.finish(run, status: "passed")
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
-      assert render(view) =~ "Needs your review: it changes mix.exs"
-      assert has_element?(view, "#tab-#{chat.id} .cdot.waiting")
-      assert has_element?(view, "#tab-#{chat.id} .n", "##{cs.id}")
-
-      view |> element("[data-kb-key=a]") |> render_click()
-      assert Code.ref("main").changeset_id == cs.id
-      assert has_element?(view, "#tab-#{chat.id} .cdot.working")
+      assert has_element?(view, "#tab-#{chat.id} .n", "##{change.id}")
+      assert has_element?(view, ".ws-cs h2", "Change ##{change.id}")
       assert has_element?(view, "#chat-input[disabled]")
 
-      assert has_element?(
-               view,
-               "#chat-input[placeholder='Merged. Start a new chat for the next change.']"
-             )
+      view |> element(".ws-cs button", "Ship") |> render_click()
+      assert Totem.Repo.ref(Projects.repo_dir(project), "prod") == change.id
+      assert has_element?(view, "#tab-#{chat.id} .cdot.done")
     end
 
-    test "main broken by a changeset offers a revert", %{
-      conn: conn,
-      project: project,
-      base: base
-    } do
-      cs = passed(base.id, "lib/app.ex", "defmodule App do def x, do: 1 end", nil)
-      {:ok, landed} = Store.land(cs.id, "peon")
-
-      {:ok, _} =
-        Store.set_verify(landed.id, %{"status" => "failed", "steps" => [], "blamed" => true})
-
-      assert Verifier.culprit().id == landed.id
+    test "main failing its check shows", %{conn: conn, project: project} do
+      run = Runs.start(project.id, "check", "main", 1)
+      Runs.finish(run, status: "failed", detail: "boot failed")
 
       {:ok, view, _html} = open(conn, project)
-      assert render(view) =~ "tests fail since ##{landed.id}"
-
-      view |> element("button", "revert") |> render_click()
-      assert render(view) =~ "Revert submitted"
-
-      # Info flashes clear themselves.
-      send(view.pid, :clear_info)
-      refute render(view) =~ "Revert submitted"
+      assert render(view) =~ "Main #1 did not pass in prod mode"
     end
   end
 
@@ -141,72 +108,70 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       })
       |> render_submit()
 
-      assert Peon.Secrets.env() == %{"SLACK_TOKEN" => "xoxb-1"}
+      assert Secrets.env(project.id) == %{"SLACK_TOKEN" => "xoxb-1"}
       html = render(view)
       assert html =~ "SLACK_TOKEN"
       refute html =~ "xoxb-1"
 
       view |> element("button[phx-value-name=SLACK_TOKEN]") |> render_click()
-      assert Peon.Secrets.env() == %{}
+      assert Secrets.env(project.id) == %{}
 
       view |> element("#secrets-panel button", "Close") |> render_click()
       refute has_element?(view, "#secrets-panel")
     end
 
     test "one the agent asked for gets a box in its chat", %{conn: conn, project: project} do
-      chat = Chats.create("Digest", "aksel")
-      {:ok, :requested} = Peon.Secrets.request("SLACK_TOKEN", "Posts to #ops", chat.id)
+      chat = Chats.create(project.id, "Digest", "aksel")
+      {:ok, :requested} = Secrets.request(project.id, "SLACK_TOKEN", "Posts to #ops", chat.id)
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
       assert render(view) =~ "Peon needs a key"
       assert render(view) =~ "Posts to #ops"
 
       view |> form("form[id^=connect-SLACK_TOKEN]", %{"value" => "xoxb-1"}) |> render_submit()
-      assert Peon.Secrets.env() == %{"SLACK_TOKEN" => "xoxb-1"}
+      assert Secrets.env(project.id) == %{"SLACK_TOKEN" => "xoxb-1"}
       refute render(view) =~ "Peon needs a key"
     end
   end
 
   describe "environments" do
-    test "deploys and usage replace the preview; auto-promote is a human switch", %{
+    test "deploys and usage replace the preview; shipping by itself is a human switch", %{
       conn: conn,
       project: project,
       user: user
     } do
-      Peon.Project.put_settings(%{"envs" => "pipeline"})
-      {:ok, view, _html} = open(conn, project)
+      Burrow.Repo.update_all(Projects.Project, set: [envs: "pipeline"])
+      {:ok, view, _html} = open(conn, Projects.get(project.id))
       refute has_element?(view, "#overview")
       view |> element("#overview-btn") |> render_click()
       assert has_element?(view, "#overview-btn[aria-pressed=true]")
       assert has_element?(view, "#overview .env .eyebrow", "staging")
       refute has_element?(view, ".vbar")
 
-      view |> element("#auto-promote") |> render_click()
+      view |> element("#auto-ship") |> render_click()
 
-      assert Peon.Project.settings() |> Map.take(["auto_promote", "auto_promote_by"]) ==
-               %{"auto_promote" => true, "auto_promote_by" => user.email}
+      assert Projects.settings(project) |> Map.take(["auto_ship", "auto_ship_by"]) ==
+               %{"auto_ship" => true, "auto_ship_by" => user.email}
 
-      assert render(view) =~ "Prod follows every healthy staging deploy"
+      assert render(view) =~ "Every change that passes ships by itself"
 
       view |> element("#overview button", "Back to preview") |> render_click()
       assert has_element?(view, ".vbar .seg button", "staging")
     end
 
-    test "a live-only project calls prod live and adds staging and prod", %{
+    test "a project without staging calls prod live, and staging can be added", %{
       conn: conn,
       project: project
     } do
-      Peon.Project.put_settings(%{"envs" => "live"})
       assert Projects.get(project.id).envs == "live"
 
       {:ok, view, _html} = open(conn, project)
       assert has_element?(view, ".vbar .seg button", "live")
       refute has_element?(view, ".vbar .seg button", "staging")
 
-      view |> element("#more-menu button", "Add staging and prod") |> render_click()
-      assert Peon.Project.settings()["envs"] == "pipeline"
+      view |> element("#more-menu button", "Add staging") |> render_click()
       assert Projects.get(project.id).envs == "pipeline"
-      assert render(view) =~ "Staging and prod are set up"
+      assert render(view) =~ "Staging is set up"
     end
   end
 
@@ -220,7 +185,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = open(conn, project)
       assert has_element?(view, ".rail .ritem[aria-current=page]", "App")
-      # Cells don't run in tests, so its Peon shows as stopped.
+      # Cells don't run in tests, so it shows as stopped.
       assert has_element?(view, ".rail a.ritem[href='/projects/#{other.id}'] .rhp.stopped")
       refute has_element?(view, ".rail.open")
 

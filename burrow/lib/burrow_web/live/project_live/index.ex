@@ -1,8 +1,8 @@
 defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
   The projects screen: your projects and those shared with your teams on the
-  left; a project opens its workspace (its Peon), which has a rail back to
-  all of them. Its details (`?p=<id>`: its Peon, sharing, the ⋯ menu with
+  left; a project opens its workspace, which has a rail back to
+  all of them. Its details (`?p=<id>`: its status, sharing, the ⋯ menu with
   share, hand over and adding staging and prod) show on the right. New
   project opens the form.
   """
@@ -98,7 +98,7 @@ defmodule BurrowWeb.ProjectLive.Index do
       {:ok, project} ->
         {:noreply,
          socket
-         |> put_flash(:info, "Creating #{project.name}. Its Peon starts in a few seconds.")
+         |> put_flash(:info, "Creating #{project.name}. It starts in a few seconds.")
          |> assign(form: new_form(), slug: nil, creating: false)
          |> load()
          |> push_patch(to: ~p"/projects?p=#{project.id}")}
@@ -117,7 +117,7 @@ defmodule BurrowWeb.ProjectLive.Index do
          socket
          |> put_flash(
            :info,
-           "#{project.name} now belongs to #{project.user.email}. Its Peon restarts on their AI login."
+           "#{project.name} now belongs to #{project.user.email}. Its chats restart on their AI login."
          )
          |> load()}
 
@@ -295,7 +295,7 @@ defmodule BurrowWeb.ProjectLive.Index do
 
       <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
         <span class="st warn"><span class="dot"></span>No AI login</span>
-        <span class="text-[var(--text-2)]">Connect an AI provider so your Peons can work.</span>
+        <span class="text-[var(--text-2)]">Connect an AI provider so Peon can work.</span>
         <.link navigate={~p"/ai"} class="btn btn-secondary btn-sm ml-auto">Connect</.link>
       </div>
 
@@ -348,7 +348,7 @@ defmodule BurrowWeb.ProjectLive.Index do
                 {@selected.name}
               </h2>
               <span id="project-meta" class="mono text-[12.5px] text-[var(--text-3)]">
-                {@selected.slug} · {if live?, do: "live", else: "staging and prod"} · Peon on port {@selected.port}
+                {@selected.slug} · {if live?, do: "live", else: "staging and prod"}
               </span>
             </div>
             <div class="flex items-center gap-2">
@@ -456,21 +456,21 @@ defmodule BurrowWeb.ProjectLive.Index do
             <div class="cells">
               <div class="cell">
                 <div class="flex items-center gap-2.5">
-                  <span class="eyebrow">peon</span>
+                  <span class="eyebrow">project</span>
                   <.status status={@statuses[@selected.id]} />
                 </div>
-                <div class="tip">:{@selected.port}<small>{@selected.preview_ports}</small></div>
+                <div class="tip">ports<small>{@selected.preview_ports}</small></div>
                 <button
                   id="restart-peon"
                   data-kb-key="R"
-                  data-kb-label="Restart Peon"
+                  data-kb-label="Restart the project"
                   data-kb-group="Project"
                   type="button"
                   class="xlink w-fit"
                   phx-click="restart"
                   phx-value-id={@selected.id}
                 >
-                  Restart Peon <.icon name="hero-arrow-path" class="size-3.5" />
+                  Restart <.icon name="hero-arrow-path" class="size-3.5" />
                 </button>
               </div>
               <div class="cell">
@@ -499,7 +499,7 @@ defmodule BurrowWeb.ProjectLive.Index do
           :if={!@selected}
           class="flex-[999_1_560px] min-w-0 pt-4 text-[15px] text-[var(--text-2)]"
         >
-          Name your first project. Its Peon starts in a few seconds; then open its workspace and describe what to build.
+          Name your first project. It starts in a few seconds; then open its workspace and describe what to build.
         </section>
       </div>
     </Layouts.app>

@@ -7,20 +7,18 @@ defmodule BurrowWeb.WorkspaceLive do
   preview and what is live (staging and prod in a pipeline project), or
   gives way to "Deploys and usage".
 
-  It works on the project's Peon (`Peon.Instance`), which Burrow runs
-  (`Burrow.Cell`); until that is up it says it is starting. A project has up
-  to four chats (`Peon.Chats.max/0`), each one changeset; `Peon.Activity`
-  says where each stands. An empty chat starts its agent and preview with
-  its first message.
+  The project runs in a `Burrow.Cell`; until that is up it says it is
+  starting. A project has up to four chats (`Burrow.Chats.max/0`), each with
+  one change (its draft in the project's history); `Burrow.Activity` says
+  where each stands. An empty chat starts its agent and preview with its
+  first message.
   """
 
   use BurrowWeb, :live_view
 
   import BurrowWeb.WorkspaceLive.Components
 
-  alias Burrow.{Accounts, Cell, Projects, Teams}
-  alias Peon.{Activity, Chat, Chats, Code, Env, Incidents, Project, Secrets, Ship, Store}
-  alias Peon.Verifier
+  alias Burrow.{Accounts, Activity, Cell, Chat, Chats, Env, Incidents, Projects, Runs, Secrets, Ship, Teams}
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -43,50 +41,50 @@ defmodule BurrowWeb.WorkspaceLive do
       Cell.subscribe()
     end
 
-    case Peon.Instance.lookup(project.id) do
-      nil -> {:ok, assign(socket, peon: nil, cell: Cell.status(project.id))}
-      instance -> {:ok, socket |> assign(peon: instance) |> mount_peon()}
+    case Cell.status(project.id) do
+      :running -> {:ok, socket |> assign(ready: true) |> mount_project()}
+      status -> {:ok, assign(socket, ready: false, cell: status)}
     end
   end
 
-  defp mount_peon(socket) do
-    Peon.Instance.put(socket.assigns.peon)
+  defp mount_project(socket) do
+    project = socket.assigns.burrow_project
 
     if connected?(socket) do
-      Chats.subscribe()
-      Store.subscribe()
-      Peon.Checks.subscribe()
-      Env.subscribe()
-      Incidents.subscribe()
-      Secrets.subscribe()
+      Chats.subscribe(project.id)
+      Ship.subscribe(project.id)
+      Env.subscribe(project.id)
+      Incidents.subscribe(project.id)
+      Secrets.subscribe(project.id)
+      for topic <- ["refs", "project"], do: Projects.subscribe(project.id, topic)
     end
 
     socket
-    |> assign(project: Project.get(), repo?: Peon.Source.repo?())
+    |> assign(project: project, repo?: Projects.Project.repo?(project))
     # The project rail and this project's sharing
     |> load_rail()
-    |> assign(busy: if(connected?(socket), do: Chat.busy_ids(), else: MapSet.new()))
+    |> assign(busy: if(connected?(socket), do: Chat.busy_ids(project.id), else: MapSet.new()))
     |> assign(chat: nil, tab: nil, info: nil, view: "dev")
     |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
     # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
     |> assign(stopped: nil)
     |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
-    |> assign(changeset: nil, landed?: false, held: nil, form: to_form(%{"text" => ""}))
+    |> assign(draft: nil, form: to_form(%{"text" => ""}))
     # The "/" menu: the chat's commands and skills, and those matching the box
     |> assign(slash_items: [], slash: [])
     # "Deploys and usage" in place of the preview; one dialog at a time
     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
-    |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
-    |> assign(secrets: Secrets.list(), secrets_key: 0)
+    |> assign(env_names: Env.names(project), live_only?: not Ship.staging?(project))
+    |> assign(secrets: Secrets.list(project.id), secrets_key: 0)
     # Phones: one pane at a time
     |> assign(pane: "chat")
-    |> assign(envs: Map.new(Ship.env_names(), &{&1, Env.info(&1)}))
+    |> assign(envs: Map.new(Env.names(project), &{&1, Env.info(project, &1)}))
     |> load_tabs()
     |> load_ship()
   end
 
   @impl true
-  def handle_params(_params, _uri, %{assigns: %{peon: nil}} = socket), do: {:noreply, socket}
+  def handle_params(_params, _uri, %{assigns: %{ready: false}} = socket), do: {:noreply, socket}
 
   def handle_params(%{"chat" => id}, _uri, socket) do
     case Chats.get(id) do
@@ -94,16 +92,16 @@ defmodule BurrowWeb.WorkspaceLive do
         {:noreply, push_patch(socket, to: socket.assigns.base)}
 
       chat ->
-        if old = socket.assigns.chat, do: Peon.Instance.unsubscribe("chat:#{old.id}")
-
-        if connected?(socket), do: Chat.subscribe(id)
+        project = socket.assigns.project
+        if old = socket.assigns.chat, do: Chat.unsubscribe(project.id, old.id)
+        if connected?(socket), do: Chat.subscribe(project.id, id)
 
         socket =
           socket
           |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, pending: nil)
           |> assign(slash_items: [], slash: [], stopped: nil, starting: false, step: nil)
           |> select_tab()
-          |> load_changeset()
+          |> load_draft()
           |> default_view()
 
         # An empty chat starts its agent with its first message.
@@ -120,7 +118,7 @@ defmodule BurrowWeb.WorkspaceLive do
         {:noreply, push_patch(socket, to: chat_path(socket, first.chat.id), replace: true)}
 
       [] ->
-        case Chats.create_empty(socket.assigns.user) do
+        case Chats.create_empty(socket.assigns.project.id, socket.assigns.user) do
           {:ok, chat} ->
             {:noreply, push_patch(socket, to: chat_path(socket, chat.id), replace: true)}
 
@@ -131,11 +129,11 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp start_chat(socket) do
-    id = socket.assigns.chat.id
+    %{chat: %{id: id}, project: project} = socket.assigns
 
     socket
     |> assign(starting: true, stopped: nil, start_error: nil)
-    |> start_async(:chat, Peon.Instance.bind(fn -> Chat.ensure_started(id) end))
+    |> start_async(:chat, fn -> Chat.ensure_started(project, id) end)
   end
 
   @impl true
@@ -182,20 +180,20 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("wake", _params, socket), do: {:noreply, start_chat(socket)}
 
   def handle_event("new_chat", _params, socket) do
-    case Chats.create_empty(socket.assigns.user) do
+    case Chats.create_empty(socket.assigns.project.id, socket.assigns.user) do
       {:ok, chat} -> {:noreply, push_patch(socket, to: chat_path(socket, chat.id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
   end
 
-  # Closing a chat deletes it (Peon.Chat.delete/1): its agent, preview and
-  # workspace go; what it merged stays. Stopping a repo preview can take
+  # Closing a chat deletes it (Burrow.Chat.delete/2): its agent, preview and
+  # workspace go; what it landed stays. Stopping a repo preview can take
   # minutes, so that runs on its own.
   def handle_event("close_chat", %{"id" => id}, socket) do
-    Task.Supervisor.start_child(
-      Peon.TaskSupervisor,
-      Peon.Instance.bind(fn -> Chat.delete(id) end)
-    )
+    project = socket.assigns.project
+
+    with %{} = chat <- Chats.get(id),
+         do: Task.Supervisor.start_child(Burrow.TaskSupervisor, fn -> Chat.delete(project, chat) end)
 
     {:noreply, socket}
   end
@@ -218,12 +216,12 @@ defmodule BurrowWeb.WorkspaceLive do
 
     case Integer.parse(hours) do
       {hours, ""} ->
-        until = Chats.keep_running(chat.id, hours)
+        until = Chats.keep_running(chat, hours)
         socket = assign(socket, chat: %{chat | keep_until: until})
         {:noreply, if(socket.assigns.stopped, do: start_chat(socket), else: socket)}
 
       _ ->
-        Chats.keep_running(chat.id, nil)
+        Chats.keep_running(chat, nil)
         {:noreply, assign(socket, chat: %{chat | keep_until: nil})}
     end
   end
@@ -237,53 +235,36 @@ defmodule BurrowWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
-  def handle_event("land", %{"id" => id}, socket) do
-    case Ship.merge(String.to_integer(id), socket.assigns.user) do
-      {:ok, _cs} ->
-        {:noreply, socket |> load_changeset() |> load_tabs()}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not merge: #{inspect(reason)}")}
-    end
-  end
-
   def handle_event("revert", %{"id" => id}, socket) do
-    case Ship.revert(String.to_integer(id), socket.assigns.user) do
-      {:ok, cs} ->
-        {:noreply, info(socket, "Revert submitted as ##{cs.id}; it lands once checked.")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not revert: #{inspect(reason)}")}
+    case Ship.revert(socket.assigns.project, String.to_integer(id), socket.assigns.user) do
+      {:ok, change} -> {:noreply, info(socket, "Taken out of main as ##{change.id}.")}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, "Could not undo it: #{inspect(reason)}")}
     end
   end
 
-  def handle_event("promote", %{"id" => id}, socket) do
-    prod = Code.ref("prod")
-    user = socket.assigns.user
-    version = if prod, do: prod.version, else: 0
+  def handle_event("ship", %{"id" => id}, socket) do
+    %{project: project, user: user} = socket.assigns
 
-    case Store.move_ref("prod", String.to_integer(id), version, user, approved_by: user) do
-      {:ok, _} ->
-        {:noreply, socket |> info("Deploying ##{id} to prod.") |> assign(view: "prod")}
-
-      {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Could not promote: #{inspect(reason)}")}
+    case Ship.ship(project, String.to_integer(id), user) do
+      :ok -> {:noreply, socket |> info("Shipping ##{id}.") |> assign(view: "prod")}
+      {:error, reason} -> {:noreply, put_flash(socket, :error, "Could not ship: #{inspect(reason)}")}
     end
   end
 
-  def handle_event("toggle_auto_promote", _params, socket) do
-    on? = Project.settings()["auto_promote"] != true
-    Project.put_settings(%{"auto_promote" => on?, "auto_promote_by" => socket.assigns.user})
+  def handle_event("toggle_auto_ship", _params, socket) do
+    project = socket.assigns.project
+    on? = Projects.settings(project)["auto_ship"] != true
+    Projects.put_settings(project, %{"auto_ship" => on?, "auto_ship_by" => socket.assigns.user})
     {:noreply, load_ship(socket)}
   end
 
   def handle_event("restart_env", %{"env" => env}, socket) do
-    Env.restart(env)
+    Env.restart(socket.assigns.project, env)
     {:noreply, socket}
   end
 
   def handle_event("fix_incident", %{"id" => id}, socket) do
-    case Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.user) do
+    case Incidents.fix(Incidents.get(String.to_integer(id)), socket.assigns.project, socket.assigns.user) do
       {:ok, incident} -> {:noreply, push_patch(socket, to: chat_path(socket, incident.chat_id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
@@ -384,12 +365,11 @@ defmodule BurrowWeb.WorkspaceLive do
         {:noreply,
          socket
          |> assign(dialog: nil)
-         |> info("Staging and prod are set up: main goes to staging, then you promote.")
+         |> info("Staging is set up: main goes to staging, then you ship it to prod.")
          |> load_rail()}
 
       {:error, :not_owner} ->
-        {:noreply,
-         put_flash(socket, :error, "Only the project's owner can add staging and prod.")}
+        {:noreply, put_flash(socket, :error, "Only the project's owner can add staging.")}
 
       {:error, message} ->
         {:noreply, put_flash(socket, :error, message)}
@@ -399,12 +379,12 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("set_secret", %{"name" => name, "value" => value}, socket) do
     name = name |> String.trim() |> String.upcase()
 
-    case Secrets.put(name, String.trim(value), socket.assigns.user) do
+    case Secrets.put(socket.assigns.project.id, name, String.trim(value), socket.assigns.user) do
       :ok ->
         {:noreply,
          socket
          |> update(:secrets_key, &(&1 + 1))
-         |> info("#{name} is set. The preview, staging and prod restart to pick it up.")}
+         |> info("#{name} is set. Previews and the live app restart to pick it up.")}
 
       {:error, message} ->
         {:noreply, put_flash(socket, :error, message)}
@@ -412,7 +392,7 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   def handle_event("delete_secret", %{"name" => name}, socket) do
-    Secrets.delete(name)
+    Secrets.delete(socket.assigns.project.id, name)
     {:noreply, info(socket, "#{name} is removed.")}
   end
 
@@ -455,9 +435,6 @@ defmodule BurrowWeb.WorkspaceLive do
       else: {:noreply, socket}
   end
 
-  def handle_info({:conflicts, paths}, socket),
-    do: {:noreply, update_info(socket, conflicts: paths)}
-
   def handle_info({:chat_busy, id, busy?}, socket) do
     busy =
       if busy?,
@@ -497,8 +474,8 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_info({:stopped, _reason}, socket), do: {:noreply, socket}
 
-  # A project or team changed, or what a project's Peon is doing.
-  def handle_info(:rail_changed, %{assigns: %{peon: nil}} = socket), do: {:noreply, socket}
+  # A project or team changed, or what happens in a project.
+  def handle_info(:rail_changed, %{assigns: %{ready: false}} = socket), do: {:noreply, socket}
 
   def handle_info(:rail_changed, socket) do
     %{current_scope: scope, burrow_project: project} = socket.assigns
@@ -510,18 +487,12 @@ defmodule BurrowWeb.WorkspaceLive do
       else: {:noreply, push_navigate(socket, to: ~p"/projects")}
   end
 
-  # The project's Peon is up: open the workspace.
-  def handle_info(
-        {:cell, id, :running},
-        %{assigns: %{peon: nil, burrow_project: %{id: id}}} = socket
-      ),
-      do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
+  # The project is up: open the workspace.
+  def handle_info({:cell, id, :running}, %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket),
+    do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
 
-  def handle_info(
-        {:cell, id, status},
-        %{assigns: %{peon: nil, burrow_project: %{id: id}}} = socket
-      ),
-      do: {:noreply, assign(socket, cell: status)}
+  def handle_info({:cell, id, status}, %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket),
+    do: {:noreply, assign(socket, cell: status)}
 
   def handle_info({:cell, _id, _status}, socket), do: {:noreply, socket}
 
@@ -537,20 +508,17 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_info({:secrets, secrets}, socket), do: {:noreply, assign(socket, secrets: secrets)}
 
-  def handle_info({:check_step, _id, step, status}, socket),
-    do: {:noreply, socket |> assign(step: {step, status}) |> load_changeset()}
+  def handle_info({:check_step, id, step, status}, socket) do
+    if socket.assigns.chat && socket.assigns.chat.id == id,
+      do: {:noreply, socket |> assign(step: {step, status}) |> load_draft()},
+      else: {:noreply, socket}
+  end
 
   def handle_info(:clear_info, socket), do: {:noreply, clear_flash(socket, :info)}
 
-  # Store and checks events: refs moved, changesets checked or landed.
-  def handle_info(_msg, socket) do
-    {:noreply,
-     socket
-     |> assign(env_names: Ship.env_names(), live_only?: Ship.live_only?())
-     |> load_changeset()
-     |> load_tabs()
-     |> load_ship()}
-  end
+  # Drafts checked or landed, main checked, refs moved, settings changed.
+  def handle_info(_msg, socket),
+    do: {:noreply, socket |> load_draft() |> load_tabs() |> load_ship()}
 
   # Info flashes clear themselves so they don't cover the work; errors stay.
   defp info(socket, text) do
@@ -558,7 +526,7 @@ defmodule BurrowWeb.WorkspaceLive do
     put_flash(socket, :info, text)
   end
 
-  defp full_text, do: "Up to #{Chats.max()} chats. Merge or close one first."
+  defp full_text, do: "Up to #{Chats.max()} chats. Close one first."
 
   # While the box holds just "/name", the commands and skills it matches,
   # names starting with it first. A bare "/" reloads them: the agent may have
@@ -591,7 +559,7 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp prompt(socket, text) do
-    case Chat.send_message(socket.assigns.chat.id, text) do
+    case Chat.send_message(socket.assigns.project, socket.assigns.chat.id, text) do
       :ok -> update_info(socket, busy?: true)
       {:error, reason} -> put_flash(socket, :error, "Could not send: #{inspect(reason)}")
     end
@@ -613,18 +581,18 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp load_logs(%{assigns: %{view: env}} = socket) when env in ["staging", "prod"],
-    do: assign(socket, logs: Env.logs(env))
+    do: assign(socket, logs: Env.logs(socket.assigns.project, env))
 
   defp load_logs(socket), do: socket
 
-  # Every project the user can open, with what its Peon is doing
+  # Every project the user can open, with what it is doing
   # (`Burrow.Activity`), and this project's sharing.
   defp load_rail(socket) do
     %{current_scope: scope, burrow_project: project} = socket.assigns
 
     rail =
       for p <- Projects.list(scope) do
-        tile = Burrow.Activity.of(p.id)
+        tile = Activity.of(p)
 
         %{
           id: p.id,
@@ -668,9 +636,9 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # The chat tabs, each with its changeset and phase (Peon.Activity).
+  # The chat tabs, each with its draft and phase (Burrow.Activity).
   defp load_tabs(socket),
-    do: socket |> assign(tabs: Activity.chats(socket.assigns.busy)) |> select_tab()
+    do: socket |> assign(tabs: Activity.chats(socket.assigns.project, socket.assigns.busy)) |> select_tab()
 
   defp select_tab(%{assigns: %{chat: nil}} = socket), do: assign(socket, tab: nil)
 
@@ -679,60 +647,48 @@ defmodule BurrowWeb.WorkspaceLive do
     assign(socket, tab: Enum.find(socket.assigns.tabs, &(&1.chat.id == id)))
   end
 
-  defp load_changeset(%{assigns: %{chat: nil}} = socket), do: socket
+  defp load_draft(%{assigns: %{chat: nil}} = socket), do: socket
+  defp load_draft(%{assigns: %{repo?: true}} = socket), do: socket
 
-  defp load_changeset(socket) do
-    main_id = with(%{changeset_id: id} <- Code.ref("main"), do: id)
-    changeset = Chats.latest_changeset(socket.assigns.chat.id)
-
-    assign(socket,
-      changeset: changeset,
-      landed?: changeset != nil and Code.ancestor?(changeset.id, main_id),
-      held:
-        if(changeset != nil and changeset.status == "passed" and not Ship.live_only?(),
-          do: Ship.review_reasons(changeset)
-        )
-    )
+  defp load_draft(socket) do
+    repo = Projects.repo_dir(socket.assigns.project)
+    assign(socket, draft: Totem.Repo.draft(repo, socket.assigns.chat.id))
   end
 
+  defp load_ship(%{assigns: %{repo?: true}} = socket),
+    do: assign(socket, incidents: [], main_check: nil, shippable: nil, auto_ship: false, nothing_built?: false, deploys: [])
+
   defp load_ship(socket) do
+    project = socket.assigns.project
+
     socket =
       assign(socket,
-        incidents: Incidents.list(),
-        culprit: Verifier.culprit(),
-        auto_promote: Project.settings()["auto_promote"] == true,
-        nothing_built?: not socket.assigns.repo? and Code.ref("prod") == nil
+        incidents: Incidents.list(project.id),
+        main_check: Ship.main_check(project),
+        shippable: Activity.shippable(project),
+        auto_ship: Projects.settings(project)["auto_ship"] == true,
+        nothing_built?: Totem.Repo.ref(Projects.repo_dir(project), "prod") == nil
       )
 
     if socket.assigns.overview,
-      do: assign(socket, deploys: deploys(socket.assigns.env_names)),
+      do: assign(socket, deploys: deploys(project)),
       else: assign(socket, deploys: [])
   end
 
-  # The latest deploys over all environments, one row per changeset, with
-  # where it is now and what was asked for.
-  defp deploys(env_names) do
-    on = Map.new(env_names, &{&1, with(%{changeset_id: id} <- Code.ref(&1), do: id)})
+  # The latest healthy deploys, one row per change, with where it is now.
+  defp deploys(project) do
+    repo = Projects.repo_dir(project)
+    names = Env.names(project)
 
-    env_names
-    |> Enum.flat_map(&Env.deploys(&1, 8))
+    project.id
+    |> Runs.list("deploy", nil, 30)
     |> Enum.filter(&(&1.status == "healthy"))
-    |> Enum.sort_by(& &1.id, :desc)
-    |> Enum.uniq_by(& &1.changeset_id)
+    |> Enum.uniq_by(& &1.change_id)
     |> Enum.take(8)
-    |> Enum.map(fn d ->
-      where =
-        Enum.find(Enum.reverse(env_names), fn env ->
-          on[env] && Code.ancestor?(d.changeset_id, on[env])
-        end)
-
-      intent =
-        case Code.changeset(d.changeset_id) do
-          {:ok, cs} -> cs.intent
-          _ -> ""
-        end
-
-      %{id: d.changeset_id, intent: intent, where: where, at: d.inserted_at}
+    |> Enum.map(fn run ->
+      where = Enum.find(Enum.reverse(names), &Totem.Repo.contains?(repo, &1, run.change_id))
+      change = Totem.Repo.change(repo, run.change_id)
+      %{id: run.change_id, intent: (change && change.intent) || "", where: where, at: run.inserted_at}
     end)
   end
 
@@ -788,7 +744,7 @@ defmodule BurrowWeb.WorkspaceLive do
   defp start_error(reason), do: "The agent could not start: #{inspect(reason)}"
 
   @impl true
-  def render(%{peon: nil} = assigns) do
+  def render(%{ready: false} = assigns) do
     ~H"""
     <Layouts.auth flash={@flash} current_scope={@current_scope}>
       <div class="flex flex-col items-center gap-3 text-center" role="status">
@@ -804,8 +760,8 @@ defmodule BurrowWeb.WorkspaceLive do
         </h1>
         <p class="m-0 text-[var(--text-2)]">
           {if match?({:exited, _}, @cell),
-            do: "Its Peon stopped and is restarting. This page opens it once it is back.",
-            else: "Its workspace opens as soon as its Peon is up."}
+            do: "It stopped and is restarting. This page opens it once it is back.",
+            else: "Its workspace opens as soon as it is up."}
         </p>
         <.link navigate={~p"/projects"} class="xlink">All projects</.link>
       </div>
@@ -818,7 +774,7 @@ defmodule BurrowWeb.WorkspaceLive do
       assign(assigns,
         view: effective_view(assigns),
         dev?: dev?(assigns),
-        promote: promote_target(assigns),
+        promote: assigns.shippable,
         open_incidents: Enum.count(assigns.incidents, &(&1.status != "resolved"))
       )
 
@@ -907,37 +863,22 @@ defmodule BurrowWeb.WorkspaceLive do
             </div>
 
             <div class="ws-bottom">
-              <div :if={@culprit} class="notice err">
-                <span>Main's tests fail since #{@culprit.id}: {@culprit.intent}</span>
-                <button
-                  phx-click="revert"
-                  phx-value-id={@culprit.id}
-                  data-kb="row"
-                  class="btn btn-danger btn-sm ml-auto"
-                >
-                  revert
-                </button>
-              </div>
-              <div :if={@info && @info.conflicts != []} class="notice warn">
-                Main changed files this chat also changed (the chat's version is kept): {Enum.join(
-                  @info.conflicts,
-                  ", "
-                )}
+              <div :if={@main_check && @main_check.status == "failed"} class="notice err">
+                <span>Main #{@main_check.change_id} did not pass in prod mode.</span>
               </div>
               <.connect_card
                 :if={@chat && asked(@secrets, @chat.id) != []}
                 secrets={asked(@secrets, @chat.id)}
                 key={@secrets_key}
               />
-              <.changeset_card
-                :if={@changeset && !@repo?}
-                changeset={@changeset}
+              <.change_card
+                :if={@draft}
+                draft={@draft}
                 tab={@tab}
-                landed?={@landed?}
-                held={@held}
                 step={@step}
                 live_only?={@live_only?}
                 promote={@promote}
+                main_check={@main_check}
               />
               <.form for={@form} id="composer" phx-submit="send" phx-change="typing" class="composer">
                 <div
@@ -970,7 +911,7 @@ defmodule BurrowWeb.WorkspaceLive do
                   data-kb-label="Chat box"
                   phx-hook=".SubmitOnEnter"
                   disabled={closed?(@tab)}
-                  placeholder={placeholder(@tab, @changeset)}
+                  placeholder={placeholder(@tab)}
                 >{@form[:text].value}</textarea>
                 <div class="cbar">
                   <button
@@ -1000,7 +941,7 @@ defmodule BurrowWeb.WorkspaceLive do
               tabs={@tabs}
               info={@info}
               promote={@promote}
-              auto_promote={@auto_promote}
+              auto_promote={@auto_ship}
               incidents={@incidents}
               deploys={@deploys}
               base={@base}
@@ -1012,7 +953,7 @@ defmodule BurrowWeb.WorkspaceLive do
               env_names={@env_names}
               live_only?={@live_only?}
               dev?={@dev?}
-              changeset={@changeset}
+              number={@draft && @draft.change}
               chat={@chat}
               info={@info}
               frame_key={@frame_key}
@@ -1101,7 +1042,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
     parts =
       cond do
-        assigns.repo? -> [project.slug, "from #{repo_name()}"]
+        assigns.repo? -> [project.slug, "from #{repo_name(project)}"]
         assigns.nothing_built? -> [project.slug, "nothing built yet"]
         assigns.live_only? -> [project.slug, "live #{tag.("prod")}", "no staging"]
         true -> [project.slug, "staging #{tag.("staging")}", "prod #{tag.("prod")}"]
@@ -1111,43 +1052,30 @@ defmodule BurrowWeb.WorkspaceLive do
     Enum.join(parts ++ shared, " · ")
   end
 
-  defp repo_name do
-    case Peon.Source.repo() do
-      %{url: url} ->
-        (URI.parse(url).path || "")
-        |> String.trim_leading("/")
-        |> String.trim_trailing(".git")
-
-      _ ->
-        "a git repo"
-    end
-  end
+  defp repo_name(project),
+    do: (URI.parse(project.repo_url).path || "") |> String.trim_leading("/") |> String.trim_trailing(".git")
 
   defp hello(project, true), do: "What should #{project && project.name} do?"
   defp hello(project, false), do: "What should change in #{project && project.name}?"
 
-  defp placeholder(%{phase: phase}, _cs) when phase in ~w(landing staged live),
-    do: "Merged. Start a new chat for the next change."
+  defp placeholder(%{phase: phase}) when phase in ~w(landing staged live),
+    do: "On main. Start a new chat for the next change."
 
-  defp placeholder(%{phase: "ready"}, %{id: id}), do: "Add to ##{id}, or merge it"
-  defp placeholder(%{phase: "new"}, _cs), do: "Describe the change"
-  defp placeholder(_tab, _cs), do: "Message Peon (/ for commands)"
+  defp placeholder(%{phase: "new"}), do: "Describe the change"
+  defp placeholder(_tab), do: "Message Peon (/ for commands)"
 
-  # The line under the thread once the chat's changeset is merged.
-  defp event_line(%{phase: "landing", changeset: %{id: id}}, true),
-    do: %{text: "##{id} on main · going live…", tone: nil}
+  # The line under the thread once the chat's change is on main.
+  defp event_line(%{phase: "landing", draft: %{change: id}}, _live_only?),
+    do: %{text: "##{id} on main · ready to ship", tone: nil}
 
-  defp event_line(%{phase: "landing", changeset: %{id: id}}, false),
-    do: %{text: "##{id} on main · on its way to staging…", tone: nil}
-
-  defp event_line(%{phase: "staged", changeset: %{id: id}}, _live_only?),
+  defp event_line(%{phase: "staged", draft: %{change: id}}, _live_only?),
     do: %{text: "##{id} on main · on staging", tone: "ok"}
 
-  defp event_line(%{phase: "live", changeset: %{id: id}}, true),
+  defp event_line(%{phase: "live", draft: %{change: id}}, true),
     do: %{text: "##{id} on main · live", tone: "ok"}
 
-  defp event_line(%{phase: "live", changeset: %{id: id}}, false),
-    do: %{text: "##{id} promoted to prod", tone: "ok"}
+  defp event_line(%{phase: "live", draft: %{change: id}}, false),
+    do: %{text: "##{id} shipped to prod", tone: "ok"}
 
   defp event_line(_tab, _live_only?), do: nil
 
@@ -1156,20 +1084,20 @@ defmodule BurrowWeb.WorkspaceLive do
     %{
       url: nil,
       status: if(starting, do: :starting),
-      ref: assigns.changeset && "##{assigns.changeset.id}",
+      ref: number(assigns.draft),
       live?: false,
       message: if(stopped, do: stopped_message(stopped), else: "Starting the preview…"),
       wake: stopped != nil and not starting
     }
   end
 
-  defp preview(%{view: "dev", info: info, changeset: cs, stopped: stopped}) do
+  defp preview(%{view: "dev", info: info, draft: draft, stopped: stopped}) do
     %{
       links: info[:preview_links] || [],
       pr: info[:pr_url],
       url: info.preview_url,
       status: info.preview_status,
-      ref: cs && "##{cs.id}",
+      ref: number(draft),
       live?: info.preview_status == :running,
       message:
         if(stopped, do: stopped_message(stopped), else: preview_message(info.preview_status)),
@@ -1215,18 +1143,8 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  defp promote_target(%{auto_promote: true}), do: nil
-  defp promote_target(%{live_only?: true}), do: nil
-
-  defp promote_target(%{envs: envs}) do
-    with %{good: good} when good != nil <- envs["staging"],
-         %{} = prod <- envs["prod"],
-         true <- good != prod.deployed do
-      good
-    else
-      _ -> nil
-    end
-  end
+  defp number(%{change: id}) when id != nil, do: "##{id}"
+  defp number(_draft), do: nil
 
   # Consecutive agent output is one Peon turn under the user's message.
   # A Peon turn that answers the user (not one of Peon's own "[Peon] ..." notes)
@@ -1287,7 +1205,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp activity({tool, _}) when tool in ~w(read glob grep list), do: "Reading the code…"
   defp activity({"todowrite", _}), do: "Making a plan…"
-  defp activity({"peon_submit_changeset", _}), do: "Handing in the change…"
+  defp activity({"peon_submit_changeset", _}), do: "Checking and handing in the change…"
   defp activity({"peon_restart_preview", _}), do: "Restarting the preview…"
   defp activity({"peon_runtime", _}), do: "Checking the running app…"
   defp activity({"peon_secrets", _}), do: "Checking the keys…"
@@ -1314,7 +1232,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp stopped_message(:room),
     do:
-      "Stopped to make room: at most #{Application.get_env(:peon, :max_running_chats, 4)} chats run at once. Send a message or start it again."
+      "Stopped to make room: at most #{Application.get_env(:burrow, :max_running_chats, 4)} chats run at once. Send a message or start it again."
 
   defp stopped_message(_),
     do: "The agent and preview stopped. Send a message or start them again."

@@ -104,7 +104,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
     assert has_element?(lv, "#restart-peon")
     assert has_element?(lv, "#selected-project", "Only you can see it.")
-    assert has_element?(lv, "#project-meta", "staging and prod · Peon on port #{project.port}")
+    assert has_element?(lv, "#project-meta", "staging and prod")
 
     lv |> element("#project-menu-button") |> render_click()
     refute has_element?(lv, "#add-envs")
@@ -140,7 +140,7 @@ defmodule BurrowWeb.ProjectLiveTest do
       project: project,
       tmp_dir: dir
     } do
-      Burrow.PeonHelpers.start_peon!(project, dir)
+      Burrow.ProjectHelpers.start_project!(project, dir)
       {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
       running!(project)
 
@@ -151,7 +151,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     end
   end
 
-  # Tests run no Peons; tell the page this one runs, as its cell would.
+  # Tests run no cells; tell the page this one runs, as its cell would.
   defp running!(project),
     do: Phoenix.PubSub.broadcast(Burrow.PubSub, "cells", {:cell, project.id, :running})
 

@@ -74,8 +74,12 @@ defmodule Burrow.Activity do
         do: (Env.info(project, "staging") || %{})[:good],
         else: check && check.status == "passed" && check.change_id
 
-    if candidate && Projects.settings(project)["auto_ship"] != true and candidate > (Repo.ref(repo, "prod") || 0),
-      do: candidate
+    cond do
+      not is_integer(candidate) -> nil
+      Projects.settings(project)["auto_ship"] == true -> nil
+      candidate > (Repo.ref(repo, "prod") || 0) -> candidate
+      true -> nil
+    end
   end
 
   @doc "The project's tile in the rails."
