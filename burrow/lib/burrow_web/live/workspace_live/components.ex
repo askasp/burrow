@@ -434,7 +434,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       <%= if @kind == "chop" do %>
         <g class="logs">
           <rect x="46" y="15" width="13" height="3" rx="1.5" /><rect
-            x="4"
+            x="48"
             y="12"
             width="10"
             height="3"
