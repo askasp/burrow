@@ -158,6 +158,20 @@ defmodule Burrow.Sandbox do
     :ok
   end
 
+  @doc """
+  A directory for Unix sockets to mount into containers: `dir`, unless a
+  socket in it could pass the 107 bytes a socket's path may have; then one
+  in the temp dir, the same for the same `dir`.
+  """
+  def socket_dir(dir) do
+    if byte_size(dir) <= 96 do
+      dir
+    else
+      hash = :crypto.hash(:sha, dir) |> Base.url_encode64(padding: false) |> binary_part(0, 16)
+      Path.join(System.tmp_dir!(), "burrow-" <> hash)
+    end
+  end
+
   @doc "The memory each container may use, in MB."
   def memory_mb, do: @memory_mb
 

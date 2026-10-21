@@ -120,7 +120,7 @@ defmodule Burrow.Env do
       secret_key_base: secret(base, "secret_key_base", 48),
       app: nil,
       app_status: :stopped,
-      sock: Path.join(base, "sock") |> socket_dir(),
+      sock: Sandbox.socket_dir(Path.join(base, "sock")),
       link: nil,
       linked?: false,
       totem: nil,
@@ -496,20 +496,9 @@ defmodule Burrow.Env do
 
   ## Totem's link
 
-  # The socket Totem dials, in a directory mounted into the container: the
+  # The socket Totem dials is in a directory mounted into the container: the
   # directory, not the file, so a socket made again after a restart is the
-  # one the container sees. Unix socket paths have at most 107 bytes.
-  defp socket_dir(dir) do
-    if byte_size(dir) <= 96,
-      do: dir,
-      else:
-        Path.join(
-          System.tmp_dir!(),
-          "peon-" <>
-            (:crypto.hash(:sha, dir) |> Base.url_encode64(padding: false) |> binary_part(0, 16))
-        )
-  end
-
+  # one the container sees.
   defp listen(state) do
     File.mkdir_p!(state.sock)
     path = Path.join(state.sock, "p")

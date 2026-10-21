@@ -12,7 +12,9 @@ defmodule Burrow.Agent.MCP do
   @token_max_age 7 * 24 * 3600
 
   @doc "Where Burrow serves MCP; mounted into agent containers as /peon/mcp.sock."
-  def socket_path, do: Path.join(Application.fetch_env!(:burrow, :data_dir), "mcp.sock")
+  def socket_path,
+    do:
+      Path.join(Burrow.Sandbox.socket_dir(Application.fetch_env!(:burrow, :data_dir)), "mcp.sock")
 
   @doc "Bandit child serving MCP on the socket."
   def child_spec(_opts) do

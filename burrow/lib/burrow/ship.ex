@@ -79,7 +79,8 @@ defmodule Burrow.Ship do
           do: quote_arg(path)
 
     steps = [
-      {"deps", "mix deps.get"},
+      # The preview fetches into the same deps/ when it starts: try again after it.
+      {"deps", "mix deps.get || (sleep 20 && mix deps.get) || (sleep 40 && mix deps.get)"},
       {"compile", "mix compile --warnings-as-errors"},
       {"format",
        if(format == [],
@@ -117,6 +118,8 @@ defmodule Burrow.Ship do
 
     case Repo.land(repo, chat_id, chat_id) do
       {:ok, change} ->
+        # The folder now starts from the landed change, with what others landed.
+        Workspace.rebase(repo, Chat.workspace_dir(project, chat_id), change.id)
         Projects.broadcast(project.id, "ship", {:draft, chat_id, "landed"})
         moved(project, "main", change.id)
 
