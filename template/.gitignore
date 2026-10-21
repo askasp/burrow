@@ -39,3 +39,6 @@ npm-debug.log
 *.db
 *.db-*
 
+
+# Totem's store of the running code
+/.totem/

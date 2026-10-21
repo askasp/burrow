@@ -39,6 +39,9 @@ defmodule PeonTemplateWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # The running code over HTTP and MCP at /_totem, only with a TOTEM_TOKEN.
+  plug Totem.Plug
+
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],

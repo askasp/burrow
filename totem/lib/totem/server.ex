@@ -30,7 +30,9 @@ defmodule Totem.Server do
       cold_paths: config(:cold_paths) || @cold_paths,
       warm_paths: config(:warm_paths) || @warm_paths,
       asset_paths: config(:asset_paths) || @asset_paths,
-      migration_paths: config(:migration_paths) || @migration_paths
+      migration_paths: config(:migration_paths) || @migration_paths,
+      # Paths whoever runs the app owns, e.g. Peon's .peon/: never the app's code.
+      ignore: config(:ignore) || env_list("TOTEM_IGNORE")
     }
 
     booted(state)
@@ -75,7 +77,7 @@ defmodule Totem.Server do
 
   # The current version, after recording what's on disk if it changed outside Totem.
   defp sync(state) do
-    {tree, blobs} = Tree.from_dir(state.root, Ignore.matcher(state.root))
+    {tree, blobs} = Tree.from_dir(state.root, Ignore.matcher(state.root, extra: state.ignore))
     current = (n = Store.current(state.store)) && Store.version(state.store, n)
 
     if current && current.tree == tree do
@@ -89,8 +91,10 @@ defmodule Totem.Server do
   defp apply_change(state, change, opts) do
     current = sync(state)
 
-    with :ok <- check_base(change, current),
-         {:ok, changes} <- store_files(state, Map.get(change, :files, [])) do
+    files = Map.get(change, :files, [])
+
+    with :ok <- check_base(state, change, current, files),
+         {:ok, changes} <- store_files(state, files) do
       tree = Tree.apply_changes(current.tree, changes)
 
       if tree == current.tree,
@@ -99,9 +103,21 @@ defmodule Totem.Server do
     end
   end
 
-  defp check_base(%{base: base}, %{version: base}), do: :ok
-  defp check_base(%{base: _}, current), do: {:error, {:conflict, current.version}}
-  defp check_base(_change, _current), do: {:error, :no_base}
+  # A change made against an older version still applies when none of its
+  # files changed since (e.g. the app wrote some file of its own meanwhile).
+  defp check_base(_state, %{base: base}, %{version: base}, _files), do: :ok
+
+  defp check_base(state, %{base: base}, current, files) when is_integer(base) do
+    with %{tree: then} <- Store.version(state.store, base),
+         true <- Enum.all?(files, fn {path, _} -> then[path] == current.tree[path] end) do
+      :ok
+    else
+      _ -> {:error, {:conflict, current.version}}
+    end
+  end
+
+  defp check_base(_state, %{base: _}, current, _files), do: {:error, {:conflict, current.version}}
+  defp check_base(_state, _change, _current, _files), do: {:error, :no_base}
 
   defp store_files(state, files) do
     Enum.reduce_while(files, {:ok, []}, fn {path, content}, {:ok, acc} ->
@@ -220,6 +236,8 @@ defmodule Totem.Server do
   end
 
   defp config(key), do: Application.get_env(:totem, key)
+
+  defp env_list(name), do: String.split(System.get_env(name) || "", ",", trim: true)
 
   defp mix_app do
     if Loader.available?(), do: Mix.Project.config()[:app]

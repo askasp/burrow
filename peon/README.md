@@ -8,6 +8,6 @@ own BEAM and draws the workspace; Peon has no web layer of its own.
 * `Peon.Instance` - one project's tree, its database and names
 * `Peon.Store`, `Peon.Checks`, `Peon.Verifier`, `Peon.Ship` - from a chat's changeset to main
 * `Peon.Chat` - one chat's workspace, agent and preview containers
-* `Peon.Env` - staging and prod, with Totem's probe (`totem/priv/probe.exs`) in the app's own node
+* `Peon.Env` - staging and prod, deployed through Totem (`totem/`), which runs inside the app and dials Peon
 
 Run the tests with `mix test` (Docker is needed for none of them).

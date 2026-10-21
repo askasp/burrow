@@ -8,7 +8,7 @@ Burrow (burrow/)         one BEAM: users, projects, AI login, and every project'
      ├─ per chat         a workspace on disk + two sandbox containers on a private network:
      │   ├─ agent        opencode serve: edits the workspace with its own tools, runs mix test
      │   └─ preview      the app in dev mode on the same workspace (http://preview:4000)
-     └─ staging, prod    a container each, the app in prod mode with Peon's probe in its node
+     └─ staging, prod    a container each, the app in prod mode with Totem inside it
 ```
 
 Peon is an engine library: each project's Peon is a supervision tree in Burrow's BEAM (`Peon.Instance`) with its own SQLite database, started by `Burrow.Cell`. App code never runs in Burrow; it runs in the containers.
@@ -19,9 +19,9 @@ A change flows like this, with no queue in front of main:
 2. The agent calls Peon's MCP tool `submit_changeset`. Peon diffs the workspace against its base, checks policy (forbidden paths, migration rules, secrets) and stores an immutable changeset.
 3. Peon compiles (warnings as errors) and format-checks it in a clean sandbox, several at a time. When that passes it **lands on main right away**, rebased onto main's tip; changes to dependencies and config (mix.exs, mix.lock, config/) wait for your **Land** click instead.
 4. Main's tests run after landing. When they fail, Peon bisects to the changeset that broke them and tells its chat to fix forward (or you click **revert**).
-5. Main's tested tip is **hot-loaded into the running staging app**: Peon's probe (`totem/priv/probe.exs`), loaded into the app's own node when its container starts and connected to Peon over a mounted Unix socket, recompiles inside it, rebuilds assets and runs new migrations. mix.exs or config changes restart the container instead. Then a health window: `/health` and `/` must answer and no new error may be logged, or Peon rolls back to the last healthy changeset.
+5. Main's tested tip is **hot-loaded into the running staging app**: Totem (`totem/`, a dependency of every app) dials Peon over a mounted Unix socket; Peon sends only the files that changed and Totem loads them in place: hot (processes keep their state), warm for config and application.ex (the app restarts inside its node), with new migrations and rebuilt assets. mix.exs changes restart the container instead. Then a health window: `/health` and `/` must answer and no new error may be logged, or Peon rolls back to the last healthy changeset.
 6. **Promote** sends a healthy staging changeset to prod the same way (or set the project setting `auto_promote: true`).
-7. Errors from staging and prod arrive through the probe with stacktraces and become incidents. A new incident opens a chat that is asked to fix it (`auto_fix`, default on); the incident resolves when that fix is deployed.
+7. Errors from staging and prod arrive through Totem with stacktraces and become incidents. A new incident opens a chat that is asked to fix it (`auto_fix`, default on); the incident resolves when that fix is deployed.
 
 **Secrets** (API keys, tokens, the shared site password) live in Peon, never in the code: `ctrl+b k`, or the box that shows in a chat when the agent asks for one (MCP tool `request_secret`). The preview, staging and prod get them as environment variables and restart when one changes; the agent sees names only, and checks and tests get none.
 
@@ -43,7 +43,7 @@ Keyboard: `ctrl+b`, then a key (tmux style, from Beamcode). `ctrl+b ?` lists the
 
 ```
 template/       the app every project starts from (Phoenix + LiveView + SQLite, with or without email/password auth)
-totem/          the in-app library, no deps on the rest of the repo: code trees, blobs, diffs, ignore rules, the probe
+totem/          the in-app library, no deps on the rest of the repo: keeps the running code and loads changes into it (hot, warm or cold), reports errors and stats, dials Peon or serves HTTP/MCP
 images/         sandbox image for checks, previews and agents
 tools/          generator for Phoenix apps with email/password auth
 ```

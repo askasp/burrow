@@ -2,7 +2,7 @@ if Code.ensure_loaded?(Plug.Conn) do
   defmodule Totem.Plug do
     @moduledoc """
     Totem over HTTP, for apps that have Plug: one line in the endpoint,
-    before the router,
+    before `Plug.Parsers`,
 
         plug Totem.Plug
 
@@ -117,7 +117,18 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
-    defp body(conn, acc \\ []) do
+    # After Plug.Parsers the body is read already; a JSON array is under "_json".
+    defp body(%{body_params: %{"_json" => list}} = conn) when is_list(list),
+      do: {:ok, list, conn}
+
+    defp body(%{body_params: %Plug.Conn.Unfetched{}} = conn), do: read(conn, [])
+
+    defp body(%{body_params: params} = conn) when map_size(params) > 0,
+      do: {:ok, params, conn}
+
+    defp body(conn), do: read(conn, [])
+
+    defp read(conn, acc) do
       case read_body(conn, length: 64_000_000) do
         {:ok, data, conn} ->
           case JSON.decode(IO.iodata_to_binary([acc, data])) do
@@ -126,7 +137,7 @@ if Code.ensure_loaded?(Plug.Conn) do
           end
 
         {:more, data, conn} ->
-          body(conn, [acc, data])
+          read(conn, [acc, data])
 
         {:error, _} ->
           json(conn, 400, %{"error" => "bad_body"})

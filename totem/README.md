@@ -41,7 +41,7 @@ contents Totem is missing (`Totem.missing/1`).
   Totem dials it, reports errors, stats and readiness, and takes commands
   (`Totem.Commands`). Nothing listens inside the app. Peon runs apps this way.
 * **HTTP and MCP** (`Totem.Plug`, for apps with Plug): `plug Totem.Plug` in
-  the endpoint, before the router, and a `TOTEM_TOKEN`. It serves
+  the endpoint, before `Plug.Parsers`, and a `TOTEM_TOKEN`. It serves
   `/_totem/...` and an MCP server at `/_totem/mcp`, so an agent can read,
   search and change the running code with no checkout.
 * **From a terminal**: `mix totem.clone <url>/_totem dir`, edit, `mix

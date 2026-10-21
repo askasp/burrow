@@ -27,7 +27,7 @@ defmodule Peon.Incidents do
   def get(id), do: Repo.get(Incident, id)
 
   @doc """
-  Groups an error event (from the probe, see `totem/priv/probe.exs`) or a
+  Groups an error event (from Totem in the app, see `Totem.Monitor`) or a
   failed deploy (`"fingerprint"` given) into an incident.
   """
   def report(env, event, deployed_id) do

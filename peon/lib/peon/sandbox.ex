@@ -165,7 +165,8 @@ defmodule Peon.Sandbox do
 
     ["--label", Keyword.get(opts, :label, "peon.project=#{project()}")] ++
       ["--user", host_user(), "--cpus", "2", "--memory", "#{@memory_mb}m", "--pids-limit", "512"] ++
-      ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++ env
+      ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++
+      ["-v", "#{Totem.source_dir()}:/opt/totem:ro", "-e", "TOTEM_PATH=/opt/totem"] ++ env
   end
 
   @doc "Removes every container this project left behind, e.g. after a crash."

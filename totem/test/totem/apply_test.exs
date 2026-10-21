@@ -22,10 +22,12 @@ defmodule Totem.ApplyTest do
       {:ok, hot} = Totem.apply(%{base: first.version, files: [{"lib/demo/counter.ex", v2}]}, source: "test")
 
       stale = Totem.apply(%{base: first.version, files: [{"lib/demo/counter.ex", "x"}]})
+      # Another file changed since its base: it applies all the same.
+      {:ok, other} = Totem.apply(%{base: first.version, files: [{"NOTES.md", "notes"}]})
 
       broken = "defmodule Demo.Counter do\\n  def label, do:\\nend\\n"
       {:error, {:load_failed, "hot", output}} =
-        Totem.apply(%{base: hot.version, files: [{"lib/demo/counter.ex", broken}]})
+        Totem.apply(%{base: other.version, files: [{"lib/demo/counter.ex", broken}]})
 
       %{
         first: first.mode,
@@ -36,9 +38,10 @@ defmodule Totem.ApplyTest do
         stale: inspect(stale),
         output_has_error: output =~ "error",
         after_error_label: Demo.Counter.label(),
-        after_error_current: Totem.current().version == hot.version,
+        after_error_current: Totem.current().version == other.version,
+        other: [other.version == hot.version + 1, File.read!("NOTES.md")],
         on_disk_v2: File.read!("lib/demo/counter.ex") =~ ~s("v2"),
-        source: hd(Totem.versions()).source
+        source: Enum.at(Totem.versions(), 1).source
       }
       """)
 
@@ -53,6 +56,7 @@ defmodule Totem.ApplyTest do
     assert result["after_error_current"]
     assert result["on_disk_v2"]
     assert result["source"] == "test"
+    assert result["other"] == [true, "notes"]
   end
 
   test "a config change restarts the app inside the node; mix.exs waits for a restart", %{

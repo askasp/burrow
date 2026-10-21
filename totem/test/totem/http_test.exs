@@ -49,23 +49,44 @@ defmodule Totem.HttpTest do
         label = Demo.Counter.label()
         source = hd(Totem.versions()).source
 
-        extra = "defmodule Demo.Extra do\\n  def hi, do: :hi\\nend\\n"
+        extra = "defmodule Demo.Extra do\n  def hi, do: :hi\nend\n"
         {:ok, _} = Totem.apply(%{base: Totem.current().version, files: [{"lib/demo/extra.ex", extra}]})
 
-        stale =
-          try do
-            File.cd!(clone, fn ->
-              File.write!("NOTES.md", "hi")
-              Mix.Tasks.Totem.Push.run([])
-            end)
+        # A file only changed here goes on top of what changed there.
+        notes =
+          File.cd!(clone, fn ->
+            File.write!("NOTES.md", "hi")
+            Mix.Tasks.Totem.Push.run([])
             "pushed"
+          end)
+
+        # The same file changed on both sides is refused, and so is pulling it.
+        path = "lib/demo/counter.ex"
+        {:ok, v2} = Totem.read(path)
+        v3 = String.replace(v2, ~s("v2"), ~s("v3"))
+        {:ok, _} = Totem.apply(%{base: Totem.current().version, files: [{path, v3}]})
+
+        attempt = fn fun ->
+          try do
+            File.cd!(clone, fun)
+            "done"
           rescue
             e in Mix.Error -> e.message
           end
+        end
 
+        stale =
+          attempt.(fn ->
+            File.write!(path, String.replace(v2, ~s("v2"), ~s("v4")))
+            Mix.Tasks.Totem.Push.run([])
+          end)
+
+        clash = attempt.(fn -> Mix.Tasks.Totem.Pull.run([]) end)
+
+        # Without the local edit, pulling brings in both of the app's changes.
         File.cd!(clone, fn ->
+          File.write!(path, v2)
           Mix.Tasks.Totem.Pull.run([])
-          Mix.Tasks.Totem.Push.run([])
         end)
 
         mcp = fn body ->
@@ -84,11 +105,15 @@ defmodule Totem.HttpTest do
         %{
           label: label,
           source: source,
+          notes: [notes, Totem.read("NOTES.md") == {:ok, "hi"}],
           stale: stale,
-          pulled: File.exists?(Path.join(clone, "lib/demo/extra.ex")),
-          notes: Totem.read("NOTES.md") == {:ok, "hi"},
+          clash: clash,
+          pulled: [
+            File.exists?(Path.join(clone, "lib/demo/extra.ex")),
+            File.read!(Path.join(clone, path)) =~ ~s("v3")
+          ],
           tools: tools,
-          read_v2: hd(read)["text"] =~ ~s("v2"),
+          read_v3: hd(read)["text"] =~ ~s("v3"),
           unauthorized: unauthorized,
           page: to_string(page)
         }
@@ -98,11 +123,12 @@ defmodule Totem.HttpTest do
 
     assert result["label"] == "v2"
     assert result["source"] == "test push"
+    assert result["notes"] == ["pushed", true]
     assert result["stale"] =~ "mix totem.pull"
-    assert result["pulled"]
-    assert result["notes"]
+    assert result["clash"] =~ "Changed here and in the app: lib/demo/counter.ex"
+    assert result["pulled"] == [true, true]
     assert "apply_changes" in result["tools"] and "read_file" in result["tools"]
-    assert result["read_v2"]
+    assert result["read_v3"]
     assert result["unauthorized"] == 401
     # Everything else goes on to the app.
     assert result["page"] == "hello"

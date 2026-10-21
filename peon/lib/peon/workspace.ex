@@ -38,6 +38,9 @@ defmodule Peon.Workspace do
     write_base(dir, changeset_id, target)
   end
 
+  @doc "Records that `dir` matches `changeset_id` already, e.g. after Totem wrote its files."
+  def mark(dir, changeset_id), do: write_base(dir, changeset_id, Code.tree(changeset_id))
+
   @doc "The changeset the workspace is based on."
   def base_id(dir), do: read_base(dir)["changeset_id"]
 

@@ -1,7 +1,7 @@
 defmodule Peon.ShipTest do
   use Peon.DataCase, async: false
 
-  alias Peon.{Code, Env, Incidents, Project, Ship, Store}
+  alias Peon.{Code, Incidents, Project, Ship, Store}
 
   @moduletag :tmp_dir
   @ai %{kind: :ai, id: "chat-1"}
@@ -120,14 +120,6 @@ defmodule Peon.ShipTest do
 
     :ok = Incidents.chat_failed("c2", "provider hiccup")
     assert Incidents.get(incident.id).status == "open"
-  end
-
-  test "code-only deploys are hot, restart paths are cold" do
-    assert Env.hot?(["lib/app_web/page.ex", "priv/repo/migrations/20261015_add.exs"])
-    refute Env.hot?(["lib/app.ex", "mix.exs"])
-    refute Env.hot?(["config/config.exs"])
-    refute Env.hot?(["lib/app/application.ex"])
-    refute Env.hot?(:all)
   end
 
   defp passed(parent, path, content) do

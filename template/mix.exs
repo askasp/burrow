@@ -73,8 +73,18 @@ defmodule PeonTemplate.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      # Totem keeps the running app's code and loads changes into it. Burrow
+      # mounts its own copy at TOTEM_PATH; elsewhere it comes from GitHub.
+      {:totem, totem()}
     ]
+  end
+
+  defp totem do
+    case System.get_env("TOTEM_PATH") do
+      nil -> [github: "askasp/burrow", sparse: "totem"]
+      path -> [path: path]
+    end
   end
 
   # Aliases are shortcuts or tasks specific to the current project.

@@ -1,7 +1,7 @@
 defmodule Peon.Env.Usage do
   @moduledoc """
   An environment's usage over the last two hours, a point a minute, from the
-  probe's stats (`"usage"`: requests and their p95 since the last stats,
+  Totem's stats (`"usage"`: requests and their p95 since the last stats,
   LiveView sessions now, visitors today) and the errors it forwards.
   """
 

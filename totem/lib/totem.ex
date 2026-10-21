@@ -9,9 +9,9 @@ defmodule Totem do
       Totem.apply(%{base: 12, files: [{"lib/app/x.ex", source}, {"lib/old.ex", :deleted}]})
       #=> {:ok, %{version: 13, mode: "hot", output: "Compiling 1 file (.ex)\\n"}}
 
-  A change names the version it was made against (`:base`), and is refused
-  with `{:error, {:conflict, current}}` when that isn't current anymore. Its
-  paths decide how it loads:
+  A change names the version it was made against (`:base`). It is refused
+  with `{:error, {:conflict, current}}` when one of its files changed since;
+  changes elsewhere don't matter. Its paths decide how it loads:
 
     * hot - most files: recompiled in place, processes keep their state
     * warm - `config/**`, `lib/*/application.ex`, `lib/*_web/endpoint.ex`:
@@ -29,10 +29,18 @@ defmodule Totem do
   Configuration (`config :totem, ...`), all optional: `:root` (the app's
   directory, default the working directory), `:store` (default
   `<root>/.totem`), `:otp_app` (default the Mix project's app),
-  `:cold_paths`, `:warm_paths`, `server: false` to not start it.
+  `:cold_paths`, `:warm_paths`, `:asset_paths`, `:migration_paths`,
+  `:ignore` (globs that are never code, also `TOTEM_IGNORE`, comma-separated),
+  `server: false` to not start it.
   """
 
   alias Totem.{Server, Store}
+
+  @source_dir Path.expand("..", __DIR__)
+
+  @doc "Where Totem's own source is, e.g. to mount it where apps are built."
+  @spec source_dir() :: Path.t()
+  def source_dir, do: @source_dir
 
   @type file :: {String.t(), binary() | {:blob, Totem.Blob.hash()} | :deleted}
   @type change :: %{base: pos_integer(), files: [file()]}
