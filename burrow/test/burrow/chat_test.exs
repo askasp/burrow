@@ -77,22 +77,6 @@ defmodule Burrow.ChatTest do
     assert [%{role: :user, text: "/deploy"}] = Chat.normalize(user.("/deploy"))
   end
 
-  test "effort becomes the provider's model options; medium keeps the defaults" do
-    assert %{
-             "provider" => %{
-               "openai" => %{
-                 "models" => %{"gpt-x" => %{"options" => %{"reasoningEffort" => "high"}}}
-               }
-             }
-           } =
-             Chat.effort_config("openai/gpt-x", "high")
-
-    assert %{"provider" => %{"anthropic" => _}} = Chat.effort_config("anthropic/claude", "high")
-    assert Chat.effort_config("anthropic/claude", "low") == %{}
-    assert Chat.effort_config("openai/gpt-x", "medium") == %{}
-    assert Chat.effort_config(nil, nil) == %{}
-  end
-
   test "ports browsers refuse are never used" do
     refute Burrow.Ports.browser_safe?(5060)
     refute Burrow.Ports.browser_safe?(5061)

@@ -26,6 +26,21 @@ defmodule Burrow.OpenCode.Client do
     end
   end
 
+  @doc """
+  Sets the model (provider/model) and its variant, the thinking level (nil for
+  the model's default), for the session's next turns.
+  """
+  def set_model(conn, session_id, model, variant) do
+    [provider, id] = String.split(model, "/", parts: 2)
+    ref = %{providerID: provider, id: id}
+    ref = if variant, do: Map.put(ref, :variant, variant), else: ref
+
+    case Req.post(req(conn), url: "/api/session/#{session_id}/model", json: %{model: ref}) do
+      {:ok, %{status: status}} when status in [200, 204] -> :ok
+      other -> {:error, other}
+    end
+  end
+
   @doc "Runs a command (e.g. `review`) with its arguments as a user message."
   def command(conn, session_id, name, arguments) do
     case Req.post(req(conn),

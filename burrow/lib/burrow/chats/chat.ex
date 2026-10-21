@@ -7,7 +7,8 @@ defmodule Burrow.Chats.Chat do
     field :title, :string, default: ""
     field :created_by, :string
     field :session_id, :string
-    # The agent's model (provider/model) and effort; nil for the defaults
+    # The agent's model (provider/model) and effort, one of the model's
+    # opencode variants (its thinking levels); nil for the defaults
     field :model, :string
     field :effort, :string
     # A repo chat's pull request (`Burrow.GitRepo.PullRequest`)

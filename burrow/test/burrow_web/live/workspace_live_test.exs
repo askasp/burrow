@@ -67,6 +67,26 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       refute has_element?(view, "#new-chat[disabled]")
     end
 
+    test "the chat box picks the model; a new chat starts with it", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} = open(conn, project)
+      assert has_element?(view, "#model-pick option[selected]", "gpt-test")
+
+      view |> element("#model-pick") |> render_change(%{"model" => "anthropic/claude-x"})
+      assert [%{model: "anthropic/claude-x", effort: nil}] = Chats.list(project.id)
+
+      assert has_element?(
+               view,
+               "#model-pick optgroup[label=anthropic] option[selected]",
+               "claude-x"
+             )
+
+      view |> element("#new-chat") |> render_click()
+      assert [_, %{model: "anthropic/claude-x"}] = Chats.list(project.id)
+    end
+
     test "a landed change ships from its card, and its chat closes for changes", %{
       conn: conn,
       project: project

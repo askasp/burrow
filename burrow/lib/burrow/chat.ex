@@ -360,16 +360,17 @@ defmodule Burrow.Chat do
 
   def handle_call({:prompt, text}, _from, state) do
     prompted_at = System.system_time(:millisecond)
+    {model, effort} = model(state)
 
-    case run_prompt(state, text) do
-      {:ok, label} ->
-        if chat = Chats.get(state.id), do: Chats.started(chat, text)
-        state = %{state | busy?: true, prompted_at: prompted_at, label: label}
-        send(self(), :poll)
-        {:reply, :ok, state |> broadcast_status() |> touch()}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+    # The model and thinking level picked last go with this message.
+    with :ok <- Client.set_model(conn(state), state.session_id, model, effort),
+         {:ok, label} <- run_prompt(state, text) do
+      if chat = Chats.get(state.id), do: Chats.started(chat, text)
+      state = %{state | busy?: true, prompted_at: prompted_at, label: label}
+      send(self(), :poll)
+      {:reply, :ok, state |> broadcast_status() |> touch()}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -695,8 +696,7 @@ defmodule Burrow.Chat do
     instructions = write_instructions(state, dir)
 
     allow = ~w(read edit glob grep list bash task todowrite webfetch websearch lsp skill)
-    chat = Chats.get(state.id)
-    model = (chat && chat.model) || Burrow.OpenCode.model(state.project.user_id)
+    {model, _effort} = model(state)
 
     config = %{
       "$schema" => "https://opencode.ai/config.json",
@@ -724,7 +724,6 @@ defmodule Burrow.Chat do
       }
     }
 
-    config = Map.merge(config, effort_config(model, chat && chat.effort))
     File.write!(Path.join(dir, "opencode.json"), Jason.encode!(config, pretty: true))
   end
 
@@ -838,33 +837,12 @@ defmodule Burrow.Chat do
     end
   end
 
-  @doc false
-  # The chat's effort as the provider's model options. Medium (or none) keeps
-  # the model's defaults; providers without such an option ignore it.
-  def effort_config(model, effort) when effort in ["low", "high"] do
-    case String.split(model || "", "/", parts: 2) do
-      ["openai", id] ->
-        %{
-          "provider" => %{
-            "openai" => %{"models" => %{id => %{"options" => %{"reasoningEffort" => effort}}}}
-          }
-        }
-
-      ["anthropic", id] when effort == "high" ->
-        thinking = %{"type" => "enabled", "budgetTokens" => 16_000}
-
-        %{
-          "provider" => %{
-            "anthropic" => %{"models" => %{id => %{"options" => %{"thinking" => thinking}}}}
-          }
-        }
-
-      _ ->
-        %{}
-    end
+  # The chat's model (provider/model, else its owner's) and effort (the
+  # model's opencode variant, nil for its default).
+  defp model(state) do
+    chat = Chats.get(state.id)
+    {(chat && chat.model) || Burrow.OpenCode.model(state.project.user_id), chat && chat.effort}
   end
-
-  def effort_config(_model, _effort), do: %{}
 
   defp ensure_session(state) do
     chat = Chats.get(state.id)

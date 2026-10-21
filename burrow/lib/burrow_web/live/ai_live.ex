@@ -11,7 +11,7 @@ defmodule BurrowWeb.AILive do
 
     {:ok,
      socket
-     |> assign(providers: nil, models: [], model: OpenCode.model(user.id), error: nil)
+     |> assign(providers: nil, models: %{}, model: OpenCode.model(user.id), error: nil)
      |> assign(attempt: nil, importing: false)
      |> assign(local_import?: Application.get_env(:burrow, :local_login_import, false))
      |> load()}
@@ -230,7 +230,7 @@ defmodule BurrowWeb.AILive do
           </ul>
         </section>
 
-        <section :if={@models != []} aria-label="Model">
+        <section :if={@models != %{}} aria-label="Model">
           <div class="sec-h"><span class="eyebrow">Model</span></div>
           <.form
             for={%{}}
@@ -241,7 +241,11 @@ defmodule BurrowWeb.AILive do
           >
             <label for="model-select" class="label">Model for your Peons</label>
             <select id="model-select" name="model" class="field">
-              <option :for={m <- Enum.uniq([@model | @models])} value={m} selected={m == @model}>
+              <option
+                :for={m <- Enum.uniq([@model | Enum.sort(Map.keys(@models))])}
+                value={m}
+                selected={m == @model}
+              >
                 {m}
               </option>
             </select>

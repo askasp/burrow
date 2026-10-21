@@ -102,10 +102,16 @@ defmodule Burrow.OpenCode do
          do: :ok
   end
 
-  @doc "Models the user can pick, as provider/model ids."
+  @doc """
+  Models the user can pick: provider/model id => the model's variants, its
+  thinking levels (e.g. `["low", "medium", "high"]`).
+  """
   def models(user_id) do
     with {:ok, %{"data" => models}} <- Server.request(user_id, :get, "/model") do
-      {:ok, models |> Enum.map(&"#{&1["providerID"]}/#{&1["id"]}") |> Enum.sort()}
+      {:ok,
+       Map.new(models || [], fn m ->
+         {"#{m["providerID"]}/#{m["id"]}", Enum.map(m["variants"] || [], & &1["id"])}
+       end)}
     end
   end
 

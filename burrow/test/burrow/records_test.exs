@@ -37,6 +37,10 @@ defmodule Burrow.RecordsTest do
     test "keep running, then delete", %{project: project} do
       chat = Chats.create(project.id, "t", "ada", model: "openai/gpt-x", effort: "high")
       assert {chat.model, chat.effort} == {"openai/gpt-x", "high"}
+      Chats.pick_model(chat, "openrouter/anthropic/claude-x", "max")
+      assert %{model: "openrouter/anthropic/claude-x", effort: "max"} = Chats.get(chat.id)
+      Chats.pick_model(chat, "no model", "")
+      assert %{model: nil, effort: nil} = Chats.get(chat.id)
       refute Chats.kept_running?(chat)
 
       Chats.keep_running(chat, 2)

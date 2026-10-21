@@ -423,6 +423,53 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp close_confirm(_tab, false), do: "Close this chat? The conversation goes with it."
 
+  ## Model and thinking level
+
+  attr :chat, :map, required: true
+  attr :models, :map, required: true, doc: "provider/model => its thinking levels"
+  attr :default, :string, required: true, doc: "the owner's model"
+
+  @doc """
+  The chat's model, grouped by provider, and its thinking level (the model's
+  opencode variants). They go with the chat's next message.
+  """
+  def model_pick(assigns) do
+    model = assigns.chat.model || assigns.default
+    efforts = Map.get(assigns.models, model, []) ++ List.wrap(assigns.chat.effort)
+
+    groups =
+      [model | Map.keys(assigns.models)]
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.chunk_by(&provider/1)
+
+    assigns = assign(assigns, model: model, efforts: Enum.uniq(efforts), groups: groups)
+
+    ~H"""
+    <label class="sr-only" for="model-pick">Model</label>
+    <select id="model-pick" name="model" phx-change="pick_model" class="field pick">
+      <optgroup :for={group <- @groups} label={provider(hd(group))}>
+        <option :for={m <- group} value={m} selected={m == @model}>
+          {m |> String.split("/", parts: 2) |> List.last()}
+        </option>
+      </optgroup>
+    </select>
+    <label :if={@efforts != []} class="sr-only" for="effort-pick">Thinking</label>
+    <select
+      :if={@efforts != []}
+      id="effort-pick"
+      name="effort"
+      phx-change="pick_model"
+      class="field pick"
+    >
+      <option value="" selected={@chat.effort == nil}>thinking: default</option>
+      <option :for={e <- @efforts} value={e} selected={e == @chat.effort}>thinking: {e}</option>
+    </select>
+    """
+  end
+
+  defp provider(model), do: model |> String.split("/", parts: 2) |> hd()
+
   ## Peon at work
 
   attr :kind, :string, default: "mine", doc: ~s("mine" or "chop")

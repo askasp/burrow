@@ -83,6 +83,13 @@ defmodule BurrowWeb.WorkspaceLive do
     |> assign(stopped: nil)
     |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
     |> assign(draft: nil, form: to_form(%{"text" => ""}))
+    # The owner's models and their thinking levels, for the chat box
+    |> assign(models: %{}, default_model: Burrow.OpenCode.model(project.user_id))
+    |> then(fn socket ->
+      if connected?(socket),
+        do: start_async(socket, :models, fn -> Burrow.OpenCode.models(project.user_id) end),
+        else: socket
+    end)
     # The "/" menu: the chat's commands and skills, and those matching the box
     |> assign(slash_items: [], slash: [])
     # "Deploys and usage" in place of the preview; one dialog at a time
@@ -167,6 +174,11 @@ defmodule BurrowWeb.WorkspaceLive do
     {:noreply, assign(socket, starting: false, start_error: start_error(reason))}
   end
 
+  def handle_async(:models, {:ok, {:ok, models}}, socket),
+    do: {:noreply, assign(socket, models: models)}
+
+  def handle_async(:models, _result, socket), do: {:noreply, socket}
+
   @impl true
   def handle_event("send", %{"text" => text}, socket) do
     text = String.trim(text)
@@ -190,10 +202,21 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_event("typing", %{"text" => text}, socket), do: {:noreply, slash_menu(socket, text)}
 
+  # A thinking level the newly picked model lacks goes back to its default.
+  def handle_event("pick_model", %{"model" => model} = params, socket) do
+    %{chat: chat, models: models} = socket.assigns
+    effort = if params["effort"] in Map.get(models, model, []), do: params["effort"]
+    Chats.pick_model(chat, model, effort)
+    {:noreply, assign(socket, chat: Chats.get(chat.id))}
+  end
+
   def handle_event("wake", _params, socket), do: {:noreply, start_chat(socket)}
 
   def handle_event("new_chat", _params, socket) do
-    case Chats.create_empty(socket.assigns.project.id, socket.assigns.user) do
+    %{project: project, user: user, chat: chat} = socket.assigns
+    picked = if chat, do: [model: chat.model, effort: chat.effort], else: []
+
+    case Chats.create_empty(project.id, user, picked) do
       {:ok, chat} -> {:noreply, push_patch(socket, to: chat_path(socket, chat.id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
     end
@@ -961,6 +984,12 @@ defmodule BurrowWeb.WorkspaceLive do
                   placeholder={placeholder(@tab)}
                 >{@form[:text].value}</textarea>
                 <div class="cbar">
+                  <.model_pick
+                    :if={@chat && !closed?(@tab)}
+                    chat={@chat}
+                    models={@models}
+                    default={@default_model}
+                  />
                   <button
                     :if={@info}
                     type="button"
