@@ -1,6 +1,6 @@
 defmodule Totem.Link do
   @moduledoc """
-  Totem dialing out to a server that runs the app, such as Peon: a Unix
+  Totem dialing out to a server that runs the app, such as Burrow: a Unix
   socket named by `TOTEM_LINK` (or `config :totem, link: path`). Nothing
   listens inside the app; the server's side of the socket decides who may
   reach it. One JSON object per frame (4-byte length):
@@ -8,8 +8,8 @@ defmodule Totem.Link do
       server -> Totem  {"id": n, "cmd": "current" | "apply" | ..., ...args}   (`Totem.Commands`)
       Totem -> server  {"reply": n, "ok": true, "result": ...}
                        {"reply": n, "ok": false, "error": {...}}
-                       {"event": "connected", "protocol": 1, "totem": vsn, "node": ...,
-                        "ready": bool, "current": version}
+                       {"event": "connected", "protocol": 2, "totem": vsn, "node": ...,
+                        "ready": bool, "current": {"tree": ..., "hash": ..., "label": ...}}
                        {"event": "ready"}                 the app has started
                        {"event": "error", ...}            the app logged an error (`Totem.Monitor`)
                        {"event": "stats", "stats": ...}   every 10 seconds once ready
@@ -23,7 +23,7 @@ defmodule Totem.Link do
 
   alias Totem.{Commands, Monitor}
 
-  @protocol 1
+  @protocol 2
   @redial 2_000
   @stats_every 10_000
 
@@ -137,10 +137,11 @@ defmodule Totem.Link do
   defp emit(%{conn: conn}, map), do: :gen_tcp.send(conn, JSON.encode!(map))
 
   defp current do
-    Commands.version(Totem.current())
+    {:ok, current} = Commands.run("current")
+    current
   rescue
     e ->
-      Logger.warning("Totem: could not read the current version: #{Exception.message(e)}")
+      Logger.warning("Totem: could not read the current files: #{Exception.message(e)}")
       nil
   end
 end

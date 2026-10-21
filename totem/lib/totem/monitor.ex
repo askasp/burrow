@@ -252,7 +252,7 @@ defmodule Totem.Monitor do
 
     text = message(msg, meta)
 
-    %{
+    error = %{
       "kind" => kind,
       "message" => String.slice(reason || first_line(text), 0, 500),
       "text" => String.slice(text, 0, 4000),
@@ -262,6 +262,27 @@ defmodule Totem.Monitor do
       "request_id" => meta[:request_id],
       "at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
     }
+
+    Map.put(error, "fingerprint", fingerprint(error))
+  end
+
+  @doc """
+  What makes two errors the same problem: their kind plus the app frame they
+  came from, or else their message with numbers and pids taken out.
+  """
+  @spec fingerprint(map()) :: String.t()
+  def fingerprint(error) do
+    where = error["frame"] || normalize(error["message"] || "")
+
+    :crypto.hash(:sha256, "#{error["kind"]}|#{where}")
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
+  end
+
+  defp normalize(message) do
+    message
+    |> String.replace(~r/#(PID|Reference|Port)<[\d.]+>|0x[0-9a-f]+|\d+/, "_")
+    |> String.slice(0, 200)
   end
 
   defp message({:string, chardata}, _meta), do: IO.chardata_to_string(chardata)

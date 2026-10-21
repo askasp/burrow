@@ -1,9 +1,9 @@
 defmodule Totem.Remote do
   @moduledoc """
-  A checkout of a running app's code, for `mix totem.clone`, `mix
-  totem.push` and `mix totem.pull`: the app's `Totem.Plug` URL and the
-  version the files on disk were last in step with, in `.totem/remote.json`.
-  The token comes from `TOTEM_TOKEN`, never from a file.
+  HTTP to a running app's `Totem.Plug`, for `mix totem.clone`, `mix
+  totem.push` and `mix totem.promote`. A checkout remembers its app's URL and
+  the change and tree it was made from in `.totem/remote.json`. Tokens come
+  from the environment (`TOTEM_TOKEN`), never from a file.
   """
 
   alias Totem.{Ignore, Tree}
@@ -21,22 +21,27 @@ defmodule Totem.Remote do
     end
   end
 
-  def write!(dir, url, version) do
+  def write!(dir, url, base, tree) do
     path = Path.join(dir, @file_name)
     File.mkdir_p!(Path.dirname(path))
-    data = %{"url" => url, "version" => version["version"], "tree" => version["tree"]}
-    File.write!(path, JSON.encode!(data))
+    File.write!(path, JSON.encode!(%{"url" => url, "base" => base, "tree" => tree}))
   end
 
   @doc "The files under `dir` as a tree, with their contents."
   def local(dir), do: Tree.from_dir(dir, Ignore.matcher(dir))
 
-  def get!(url, path), do: request!(:get, url <> path, nil)
-  def post!(url, path, body), do: request!(:post, url <> path, JSON.encode!(body))
+  def get!(url, path, token \\ nil), do: request!(:get, url <> path, nil, token)
 
-  defp request!(method, url, body) do
+  def post!(url, path, body, token \\ nil),
+    do: request!(:post, url <> path, JSON.encode!(body), token)
+
+  defp request!(method, url, body, token) do
     {:ok, _} = Application.ensure_all_started([:inets, :ssl])
-    token = System.get_env("TOTEM_TOKEN") || Mix.raise("Set TOTEM_TOKEN to the app's Totem token")
+
+    token =
+      token || System.get_env("TOTEM_TOKEN") ||
+        Mix.raise("Set TOTEM_TOKEN to the app's Totem token")
+
     headers = [{~c"authorization", String.to_charlist("Bearer " <> token)}]
 
     request =

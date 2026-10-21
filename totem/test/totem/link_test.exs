@@ -43,13 +43,15 @@ defmodule Totem.LinkTest do
   } do
     {:ok, conn} = :gen_tcp.accept(listener, 60_000)
 
-    assert %{"event" => "connected", "protocol" => 1, "current" => current} =
+    assert %{"event" => "connected", "protocol" => 2, "current" => current} =
              receive_json(conn)
 
     assert Map.has_key?(current["tree"], "lib/demo/counter.ex")
 
     unless current["ready"], do: receive_until(conn, &(&1["event"] == "ready"))
-    assert %{"message" => "link test boom"} = receive_until(conn, &(&1["event"] == "error"))
+
+    assert %{"message" => "link test boom", "fingerprint" => _} =
+             receive_until(conn, &(&1["event"] == "error"))
 
     # Only the contents the app doesn't have, then the change by hash.
     source = File.read!(Path.join(dir, "lib/demo/counter.ex"))
@@ -67,19 +69,20 @@ defmodule Totem.LinkTest do
     send_json(conn, %{"id" => 2, "cmd" => "blobs", "contents" => [%{"content" => v2}]})
     assert %{"ok" => true, "result" => %{"hashes" => [^hash]}} = receive_reply(conn, 2)
 
-    files = [%{"path" => "lib/demo/counter.ex", "blob" => hash}]
+    from = current["tree"]["lib/demo/counter.ex"]
+    files = [%{"path" => "lib/demo/counter.ex", "from" => from, "blob" => hash}]
+    send_json(conn, %{"id" => 3, "cmd" => "apply", "files" => files, "label" => "main #2"})
 
-    send_json(conn, %{"id" => 3, "cmd" => "apply", "base" => current["version"], "files" => files})
-
-    assert %{"ok" => true, "result" => %{"mode" => "hot", "version" => v}} =
+    assert %{"ok" => true, "result" => %{"mode" => "hot", "label" => "main #2"}} =
              receive_reply(conn, 3)
 
-    assert v == current["version"] + 1
+    # A stale `from` is refused, with the paths that moved.
+    send_json(conn, %{"id" => 4, "cmd" => "apply", "files" => files})
 
-    # A stale base is refused, with the version that is current.
-    send_json(conn, %{"id" => 4, "cmd" => "apply", "base" => current["version"], "files" => files})
-
-    assert %{"ok" => false, "error" => %{"error" => "conflict", "current" => ^v}} =
+    assert %{
+             "ok" => false,
+             "error" => %{"error" => "conflict", "paths" => ["lib/demo/counter.ex"]}
+           } =
              receive_reply(conn, 4)
 
     send_json(conn, %{"id" => 5, "cmd" => "read", "path" => "lib/demo/counter.ex"})

@@ -1,37 +1,40 @@
 defmodule Totem do
   @moduledoc """
-  Lives inside an Elixir app and owns its code: what runs now, every version
-  before it (`Totem.Store`), and changing it in place (`Totem.Loader`).
+  Lives inside an Elixir app: owns its files and changes them in place
+  (`Totem.Server`), watches it (`Totem.Monitor`), and talks to whoever runs
+  it (`Totem.Link`, `Totem.Plug`, `Totem.MCP`).
 
       Totem.current()
-      #=> %{version: 12, tree: %{"lib/app/x.ex" => "ab12…", …}, mode: "hot", …}
+      #=> %{tree: %{"lib/app/x.ex" => "ab12…", …}, hash: "9f3c…", label: "main #12"}
 
-      Totem.apply(%{base: 12, files: [{"lib/app/x.ex", source}, {"lib/old.ex", :deleted}]})
-      #=> {:ok, %{version: 13, mode: "hot", output: "Compiling 1 file (.ex)\\n"}}
+      Totem.apply([{"lib/app/x.ex", "ab12…", new_source}, {"lib/old.ex", "cd34…", :deleted}],
+        label: "main #13", watch: 15_000)
+      #=> {:ok, %{mode: "hot", output: "Compiling 1 file (.ex)\\n", label: "main #13", …}}
 
-  A change names the version it was made against (`:base`). It is refused
-  with `{:error, {:conflict, current}}` when one of its files changed since;
-  changes elsewhere don't matter. Its paths decide how it loads:
+  Each file names the hash it must have now (nil: it must not exist); if one
+  doesn't, nothing is written: `{:error, {:conflict, paths}}`. Its paths decide
+  how a change loads:
 
     * hot - most files: recompiled in place, processes keep their state
     * warm - `config/**`, `lib/*/application.ex`, `lib/*_web/endpoint.ex`:
       the app is stopped and started again inside the running node
-    * cold - `mix.exs`, `mix.lock`: written and recorded as
-      `"restart_required"`; restarting the node is up to whoever runs it
+    * cold - `mix.exs`, `mix.lock`: written, `restart_required: true`;
+      restarting the node is up to whoever runs it
 
-  When a hot or warm load fails, the previous version's files go back on
-  disk and load again, so the old code keeps running, and the compiler's
-  output comes back in `{:error, {:load_failed, mode, output}}`.
+  When loading fails the previous files go back and load again:
+  `{:error, {:load_failed, mode, output}}`. With `:watch` (ms), an error the
+  app logs in that window that wasn't seen before, or the app stopping, does
+  the same: `{:error, {:reverted, mode, errors}}`.
 
-  Files changed on disk outside Totem become a version of their own
-  (`mode: "found"`) the next time Totem looks.
+  With `config :totem, origin: true` (or `TOTEM_ORIGIN=1`) the node also
+  keeps the app's history and takes drafts (`Totem.Origin`).
 
   Configuration (`config :totem, ...`), all optional: `:root` (the app's
   directory, default the working directory), `:store` (default
-  `<root>/.totem`), `:otp_app` (default the Mix project's app),
-  `:cold_paths`, `:warm_paths`, `:asset_paths`, `:migration_paths`,
-  `:ignore` (globs that are never code, also `TOTEM_IGNORE`, comma-separated),
-  `server: false` to not start it.
+  `<root>/.totem`), `:otp_app`, `:cold_paths`, `:warm_paths`, `:asset_paths`,
+  `:migration_paths`, `:ignore` (globs that are never code, also
+  `TOTEM_IGNORE`, comma-separated), `:watch`, `:origin`, `:repo_dir`,
+  `:token`, `server: false` to not start it.
   """
 
   alias Totem.{Server, Store}
@@ -42,64 +45,54 @@ defmodule Totem do
   @spec source_dir() :: Path.t()
   def source_dir, do: @source_dir
 
-  @type file :: {String.t(), binary() | {:blob, Totem.Blob.hash()} | :deleted}
-  @type change :: %{base: pos_integer(), files: [file()]}
+  @type file ::
+          {String.t(), Totem.Blob.hash() | nil, binary() | {:blob, Totem.Blob.hash()} | :deleted}
 
-  @doc "The version this node runs (recording what's on disk first if it changed)."
-  @spec current() :: Store.version()
+  @doc "The files on disk as a tree, its hash, and the label of the last change."
+  @spec current() :: %{tree: Totem.Tree.t(), hash: Totem.Blob.hash(), label: String.t() | nil}
   def current, do: call(:current)
 
-  @doc "Every version, newest first."
-  @spec versions() :: [Store.version()]
-  def versions, do: Store.versions(store())
+  @doc "Writes and loads `files` (see the moduledoc). Options: `:label`, `:watch`."
+  @spec apply([file()], keyword()) :: {:ok, map()} | {:error, term()}
+  def apply(files, opts \\ []), do: call({:apply, files, opts})
 
-  @doc "A file's content in the current version."
+  @doc "A file's content on disk, if it is part of the code."
   @spec read(String.t()) :: {:ok, binary()} | :error
   def read(path) do
-    case current().tree do
-      %{^path => hash} -> Store.get_blob(store(), hash)
+    with %{^path => _} <- current().tree,
+         {:ok, content} <- File.read(Path.join(info().root, path)) do
+      {:ok, content}
+    else
       _ -> :error
     end
   end
 
-  @doc "A stored content by its hash."
+  @doc "A content sent ahead of a change, by hash."
   @spec blob(Totem.Blob.hash()) :: {:ok, binary()} | :error
-  def blob(hash), do: Store.get_blob(store(), hash)
+  def blob(hash), do: Store.get_blob(info().store, hash)
 
   @doc "The hashes Totem has no content for; send those, then refer to the rest as `{:blob, hash}`."
   @spec missing([Totem.Blob.hash()]) :: [Totem.Blob.hash()]
-  def missing(hashes), do: Store.missing(store(), hashes)
+  def missing(hashes) do
+    %{tree: tree} = current()
+    on_disk = MapSet.new(Map.values(tree))
+    hashes |> Enum.reject(&MapSet.member?(on_disk, &1)) |> then(&Store.missing(info().store, &1))
+  end
 
   @doc "Stores contents ahead of a change. Returns their hashes."
   @spec put_blobs([binary()]) :: [Totem.Blob.hash()]
-  def put_blobs(contents), do: Enum.map(contents, &Store.put_blob(store(), &1))
+  def put_blobs(contents), do: Enum.map(contents, &Store.put_blob(info().store, &1))
 
-  @doc """
-  Applies a change and loads it. Options: `:source`, a label kept with the
-  version (e.g. `"peon#12"`).
-  """
-  @spec apply(change(), keyword()) ::
-          {:ok, %{version: pos_integer(), mode: String.t(), output: String.t()}}
-          | {:error, term()}
-  def apply(change, opts \\ []), do: call({:apply, change, opts})
-
-  @doc "Makes version `n`'s code current again, as a new version."
-  @spec rollback(pos_integer(), keyword()) :: {:ok, map()} | {:error, term()}
-  def rollback(n, opts \\ []), do: call({:rollback, n, opts})
-
-  @doc "The current version's files as a .tar.gz, e.g. to check the code out elsewhere."
+  @doc "The files on disk as a .tar.gz, e.g. to check the code out elsewhere."
   @spec archive() :: binary()
   def archive do
-    %{tree: tree, version: version} = current()
-    dir = store()
+    %{root: root, store: store} = info()
 
     entries =
-      for {path, hash} <- Enum.sort(tree) do
-        {:ok, content} = Store.get_blob(dir, hash)
-        {String.to_charlist(path), content}
-      end
+      for {path, _} <- Enum.sort(current().tree),
+          do: {String.to_charlist(path), File.read!(Path.join(root, path))}
 
-    tmp = Path.join([dir, "tmp", "archive-#{version}-#{System.unique_integer([:positive])}"])
+    tmp = Path.join([store, "tmp", "archive-#{System.unique_integer([:positive])}"])
     File.mkdir_p!(Path.dirname(tmp))
 
     try do
@@ -110,7 +103,8 @@ defmodule Totem do
     end
   end
 
-  defp store, do: call(:info).store
+  @doc false
+  def info, do: call(:info)
 
   defp call(request), do: GenServer.call(Server, request, :infinity)
 end

@@ -10,13 +10,17 @@ if Code.ensure_loaded?(Plug.Conn) do
     `config :totem, token: ...` or `TOTEM_TOKEN`, sent as
     `authorization: Bearer <token>`. Without one it serves nothing.
 
-        GET  /_totem/current            the running version, tree included
-        GET  /_totem/versions
+        GET  /_totem/current            the files' tree, its hash, the last change's label
         GET  /_totem/files/<path>       a file's content
-        GET  /_totem/archive            the running version as .tar.gz
-        GET  /_totem/stats | processes | errors
-        POST /_totem/missing | blobs | apply | rollback   (JSON, `Totem.Commands`)
+        GET  /_totem/archive            the files as .tar.gz
+        GET  /_totem/list | stats | processes | errors
+        POST /_totem/missing | blobs | apply | search | read   (JSON, `Totem.Commands`)
         POST /_totem/mcp                MCP (`Totem.MCP`)
+
+    A node that is its own origin (`Totem.Origin`) also serves its history:
+
+        GET  /_totem/log | refs | tree?at=N | blobs/<hash>
+        POST /_totem/drafts | check | land | revert
     """
 
     @behaviour Plug
@@ -80,8 +84,16 @@ if Code.ensure_loaded?(Plug.Conn) do
       |> send_resp(200, Totem.archive())
     end
 
-    defp route(conn, "GET", [cmd]) when cmd in ~w(current versions stats processes errors list),
-      do: command(conn, cmd, conn |> fetch_query_params() |> Map.get(:query_params))
+    defp route(conn, "GET", ["blobs", hash]) do
+      case Commands.run("blob", %{"hash" => hash}) do
+        {:ok, file} -> json(conn, 200, file)
+        {:error, error} -> json(conn, 404, error)
+      end
+    end
+
+    defp route(conn, "GET", [cmd])
+         when cmd in ~w(current stats processes errors list log refs tree),
+         do: command(conn, cmd, conn |> fetch_query_params() |> Map.get(:query_params))
 
     defp route(conn, "POST", ["mcp"]) do
       with {:ok, body, conn} <- body(conn) do
@@ -101,19 +113,36 @@ if Code.ensure_loaded?(Plug.Conn) do
       end
     end
 
-    defp route(conn, "POST", [cmd]) when cmd in ~w(missing blobs apply rollback search read) do
-      with {:ok, body, conn} <- body(conn), do: command(conn, cmd, body)
+    @posts %{
+      "drafts" => "draft_write",
+      "check" => "draft_check",
+      "land" => "land",
+      "revert" => "revert"
+    }
+
+    defp route(conn, "POST", [cmd])
+         when cmd in ~w(missing blobs apply search read drafts check land revert) do
+      with {:ok, body, conn} <- body(conn), do: command(conn, Map.get(@posts, cmd, cmd), body)
     end
 
     defp route(conn, _method, _path), do: json(conn, 404, %{"error" => "not_found"})
 
     defp command(conn, cmd, args) do
       case Commands.run(cmd, args) do
-        {:ok, result} -> json(conn, 200, result)
-        {:error, %{"error" => "conflict"} = error} -> json(conn, 409, error)
-        {:error, %{"error" => "load_failed"} = error} -> json(conn, 422, error)
-        {:error, %{"error" => "not_found"} = error} -> json(conn, 404, error)
-        {:error, error} -> json(conn, 400, error)
+        {:ok, result} ->
+          json(conn, 200, result)
+
+        {:error, %{"error" => "conflict"} = error} ->
+          json(conn, 409, error)
+
+        {:error, %{"error" => e} = error} when e in ~w(load_failed reverted check_failed) ->
+          json(conn, 422, error)
+
+        {:error, %{"error" => e} = error} when e in ~w(not_found no_origin) ->
+          json(conn, 404, error)
+
+        {:error, error} ->
+          json(conn, 400, error)
       end
     end
 

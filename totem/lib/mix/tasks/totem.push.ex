@@ -1,11 +1,12 @@
 defmodule Mix.Tasks.Totem.Push do
-  @shortdoc "Sends local changes to the running app, which loads them"
+  @shortdoc "Lands local changes on a running app that is its own origin"
   @moduledoc """
-      TOTEM_TOKEN=... mix totem.push [--source "what changed"]
+      TOTEM_TOKEN=... mix totem.push [--intent "what changed"]
 
-  Sends the files changed since the checkout's version (only contents the
-  app doesn't have yet) and prints how the app loaded them. Refused when
-  the app moved on: `mix totem.pull` first.
+  Sends the files changed since the checkout as a draft, has the app build
+  and test it, and lands it: the app merges it onto main and loads it. A
+  change to the same lines as one since the checkout comes back as a
+  conflict: clone again and redo it.
   """
   use Mix.Task
 
@@ -13,53 +14,41 @@ defmodule Mix.Tasks.Totem.Push do
 
   @impl true
   def run(args) do
-    {opts, _} = OptionParser.parse!(args, strict: [source: :string])
-    remote = Remote.read!(".")
+    {opts, _} = OptionParser.parse!(args, strict: [intent: :string])
+    %{"url" => url, "base" => base, "tree" => before} = Remote.read!(".")
     {tree, blobs} = Remote.local(".")
 
-    case Tree.changes(remote["tree"], tree) do
-      [] ->
-        Mix.shell().info("Nothing to push: the files match version #{remote["version"]}")
-
-      changes ->
-        push(remote, tree, blobs, changes, opts[:source] || "mix totem.push")
+    case Tree.changes(before, tree) do
+      [] -> Mix.shell().info("Nothing to push")
+      changes -> push(url, base, tree, blobs, changes, opts[:intent] || "mix totem.push")
     end
   end
 
-  defp push(remote, tree, blobs, changes, source) do
-    url = remote["url"]
-    hashes = for {_path, hash} <- changes, hash != :deleted, uniq: true, do: hash
-    {200, %{"missing" => missing}} = Remote.post!(url, "/missing", %{"hashes" => hashes})
-    contents = Enum.map(missing, &Totem.Commands.content(Map.fetch!(blobs, &1)))
-    if contents != [], do: {200, _} = Remote.post!(url, "/blobs", %{"contents" => contents})
+  defp push(url, base, tree, blobs, changes, intent) do
+    id = "push-#{System.unique_integer([:positive])}"
 
     files =
-      for {path, hash} <- changes,
-          do:
-            if(hash == :deleted,
-              do: %{"path" => path, "deleted" => true},
-              else: %{"path" => path, "blob" => hash}
-            )
+      for {path, hash} <- changes do
+        if hash == :deleted,
+          do: %{"path" => path, "deleted" => true},
+          else: Map.put(Totem.Commands.content(Map.fetch!(blobs, hash)), "path", path)
+      end
 
-    body = %{"base" => remote["version"], "files" => files, "source" => source}
+    draft = %{"id" => id, "base" => base, "intent" => intent, "files" => files}
 
-    case Remote.post!(url, "/apply", body) do
-      {200, result} ->
-        Remote.write!(".", url, %{"version" => result["version"], "tree" => tree})
-
-        Mix.shell().info(
-          "Version #{result["version"]}: #{length(changes)} files, loaded #{result["mode"]}"
-        )
-
-      {409, %{"current" => current}} ->
+    with {200, _} <- Remote.post!(url, "/drafts", draft),
+         {200, _} <- Remote.post!(url, "/check", %{"id" => id}),
+         {200, %{"change" => change, "mode" => mode}} <- Remote.post!(url, "/land", %{"id" => id}) do
+      Remote.write!(".", url, change, tree)
+      Mix.shell().info("Landed as ##{change}: #{length(changes)} files, loaded #{mode}")
+    else
+      {_status, %{"error" => "conflict", "paths" => paths}} ->
         Mix.raise(
-          "The app is at version #{current} now, not #{remote["version"]}: run mix totem.pull, then push again"
+          "The app changed the same lines in #{Enum.join(paths, ", ")}: clone again and redo them"
         )
 
-      {422, %{"mode" => mode, "output" => output}} ->
-        Mix.raise(
-          "The app could not load it (#{mode}) and still runs version #{remote["version"]}:\n\n#{output}"
-        )
+      {_status, %{"output" => output} = error} ->
+        Mix.raise("#{error["error"]}:\n\n#{output}")
 
       {status, error} ->
         Mix.raise("#{status}: #{inspect(error)}")

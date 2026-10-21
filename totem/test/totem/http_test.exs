@@ -1,136 +1,157 @@
 defmodule Totem.HttpTest do
-  # Totem.Plug in a real app served by Bandit: checking the code out, pushing
-  # a change (loaded hot), a stale push, pulling, and MCP, all over HTTP.
+  # Two real apps served by Bandit with Totem.Plug: a dev app that is its own
+  # origin, and a prod app that only runs. Over HTTP: check the dev app out,
+  # push a change (checked in a scratch build, landed, loaded hot), see a
+  # broken draft fail its check over MCP, then promote dev's main to prod.
   use ExUnit.Case, async: true
 
   import Totem.Fixture
 
   @moduletag :tmp_dir
-  @moduletag timeout: 300_000
+  @moduletag timeout: 600_000
 
-  test "clone and push and pull and MCP against the running app", %{tmp_dir: tmp_dir} do
-    {:ok, socket} = :gen_tcp.listen(0, [])
-    {:ok, port} = :inet.port(socket)
-    :gen_tcp.close(socket)
+  test "clone and push and check over MCP and promote dev to prod", %{tmp_dir: tmp_dir} do
+    [dev_port, prod_port] = for _ <- 1..2, do: free_port()
+    dev = app!(Path.join(tmp_dir, "dev"), web())
+    prod = app!(Path.join(tmp_dir, "prod"), web())
 
-    dir =
-      app!(tmp_dir,
-        deps: [~s({:plug, "~> 1.14"}), ~s({:bandit, "~> 1.5"})],
-        children: ["{Bandit, plug: Demo.Web, port: #{port}, startup_log: false}"],
-        files: [
-          {"lib/demo/web.ex",
-           """
-           defmodule Demo.Web do
-             use Plug.Builder
-             plug Totem.Plug
-             plug :hello
-             def hello(conn, _), do: send_resp(conn, 200, "hello")
-           end
-           """}
+    # Prod runs on its own, a plain runtime.
+    port =
+      Port.open({:spawn_executable, System.find_executable("mix")}, [
+        :binary,
+        :exit_status,
+        :stderr_to_stdout,
+        args: ["run", "--no-halt"],
+        cd: prod,
+        env: [
+          {~c"MIX_ENV", ~c"dev"},
+          {~c"TOTEM_TOKEN", ~c"prod-secret"},
+          {~c"WEB_PORT", to_charlist(prod_port)}
         ]
-      )
+      ])
+
+    {:os_pid, os_pid} = Port.info(port, :os_pid)
+    on_exit(fn -> System.cmd("pkill", ["-9", "-P", to_string(os_pid)]) end)
+    on_exit(fn -> System.cmd("kill", ["-9", to_string(os_pid)]) end)
 
     clone = Path.join(tmp_dir, "clone")
 
     result =
       run!(
-        dir,
+        dev,
         """
-        url = "http://127.0.0.1:#{port}/_totem"
+        url = "http://127.0.0.1:#{dev_port}/_totem"
+        prod = "http://127.0.0.1:#{prod_port}/_totem"
         clone = #{inspect(clone)}
         Mix.Tasks.Totem.Clone.run([url, clone])
 
         File.cd!(clone, fn ->
           path = "lib/demo/counter.ex"
           File.write!(path, String.replace(File.read!(path), ~s("v1"), ~s("v2")))
-          Mix.Tasks.Totem.Push.run(["--source", "test push"])
+          Mix.Tasks.Totem.Push.run(["--intent", "v2"])
         end)
 
-        label = Demo.Counter.label()
-        source = hd(Totem.versions()).source
+        landed = [Demo.Counter.label(), Totem.current().label]
 
-        extra = "defmodule Demo.Extra do\n  def hi, do: :hi\nend\n"
-        {:ok, _} = Totem.apply(%{base: Totem.current().version, files: [{"lib/demo/extra.ex", extra}]})
+        mcp = fn body ->
+          request = {~c"\#{url}/mcp", [{~c"authorization", ~c"Bearer dev-secret"}], ~c"application/json", JSON.encode!(body)}
+          {:ok, {{_, 200, _}, _, data}} = :httpc.request(:post, request, [], body_format: :binary)
+          JSON.decode!(data)["result"]
+        end
 
-        # A file only changed here goes on top of what changed there.
-        notes =
-          File.cd!(clone, fn ->
-            File.write!("NOTES.md", "hi")
-            Mix.Tasks.Totem.Push.run([])
-            "pushed"
-          end)
+        tools = for t <- mcp.(%{jsonrpc: "2.0", id: 1, method: "tools/list"})["tools"], do: t["name"]
+        call = fn name, args -> mcp.(%{jsonrpc: "2.0", id: 2, method: "tools/call", params: %{name: name, arguments: args}}) end
+        broken = %{path: "lib/demo/counter.ex", content: "defmodule Demo.Counter do\\n  def label, do:\\nend\\n"}
+        written = call.("write_draft", %{id: "broken", intent: "breaks it", files: [broken]})
+        checked = call.("check_draft", %{id: "broken"})
 
-        # The same file changed on both sides is refused, and so is pulling it.
-        path = "lib/demo/counter.ex"
-        {:ok, v2} = Totem.read(path)
-        v3 = String.replace(v2, ~s("v2"), ~s("v3"))
-        {:ok, _} = Totem.apply(%{base: Totem.current().version, files: [{path, v3}]})
-
-        attempt = fn fun ->
-          try do
-            File.cd!(clone, fun)
-            "done"
-          rescue
-            e in Mix.Error -> e.message
+        # Prod is up once its Totem answers.
+        up = fn up, n ->
+          case :httpc.request(:get, {~c"\#{prod}/current", [{~c"authorization", ~c"Bearer prod-secret"}]}, [], []) do
+            {:ok, {{_, 200, _}, _, _}} -> :ok
+            _ when n > 0 -> Process.sleep(1_000); up.(up, n - 1)
           end
         end
 
-        stale =
-          attempt.(fn ->
-            File.write!(path, String.replace(v2, ~s("v2"), ~s("v4")))
-            Mix.Tasks.Totem.Push.run([])
-          end)
+        up.(up, 180)
+        System.put_env("SRC_TOKEN", "dev-secret")
+        System.put_env("DST_TOKEN", "prod-secret")
+        Mix.Tasks.Totem.Promote.run([url, prod, "--watch", "1"])
 
-        clash = attempt.(fn -> Mix.Tasks.Totem.Pull.run([]) end)
-
-        # Without the local edit, pulling brings in both of the app's changes.
-        File.cd!(clone, fn ->
-          File.write!(path, v2)
-          Mix.Tasks.Totem.Pull.run([])
-        end)
-
-        mcp = fn body ->
-          request = {~c"\#{url}/mcp", [{~c"authorization", ~c"Bearer secret"}], ~c"application/json", JSON.encode!(body)}
-          {:ok, {{_, 200, _}, _, data}} = :httpc.request(:post, request, [], body_format: :binary)
-          JSON.decode!(data)
-        end
-
-        tools = for t <- mcp.(%{jsonrpc: "2.0", id: 1, method: "tools/list"})["result"]["tools"], do: t["name"]
-        call = %{name: "read_file", arguments: %{path: "lib/demo/counter.ex"}}
-        read = mcp.(%{jsonrpc: "2.0", id: 2, method: "tools/call", params: call})["result"]["content"]
-
+        {200, prod_now} = Totem.Remote.get!(prod, "/current", "prod-secret")
+        {200, prod_file} = Totem.Remote.get!(prod, "/files/lib/demo/counter.ex", "prod-secret")
         {:ok, {{_, unauthorized, _}, _, _}} = :httpc.request(:get, {~c"\#{url}/current", []}, [], [])
-        {:ok, {{_, 200, _}, _, page}} = :httpc.request(~c"http://127.0.0.1:#{port}/")
 
         %{
-          label: label,
-          source: source,
-          notes: [notes, Totem.read("NOTES.md") == {:ok, "hi"}],
-          stale: stale,
-          clash: clash,
-          pulled: [
-            File.exists?(Path.join(clone, "lib/demo/extra.ex")),
-            File.read!(Path.join(clone, path)) =~ ~s("v3")
-          ],
+          landed: landed,
+          clone: File.exists?(Path.join(clone, "mix.exs")),
           tools: tools,
-          read_v3: hd(read)["text"] =~ ~s("v3"),
-          unauthorized: unauthorized,
-          page: to_string(page)
+          written: written["isError"],
+          checked: [checked["isError"], hd(checked["content"])["text"] =~ "error"],
+          prod: [prod_now["label"], prod_file =~ ~s("v2")],
+          unauthorized: unauthorized
         }
         """,
-        [{"TOTEM_TOKEN", "secret"}]
+        [{"TOTEM_TOKEN", "dev-secret"}, {"TOTEM_ORIGIN", "1"}, {"WEB_PORT", "#{dev_port}"}]
       )
 
-    assert result["label"] == "v2"
-    assert result["source"] == "test push"
-    assert result["notes"] == ["pushed", true]
-    assert result["stale"] =~ "mix totem.pull"
-    assert result["clash"] =~ "Changed here and in the app: lib/demo/counter.ex"
-    assert result["pulled"] == [true, true]
-    assert "apply_changes" in result["tools"] and "read_file" in result["tools"]
-    assert result["read_v3"]
+    assert result["landed"] == ["v2", "main #2"]
+    assert result["clone"]
+
+    assert Enum.all?(
+             ~w(read_file write_draft check_draft land_draft log),
+             &(&1 in result["tools"])
+           )
+
+    assert result["written"] == false
+    assert result["checked"] == [true, true]
+    assert [label, true] = result["prod"]
+    assert label =~ "#2"
     assert result["unauthorized"] == 401
-    # Everything else goes on to the app.
-    assert result["page"] == "hello"
+  end
+
+  defp free_port do
+    {:ok, socket} = :gen_tcp.listen(0, [])
+    {:ok, port} = :inet.port(socket)
+    :gen_tcp.close(socket)
+    port
+  end
+
+  # The app with Totem.Plug on WEB_PORT, except under `mix test` (a check's scratch build).
+  defp web do
+    [
+      deps: [~s({:plug, "~> 1.14"}), ~s({:bandit, "~> 1.5"})],
+      files: [
+        {"lib/demo/application.ex",
+         """
+         defmodule Demo.Application do
+           use Application
+
+           def start(_, _) do
+             port = String.to_integer(System.get_env("WEB_PORT", "4000"))
+             web = if Mix.env() == :test, do: [], else: [{Bandit, plug: Demo.Web, port: port, startup_log: false}]
+             Supervisor.start_link([Demo.Counter | web], strategy: :one_for_one)
+           end
+         end
+         """},
+        {"lib/demo/web.ex",
+         """
+         defmodule Demo.Web do
+           use Plug.Builder
+           plug Totem.Plug
+           plug :hello
+           def hello(conn, _), do: send_resp(conn, 200, "hello")
+         end
+         """},
+        {"test/test_helper.exs", "ExUnit.start()\n"},
+        {"test/demo_test.exs",
+         """
+         defmodule DemoTest do
+           use ExUnit.Case
+           test "it has a label", do: assert(is_binary(Demo.Counter.label()))
+         end
+         """}
+      ]
+    ]
   end
 end

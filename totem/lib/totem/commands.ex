@@ -1,30 +1,37 @@
 defmodule Totem.Commands do
   @moduledoc """
   What Totem answers, as JSON-ready maps: the same for `Totem.Link` (a
-  server Totem dials, such as Peon), `Totem.Plug` (HTTP) and `Totem.MCP`.
+  server Totem dials, such as Burrow), `Totem.Plug` (HTTP) and `Totem.MCP`.
 
   File contents travel as `"content"` (UTF-8 text) or `"content_base64"`
-  (anything else). In a change, a file is one of:
+  (anything else). A file to apply names the hash it must have now
+  (`"from"`, null when it must not exist) and is one of:
 
-      {"path": "lib/a.ex", "content": "..."}
-      {"path": "priv/logo.png", "content_base64": "..."}
-      {"path": "lib/a.ex", "blob": "<sha256>"}     sent earlier with "blobs"
-      {"path": "lib/old.ex", "deleted": true}
+      {"path": "lib/a.ex", "from": "<sha256>", "content": "..."}
+      {"path": "priv/logo.png", "from": null, "content_base64": "..."}
+      {"path": "lib/a.ex", "from": "<sha256>", "blob": "<sha256>"}   sent earlier with "blobs"
+      {"path": "lib/old.ex", "from": "<sha256>", "deleted": true}
+
+  A draft's files (origin only) are the same without `"from"`.
 
   `run/2` returns `{:ok, result}` or `{:error, %{"error" => code, ...}}`.
   """
 
-  alias Totem.{Glob, Monitor}
+  alias Totem.{Glob, Monitor, Origin, Repo}
+
+  @origin ~w(log tree refs blob draft draft_write draft_check land revert)
 
   @doc "Runs command `cmd` with JSON arguments `args`."
   @spec run(String.t(), map()) :: {:ok, term()} | {:error, map()}
   def run(cmd, args \\ %{})
 
-  def run("current", _args), do: {:ok, version(Totem.current())}
+  def run(cmd, args) when cmd in @origin do
+    if Origin.enabled?(), do: origin(cmd, args), else: {:error, %{"error" => "no_origin"}}
+  end
 
-  def run("versions", args) do
-    limit = int(args["limit"], 50)
-    {:ok, Totem.versions() |> Enum.take(limit) |> Enum.map(&Map.delete(version(&1), "tree"))}
+  def run("current", _args) do
+    %{tree: tree, hash: hash, label: label} = Totem.current()
+    {:ok, %{"tree" => tree, "hash" => hash, "label" => label}}
   end
 
   def run("read", %{"path" => path}) do
@@ -35,9 +42,10 @@ defmodule Totem.Commands do
   end
 
   def run("list", args) do
-    glob = args["glob"]
     paths = Totem.current().tree |> Map.keys() |> Enum.sort()
-    {:ok, if(glob, do: Enum.filter(paths, &Glob.matches?(&1, [glob])), else: paths)}
+
+    {:ok,
+     if(glob = args["glob"], do: Enum.filter(paths, &Glob.matches?(&1, [glob])), else: paths)}
   end
 
   def run("search", %{"pattern" => pattern} = args) do
@@ -54,21 +62,15 @@ defmodule Totem.Commands do
     do: {:ok, %{"missing" => Totem.missing(hashes)}}
 
   def run("blobs", %{"contents" => contents}) when is_list(contents) do
-    with {:ok, binaries} <- decode_all(contents) do
-      {:ok, %{"hashes" => Totem.put_blobs(binaries)}}
-    end
+    with {:ok, binaries} <- decode_all(contents),
+         do: {:ok, %{"hashes" => Totem.put_blobs(binaries)}}
   end
 
-  def run("apply", %{"base" => base, "files" => files} = args) when is_list(files) do
-    with {:ok, files} <- decode_files(files) do
-      Totem.apply(%{base: base, files: files}, source: args["source"]) |> result()
+  def run("apply", %{"files" => files} = args) when is_list(files) do
+    with {:ok, files} <- decode_files(files, true) do
+      Totem.apply(files, apply_opts(args)) |> result()
     end
   end
-
-  def run("rollback", %{"version" => n} = args),
-    do:
-      Totem.rollback(n, Keyword.reject([source: args["source"]], &is_nil(elem(&1, 1))))
-      |> result()
 
   def run("stats", _args), do: {:ok, Monitor.stats()}
 
@@ -79,18 +81,77 @@ defmodule Totem.Commands do
 
   def run(cmd, _args), do: {:error, %{"error" => "unknown_command", "command" => cmd}}
 
-  @doc "A version as JSON."
-  def version(v) do
-    %{
-      "version" => v.version,
-      "parent" => v.parent,
-      "tree" => v.tree,
-      "mode" => v.mode,
-      "source" => v.source,
-      "status" => v.status,
-      "at" => v.at
-    }
+  ## Origin
+
+  defp origin("log", args),
+    do:
+      {:ok,
+       Origin.head() && Repo.log(Origin.dir(), int(args["limit"], 50)) |> Enum.map(&change/1)}
+
+  defp origin("tree", args) do
+    head = Origin.head()
+    at = int(args["at"], head)
+
+    case Repo.change(Origin.dir(), at) do
+      nil ->
+        {:error, %{"error" => "not_found"}}
+
+      change ->
+        {:ok, %{"id" => change.id, "tree" => change.tree, "hash" => Totem.Tree.hash(change.tree)}}
+    end
   end
+
+  defp origin("refs", _args) do
+    Origin.head()
+    {:ok, Repo.refs(Origin.dir())}
+  end
+
+  defp origin("blob", %{"hash" => hash}) do
+    case Repo.blob(Origin.dir(), hash) do
+      nil -> {:error, %{"error" => "not_found"}}
+      content -> {:ok, content(content)}
+    end
+  end
+
+  defp origin("draft", %{"id" => id}) do
+    case Repo.draft(Origin.dir(), id) do
+      nil -> {:error, %{"error" => "not_found"}}
+      draft -> {:ok, draft(draft)}
+    end
+  end
+
+  defp origin("draft_write", %{"id" => id, "files" => files} = args) when is_list(files) do
+    with {:ok, files} <- decode_files(files, false) do
+      files = for {path, nil, to} <- files, do: {path, to}
+
+      case Origin.write_draft(id, int(args["base"], nil), files, args["intent"] || "") do
+        {:ok, draft} -> {:ok, draft(draft)}
+        error -> result(error)
+      end
+    end
+  end
+
+  defp origin("draft_check", %{"id" => id}) do
+    case Origin.check(id) do
+      {:ok, output} ->
+        {:ok, %{"status" => "passed", "output" => trim(output)}}
+
+      {:error, output} when is_binary(output) ->
+        {:error, %{"error" => "check_failed", "output" => trim(output)}}
+
+      error ->
+        result(error)
+    end
+  end
+
+  defp origin("land", %{"id" => id} = args), do: Origin.land(id, apply_opts(args)) |> result()
+
+  defp origin("revert", %{"change" => id} = args),
+    do: Origin.revert(id, apply_opts(args)) |> result()
+
+  defp origin(cmd, _args), do: {:error, %{"error" => "bad_arguments", "command" => cmd}}
+
+  ## Helpers
 
   @doc "A file's content as JSON: text when it is UTF-8, base64 otherwise."
   def content(binary) do
@@ -98,6 +159,52 @@ defmodule Totem.Commands do
       do: %{"content" => binary},
       else: %{"content_base64" => Base.encode64(binary)}
   end
+
+  defp apply_opts(args) do
+    Keyword.reject([label: args["label"], watch: args["watch"]], fn {_, v} -> is_nil(v) end)
+  end
+
+  defp result({:ok, result}), do: {:ok, Map.new(result, fn {k, v} -> {to_string(k), v} end)}
+
+  defp result({:error, {:conflict, paths}}),
+    do: {:error, %{"error" => "conflict", "paths" => paths}}
+
+  defp result({:error, {:load_failed, mode, output}}),
+    do: {:error, %{"error" => "load_failed", "mode" => mode, "output" => trim(output)}}
+
+  defp result({:error, {:reverted, mode, errors}}),
+    do: {:error, %{"error" => "reverted", "mode" => mode, "errors" => errors}}
+
+  defp result({:error, {:policy, violations}}),
+    do: {:error, %{"error" => "policy", "reasons" => Enum.map(violations, & &1.reason)}}
+
+  defp result({:error, {reason, detail}}),
+    do: {:error, %{"error" => to_string(reason), "detail" => inspect(detail)}}
+
+  defp result({:error, reason}), do: {:error, %{"error" => to_string(reason)}}
+
+  defp change(change) do
+    %{
+      "id" => change.id,
+      "intent" => change.intent,
+      "author" => change.author,
+      "at" => change.at,
+      "files" => Enum.map(change.files, &elem(&1, 0))
+    }
+  end
+
+  defp draft(draft) do
+    %{
+      "id" => draft.id,
+      "base" => draft.base,
+      "intent" => draft.intent,
+      "status" => draft.status,
+      "change" => draft.change,
+      "files" => Enum.map(draft.files, &elem(&1, 0))
+    }
+  end
+
+  defp trim(output), do: String.slice(output, -6000, 6000)
 
   # Query strings bring numbers as text.
   defp int(nil, default), do: default
@@ -110,26 +217,12 @@ defmodule Totem.Commands do
     end
   end
 
-  defp result({:ok, result}), do: {:ok, stringify(result)}
-
-  defp result({:error, {:conflict, current}}),
-    do: {:error, %{"error" => "conflict", "current" => current}}
-
-  defp result({:error, {:load_failed, mode, output}}),
-    do: {:error, %{"error" => "load_failed", "mode" => mode, "output" => output}}
-
-  defp result({:error, {reason, detail}}),
-    do: {:error, %{"error" => to_string(reason), "detail" => inspect(detail)}}
-
-  defp result({:error, reason}), do: {:error, %{"error" => to_string(reason)}}
-
-  defp stringify(map), do: Map.new(map, fn {k, v} -> {to_string(k), v} end)
-
-  defp decode_files(files) do
+  # {path, from, to}; `from` only where a file applies to what is on disk.
+  defp decode_files(files, from?) do
     Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
       case decode_file(file) do
-        {:ok, file} -> {:cont, {:ok, [file | acc]}}
-        error -> {:halt, error}
+        {:ok, path, to} -> {:cont, {:ok, [{path, if(from?, do: file["from"]), to} | acc]}}
+        :error -> {:halt, {:error, %{"error" => "bad_file", "path" => file["path"]}}}
       end
     end)
     |> case do
@@ -138,17 +231,20 @@ defmodule Totem.Commands do
     end
   end
 
-  defp decode_file(%{"path" => path, "deleted" => true}), do: {:ok, {path, :deleted}}
-  defp decode_file(%{"path" => path, "blob" => hash}), do: {:ok, {path, {:blob, hash}}}
+  defp decode_file(%{"path" => path, "deleted" => true}) when is_binary(path),
+    do: {:ok, path, :deleted}
 
-  defp decode_file(%{"path" => path} = file) do
+  defp decode_file(%{"path" => path, "blob" => hash}) when is_binary(path),
+    do: {:ok, path, {:blob, hash}}
+
+  defp decode_file(%{"path" => path} = file) when is_binary(path) do
     case decode(file) do
-      {:ok, content} -> {:ok, {path, content}}
-      :error -> {:error, %{"error" => "bad_file", "path" => path}}
+      {:ok, content} -> {:ok, path, content}
+      :error -> :error
     end
   end
 
-  defp decode_file(_file), do: {:error, %{"error" => "bad_file"}}
+  defp decode_file(_file), do: :error
 
   defp decode_all(contents) do
     Enum.reduce_while(contents, {:ok, []}, fn item, {:ok, acc} ->
@@ -168,15 +264,15 @@ defmodule Totem.Commands do
   defp decode(_), do: :error
 
   defp search(regex, glob, limit) do
-    %{tree: tree} = Totem.current()
+    root = Totem.info().root
 
-    tree
+    Totem.current().tree
     |> Enum.sort()
     |> Stream.filter(fn {path, _} -> is_nil(glob) or Glob.matches?(path, [glob]) end)
-    |> Stream.flat_map(fn {path, hash} ->
-      case Totem.blob(hash) do
+    |> Stream.flat_map(fn {path, _hash} ->
+      case File.read(Path.join(root, path)) do
         {:ok, content} -> if String.valid?(content), do: matches(path, content, regex), else: []
-        :error -> []
+        {:error, _} -> []
       end
     end)
     |> Enum.take(limit)

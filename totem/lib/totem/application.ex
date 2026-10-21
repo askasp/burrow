@@ -8,7 +8,7 @@ defmodule Totem.Application do
   def start(_type, _args) do
     children =
       if Application.get_env(:totem, :server, true),
-        do: [Totem.Server, Totem.Monitor, Totem.Link],
+        do: [Totem.Monitor, Totem.Server, Totem.Link],
         else: []
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Totem.Supervisor)
