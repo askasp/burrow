@@ -375,36 +375,8 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .out.peon { border-color: var(--accent-soft); background: var(--surface); color: var(--text) }
 .ws-root .say-error { padding: 8px 12px; border-radius: 6px; background: var(--err-soft); color: var(--err); font-size: 13px; white-space: pre-wrap }
 .ws-root .swing { display: flex; animation: bw-swing 1.1s ease-in-out infinite; transform-origin: 25% 85% }
-/* Peon at work: to the gold mine and back, or chopping lumber */
-.ws-root .wc3 { flex-shrink: 0; overflow: visible }
-.ws-root .wc3 * { fill: var(--bg); stroke: var(--text-2); stroke-width: 1.5px; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke }
-.ws-root .wc3 .thin { fill: none; stroke-width: 1px }
-.ws-root .wc3 .bold { fill: none; stroke-width: 2.2px }
-.ws-root .wc3 .ground { stroke: var(--border-strong); stroke-width: 1px }
-.ws-root .wc3 g { stroke: none; fill: none }
-.ws-root .wc3 .flag { fill: var(--bg); stroke: var(--text-2); stroke-width: 1px }
-.ws-root .wc3 .gold, .ws-root .wc3 .sack * { stroke: var(--gold) }
-.ws-root .wc3 .glow { stroke: var(--gold); stroke-width: 1px; animation: wc3-glow 1.6s ease-in-out infinite alternate }
-.ws-root .wc3 .orc *, .ws-root .wc3 .arm, .ws-root .wc3 .walker circle:not(.sack *), .ws-root .wc3 .axe circle { stroke: var(--accent-text) }
-.ws-root .wc3 .orc *, .ws-root .wc3 .walker circle, .ws-root .wc3 .axe * { stroke-width: 1.25px }
-.ws-root .wc3 .orc .thin { stroke-width: 1px }
-.ws-root .wc3 .leg, .ws-root .wc3 .arm { fill: none }
-.ws-root .wc3 .eye { fill: var(--accent-text); stroke: none }
-.ws-root .wc3 .haft { stroke: var(--accent-text); stroke-width: 1.8px }
-.ws-root .wc3 .walker { transform: translate(27px, 36px); animation: wc3-walk 7s linear infinite }
-.ws-root .wc3 .face { animation: wc3-face 7s linear infinite }
-.ws-root .wc3 .sack { opacity: 0; animation: wc3-sack 7s linear infinite }
-.ws-root .wc3 .leg { transform-box: fill-box; transform-origin: 50% 0; animation: wc3-stride .45s ease-in-out infinite alternate }
-.ws-root .wc3 .leg.r { animation-direction: alternate-reverse }
-.ws-root .wc3 .axe { animation: wc3-chop .9s ease-in infinite }
-.ws-root .wc3 .tree { transform-box: fill-box; transform-origin: 50% 100%; animation: wc3-hit .9s ease-out infinite }
-@keyframes wc3-walk { 0%, 4% { transform: translate(27px, 36px) } 42% { transform: translate(87px, 36px); opacity: 1 } 44%, 56% { transform: translate(87px, 36px); opacity: 0 } 58% { transform: translate(87px, 36px); opacity: 1 } 96%, 100% { transform: translate(27px, 36px) } }
-@keyframes wc3-face { 0%, 49.9% { transform: none } 50%, 100% { transform: scaleX(-1) } }
-@keyframes wc3-sack { 0%, 49.9% { opacity: 0 } 50%, 100% { opacity: 1 } }
-@keyframes wc3-stride { from { transform: rotate(-16deg) } to { transform: rotate(16deg) } }
-@keyframes wc3-chop { 0%, 20% { transform: rotate(-72deg) } 55% { transform: rotate(12deg) } 100% { transform: rotate(-72deg) } }
-@keyframes wc3-glow { from { opacity: .45 } to { opacity: 1 } }
-@keyframes wc3-hit { 0%, 55% { transform: rotate(0) } 62% { transform: rotate(-4deg) } 75%, 100% { transform: rotate(0) } }
+/* Peon at work: the logo on legs, in pixels (a canvas, 200 × 44 logical px at 2×) */
+.ws-root .peon-scene { display: block; width: 400px; max-width: 100%; height: auto; margin-bottom: -12px; image-rendering: pixelated; image-rendering: crisp-edges }
 
 .ws-root .ws-bottom { flex: none; width: 100%; max-width: 800px; margin: 0 auto; padding: 10px 20px 20px; display: flex; flex-direction: column; gap: 12px }
 .ws-root .framed { background: transparent; border: 1px solid var(--border-strong); border-radius: 8px }
@@ -501,7 +473,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 @keyframes bw-shimmer { to { left: 100% } }
 @keyframes bw-slide { 0% { left: -40% } 100% { left: 100% } }
 @media (prefers-reduced-motion: reduce) {
-  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .wc3 *, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .rail, .ws-root .rn, .ws-root .rt, .ws-root .rchev { animation: none; transition: none }
+  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .rail, .ws-root .rn, .ws-root .rt, .ws-root .rchev { animation: none; transition: none }
 }
 @media (max-width: 640px) {
   .ws-root .env + .env { padding-left: 0; border-left: 0; border-top: 1px solid var(--border) }

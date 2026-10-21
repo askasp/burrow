@@ -909,9 +909,9 @@ defmodule BurrowWeb.WorkspaceLive do
                   <.block block={block} />
                 <% end %>
                 <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
+                <.peon_at_work :if={@info && @info.busy?} />
                 <div :if={@info && @info.busy?} class="ws-working" role="status">
-                  <.peon_at_work kind={work_kind(@info.messages)} />
-                  <span class="font-medium shrink-0">Peon is working…</span>
+                  <span class="font-medium shrink-0">{peon_says(@info.messages)}</span>
                   <span class="mono muted text-[12.5px] truncate">{doing(@info.messages)}</span>
                   <button
                     phx-click="interrupt"
@@ -1270,20 +1270,10 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # Changing files is chopping lumber; everything else is a trip to the gold mine.
-  defp work_kind(messages) do
-    case messages
-         |> Enum.reverse()
-         |> Enum.take_while(&(&1.role != :user))
-         |> Enum.find(&(&1.role == :tool)) do
-      %{text: text} ->
-        {tool, _} = split_tool(text)
-        if tool in ~w(edit write patch apply_patch multiedit), do: "chop", else: "mine"
-
-      nil ->
-        "mine"
-    end
-  end
+  # What the peon says while it works, as in Warcraft III; a new line as the
+  # turn goes on.
+  @peon_says ["Work, work.", "Zug zug.", "Okie dokie.", "Be happy to.", "Dabu.", "Me busy."]
+  defp peon_says(messages), do: Enum.at(@peon_says, rem(length(messages), length(@peon_says)))
 
   defp activity({"bash", command}) do
     cond do

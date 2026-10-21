@@ -472,96 +472,202 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   ## Peon at work
 
-  attr :kind, :string, default: "mine", doc: ~s("mine" or "chop")
-
   @doc """
-  A peon at work, drawn in lines from the side like Warcraft III: by the
-  great hall, the gold mine and a pine, one peon carries gold home, or
-  (`kind="chop"`) chops the pine.
+  Peons at work while the agent is: the logo on two legs, in pixels, mining
+  gold and chopping wood. Click one for a line; four quick clicks and it gets
+  grumpy.
   """
   def peon_at_work(assigns) do
     ~H"""
-    <svg class="wc3" viewBox="0 0 120 38" width="126" height="40" aria-hidden="true">
-      <path class="ground" d="M0 36H120" />
-      <g class="hall" transform="translate(2 0)">
-        <path class="thin" d="M17 6V1" />
-        <path class="flag" d="M17 1.2L21.5 2L17 3.6Z" />
-        <rect x="5.5" y="25" width="23" height="11" />
-        <path class="thin" d="M10.5 26V35.5M23.5 26V35.5" />
-        <path d="M14 36V31.5A3 3 0 0 1 20 31.5V36" />
-        <path d="M15.8 6.2Q17 4.8 18.2 6.2L33.5 24.6Q17 27.4 0.5 24.6Z" />
-        <path class="thin" d="M17 6.5L10.5 26M17 6.5L23.5 26" />
-        <path class="bold" d="M7.6 16.8Q17 18.4 26.4 16.8" />
-        <path d="M2.6 24.8Q-2 23.6 -1 17.4Q0.2 22 3.8 23.4Z" />
-        <path d="M31.4 24.8Q36 23.6 35 17.4Q33.8 22 30.2 23.4Z" />
-        <path
-          :for={x <- [1.4, 4.8, 8.2, 11.6, 22.4, 25.8, 29.2, 32.6]}
-          d={"M#{x - 1.3} 36V32.4L#{x} 30.4L#{x + 1.3} 32.4V36"}
-        />
-        <path d="M-0.5 33.8H12.9M21.1 33.8H34" />
-      </g>
-      <g class="tree">
-        <rect x="69" y="32.8" width="2" height="3.2" />
-        <path d="M65.9 33.2Q68.7 29.1 70 27.1Q71.3 29.1 74.1 33.2Q70 34.1 65.9 33.2Z" />
-        <path d="M66.8 29.8Q69 25.8 70 23.8Q71 25.8 73.2 29.8Q70 30.7 66.8 29.8Z" />
-        <path d="M67.8 26.5Q69.3 22.4 70 20.4Q70.7 22.4 72.2 26.5Q70 27.4 67.8 26.5Z" />
-      </g>
-      <g class="mine">
-        <path d="M100.1 36A8.5 8.5 0 1 1 105.9 36" />
-        <path d="M107 36A6 6 0 1 1 115 36" />
-        <path d="M88.9 36A6.5 6.5 0 1 1 97.2 36" />
-        <rect x="93.5" y="26.5" width="10" height="9.5" />
-        <rect class="glow" x="96" y="29.5" width="5" height="6.5" />
-        <path class="bold" d="M92 26H105M93.5 26.5V36M103.5 26.5V36" />
-        <circle class="gold" cx="88" cy="34.8" r="1" /><circle
-          class="gold"
-          cx="85.6"
-          cy="35.1"
-          r="0.8"
-        />
-      </g>
-      <%= if @kind == "chop" do %>
-        <g transform="translate(82.5 36) scale(-1.45 1.45)">
-          <.orc />
-          <g transform="translate(2.4 -9.4)">
-            <g class="axe">
-              <path class="haft" d="M0 0H5.4" />
-              <path d="M4.6 -2Q6.8 -1 6.8 0Q6.8 1 4.6 2Z" />
-              <circle cx="1.3" cy="0" r="1.15" />
-            </g>
-          </g>
-        </g>
-      <% else %>
-        <g class="walker">
-          <g class="face">
-            <g transform="scale(1.45)">
-              <g class="sack">
-                <circle cx="-4" cy="-9.2" r="2.9" /><path d="M-4.8 -12.1L-3.2 -12.6" />
-              </g>
-              <.orc />
-              <path class="arm" d="M2.4 -10.2Q4.4 -8.4 4 -5.8" />
-              <circle cx="4.1" cy="-5" r="1.2" />
-            </g>
-          </g>
-        </g>
-      <% end %>
-    </svg>
-    """
-  end
+    <canvas
+      id="peon-scene"
+      class="peon-scene"
+      phx-hook=".PeonScene"
+      phx-update="ignore"
+      width="400"
+      height="88"
+      role="img"
+      aria-label="Peons mining gold and chopping wood"
+    ></canvas>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonScene">
+      export default {
+        mounted() { this.stop = peonScene(this.el) },
+        destroyed() { this.stop() }
+      }
 
-  # A Warcraft III peon in profile, facing right, standing on the origin:
-  # a hunched back, a low head with a heavy brow, an underbite and a tusk.
-  defp orc(assigns) do
-    ~H"""
-    <g class="orc">
-      <path class="leg" d="M-1.2 -3.6L-1 -1.6L-0.6 0H0.9" />
-      <path class="leg r" d="M0.8 -3.6L1 -1.6L0.8 0H2.3" />
-      <path d="M-2.4 -4.6L-2 -2.4L0 -3.2L2.2 -2.6L2.4 -4.6Z" />
-      <path d="M-2.6 -4.6Q-4.4 -8.8 -2.2 -11.6Q0.6 -13.2 3 -11.2Q4.2 -9.2 3 -6.6Q2.8 -5 2.4 -4.6Z" />
-      <path d="M2.2 -10.8C1.8 -14.2 6.2 -14.8 6.7 -11.9L7.5 -11.3L6.7 -10.8L7.8 -9.8L7.5 -8.9Q5.2 -8.2 3.4 -9.2Z" />
-      <path class="thin" d="M7.3 -9.7L7.7 -11M2.9 -12.7L0.4 -14L2.5 -11.5" />
-      <circle class="eye" cx="5.6" cy="-11.6" r="0.4" />
-    </g>
+      function peonScene(canvas) {
+        const W = 200, H = 44, S = 2, GY = H - 4;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        let col = {};
+        const readCols = () => {
+          const cs = getComputedStyle(canvas);
+          const v = (n) => cs.getPropertyValue(n).trim();
+          col = { rock: v("--border-strong"), rock2: v("--text-3"), raised: v("--raised"), text: v("--text"), rust: v("--rust"), dark: v("--sunken") };
+        };
+        readCols();
+        const G = "#8FBF5A", GD = "#6E9B3D", EYE = "#1C2412", TUSK = "#F7F4EA", GOLD = "#E6B65E", GOLD2 = "#B8862F",
+          BARK = "#7A4E2D", BARK2 = "#9A6A40", LEAF = "#4F7A2E", LEAF2 = "#6E9B3D", STEEL = "#C9CED6";
+        const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
+        const MINE = 24, HOME = 140, TREE = 182;
+        const lines = ["Work, work.", "Zug zug.", "Okie dokie.", "Something need doing?", "What you want?", "Ready to work!"];
+        const mk = (o) => ({ dir: 1, t: 0, wait: 0, carry: null, hidden: false, bubble: null, clicks: [], shake: 0, pause: 0, hop: 0, ...o });
+        const peons = [
+          mk({ kind: "gold", x: 72, dir: -1, st: "walk", target: MINE }),
+          mk({ kind: "gold", x: 104, st: "walk", target: HOME - 6, carry: "gold" }),
+          mk({ kind: "wood", x: TREE - 9, st: "chop", t: 30 })
+        ];
+        const chips = [];
+        let gold = 7, wood = 3, frame = 0, raf = 0, wobble = 0, glint = 0;
+
+        const arrive = (p) => {
+          if (p.kind === "gold" && !p.carry) { p.st = "mine"; p.wait = 80; p.hidden = true }
+          else if (p.carry) {
+            p.st = "drop"; p.wait = 16; p.hop = 8;
+            if (p.carry === "gold") gold = Math.min(gold + 1, 15); else wood = Math.min(wood + 1, 8);
+            p.carry = null;
+          } else { p.st = "chop"; p.t = 0; p.dir = 1 }
+        };
+        const step = (p) => {
+          if (p.pause > 0) { p.pause -= 1; return }
+          if (p.st === "walk") {
+            const d = p.target - p.x;
+            if (Math.abs(d) <= 0.5) { p.x = p.target; arrive(p) }
+            else { p.dir = d > 0 ? 1 : -1; p.x += p.dir * 0.5; p.t += 1 }
+          } else if (p.st === "mine") {
+            glint = 1;
+            if (--p.wait <= 0) { p.hidden = false; p.st = "walk"; p.carry = "gold"; p.x = MINE; p.target = HOME - 6 }
+          } else if (p.st === "drop") {
+            if (--p.wait <= 0) { p.st = "walk"; p.target = p.kind === "gold" ? MINE : TREE - 9 }
+          } else if (p.st === "chop") {
+            p.t += 1;
+            if (p.t % 22 === 11) {
+              wobble = 8;
+              for (let i = 0; i < 3; i++) chips.push({ x: TREE - 1, y: GY - 6, vx: -0.3 - Math.random() * 0.6, vy: -0.8 - Math.random() * 0.6, life: 40 });
+            }
+            if (p.t >= 22 * 6) { p.st = "walk"; p.carry = "wood"; p.target = HOME + 14; p.t = 0 }
+          }
+        };
+
+        const hill = (x0, n, top) => {
+          for (let i = 0; i < n; i++) {
+            const h = Math.round(top * Math.sin((Math.PI * (i + 0.5)) / n));
+            px(x0 + i * 2, GY - h, 2, h, col.rock);
+          }
+        };
+        const drawMine = () => {
+          hill(2, 22, 17);
+          px(10, GY - 13, 6, 1, col.rock2); px(30, GY - 11, 5, 1, col.rock2); px(6, GY - 8, 3, 1, col.rock2);
+          px(MINE - 4, GY - 9, 8, 9, col.dark); px(MINE - 3, GY - 10, 6, 1, col.dark);
+          px(MINE - 5, GY - 10, 1, 10, BARK); px(MINE + 4, GY - 10, 1, 10, BARK); px(MINE - 5, GY - 11, 10, 1, BARK2);
+          [[8, GY - 5], [14, GY - 10], [34, GY - 6], [39, GY - 3], [18, GY - 15], [29, GY - 13]].forEach(([x, y], k) =>
+            px(x, y, 1, 1, glint && ((frame >> 3) + k) % 3 === 0 ? "#FFF4CC" : GOLD));
+        };
+        const drawHome = () => {
+          hill(126, 16, 12);
+          px(132, GY - 9, 8, 1, col.rock2);
+          px(HOME - 2, GY - 7, 6, 7, col.dark); px(HOME - 1, GY - 8, 4, 1, col.dark);
+          px(155, GY - 20, 1, 20, BARK);
+          const f = (frame >> 4) % 2;
+          px(156, GY - 20, 5, 3, col.rust); px(161, GY - 19 + f, 1, 2, col.rust);
+          for (let i = 0; i < gold; i++) {
+            const row = i < 5 ? 0 : i < 9 ? 1 : i < 12 ? 2 : 3, idx = i - [0, 5, 9, 12][row];
+            px(112 + row + idx * 2, GY - 2 - row * 2, 2, 2, (i + row) % 3 ? GOLD : GOLD2);
+          }
+          for (let i = 0; i < wood; i++) {
+            const row = Math.floor(i / 3);
+            px(160 + (i % 3) * 2 + row, GY - 2 - row * 2, 6, 2, i % 2 ? BARK : BARK2);
+          }
+        };
+        const drawTree = () => {
+          const sway = wobble ? (wobble % 4 < 2 ? 1 : -1) : 0;
+          px(TREE, GY - 10, 3, 10, BARK);
+          for (let r = 0; r < 18; r++) {
+            const w = 2 + Math.floor((r % 6) * 1.6) + Math.floor(r / 6) * 2;
+            px(TREE + 1 - Math.floor(w / 2) + (r < 9 ? sway : 0), GY - 28 + r, w + 1, 1, r % 6 === 5 ? LEAF2 : LEAF);
+          }
+        };
+        // The logo tile on two legs: eyes and tusks face where it walks.
+        const drawPeon = (p) => {
+          if (p.hidden) return;
+          const walking = p.st === "walk" && p.pause <= 0;
+          const sx = Math.round(p.x - 4) + (p.shake ? ((frame >> 1) % 2 ? 1 : -1) : 0);
+          const sy = GY - 9 - (p.hop > 0 ? Math.round(Math.sin((p.hop / 10) * Math.PI) * 3) : 0);
+          px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
+          const o = p.dir > 0 ? 1 : 0, a = sx + 1 + o, b = sx + 4 + o;
+          px(a, sy + 2, 1, 1, EYE); px(b + 1, sy + 2, 1, 1, EYE);
+          px(a, sy + 5, 1, 2, TUSK); px(b + 1, sy + 5, 1, 2, TUSK);
+          const leg = walking && (p.t >> 3) % 2;
+          px(sx + (leg ? 1 : 2), sy + 8, 1, 1, EYE); px(sx + (leg ? 6 : 5), sy + 8, 1, 1, EYE);
+          if (p.carry === "gold") { px(sx + 2, sy - 3, 4, 2, GOLD); px(sx + 3, sy - 4, 2, 1, GOLD2) }
+          if (p.carry === "wood") { px(sx - 1, sy - 3, 10, 2, BARK); px(sx + 8, sy - 3, 1, 2, BARK2) }
+          if (p.st === "chop" && p.pause <= 0) {
+            if (p.t % 22 < 11) { px(sx + 8, sy - 1, 1, 5, BARK); px(sx + 7, sy - 3, 3, 2, STEEL) }
+            else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 1, 2, 4, STEEL) }
+          }
+        };
+        const drawBubble = (p) => {
+          if (!p.bubble || p.hidden) return;
+          ctx.font = "600 7px Rubik, system-ui, sans-serif";
+          const w = Math.ceil(ctx.measureText(p.bubble.text).width) + 6;
+          const bx = Math.max(1, Math.min(W - w - 1, Math.round(p.x - w / 2))), by = GY - 24;
+          px(bx, by, w, 10, col.rock); px(bx + 1, by + 1, w - 2, 8, col.raised);
+          px(Math.round(p.x) - 1, by + 10, 3, 1, col.rock); px(Math.round(p.x), by + 11, 1, 1, col.rock);
+          ctx.fillStyle = col.text;
+          ctx.fillText(p.bubble.text, bx + 3, by + 7.5);
+        };
+        const draw = () => {
+          ctx.setTransform(S, 0, 0, S, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          px(0, GY, W, 1, col.rock);
+          [[52, 2], [88, 1], [104, 3], [172, 2]].forEach(([x, w]) => px(x, GY + 1, w, 1, col.rock));
+          drawMine(); drawHome(); drawTree();
+          chips.forEach((c) => px(c.x, c.y, 1, 1, BARK2));
+          peons.forEach(drawPeon);
+          peons.forEach(drawBubble);
+        };
+        const tick = () => {
+          frame += 1;
+          if (frame % 120 === 0) readCols();
+          glint = 0;
+          peons.forEach((p) => {
+            if (p.bubble && --p.bubble.t <= 0) p.bubble = null;
+            if (p.shake) p.shake -= 1;
+            if (p.hop) p.hop -= 1;
+            step(p);
+          });
+          if (wobble) wobble -= 1;
+          for (let i = chips.length - 1; i >= 0; i--) {
+            const c = chips[i];
+            c.x += c.vx; c.y += c.vy; c.vy += 0.08; c.life -= 1;
+            if (c.y > GY - 1) { c.y = GY - 1; c.vx *= 0.5 }
+            if (c.life <= 0) chips.splice(i, 1);
+          }
+          draw();
+          raf = requestAnimationFrame(tick);
+        };
+        const toLogical = (e) => {
+          const r = canvas.getBoundingClientRect();
+          return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H];
+        };
+        const hit = (lx, ly) => peons.find((p) => !p.hidden && lx >= p.x - 7 && lx <= p.x + 7 && ly >= GY - 15 && ly <= GY + 2);
+        const onClick = (e) => {
+          const p = hit(...toLogical(e));
+          if (!p || p.shake > 0) return;
+          const now = Date.now();
+          p.clicks = p.clicks.filter((t) => now - t < 2500).concat(now);
+          if (p.clicks.length >= 4) { p.bubble = { text: "Me busy. Leave me alone!", t: 110 }; p.shake = 26; p.pause = 60; p.clicks = [] }
+          else { p.bubble = { text: lines[Math.floor(Math.random() * lines.length)], t: 90 }; p.hop = 10 }
+          if (reduce) draw();
+        };
+        const onMove = (e) => { canvas.style.cursor = hit(...toLogical(e)) ? "pointer" : "default" };
+        canvas.addEventListener("click", onClick);
+        canvas.addEventListener("mousemove", onMove);
+        if (reduce) draw(); else raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+      }
+    </script>
     """
   end
 
