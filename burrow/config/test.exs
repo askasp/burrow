@@ -41,5 +41,11 @@ config :phoenix,
   sort_verified_routes_query_params: true
 
 config :burrow, start_cells: false
-config :burrow, fix_retries: 0, port_url: "http://localhost:{port}"
+
+config :burrow,
+  fix_retries: 0,
+  port_url: "http://localhost:{port}",
+  data_dir: Path.expand("../tmp/test-data", __DIR__),
+  template_dir: Path.expand("../../template", __DIR__)
+
 config :burrow, opencode_model: "openai/gpt-test"

@@ -82,10 +82,12 @@ defmodule Burrow.Ship do
     ]
 
     container = Chat.agent_name(project, chat_id)
+    # Tests run the checks without a container.
+    exec = Application.get_env(:burrow, :check_runner, &Sandbox.exec/3)
 
     Enum.reduce_while(steps, {"passed", []}, fn {name, script}, {_, done} ->
       started = System.monotonic_time(:millisecond)
-      {output, code} = Sandbox.exec(container, script, env: %{"MIX_ENV" => "test"})
+      {output, code} = exec.(container, script, env: %{"MIX_ENV" => "test"})
       status = if code == 0, do: "passed", else: "failed"
       Projects.broadcast(project.id, "ship", {:check_step, chat_id, name, status})
 
@@ -176,6 +178,12 @@ defmodule Burrow.Ship do
   def tell_chat(_project_id, nil, _text), do: :ok
 
   def tell_chat(project_id, chat_id, text) do
+    # Without running projects (tests) there are no agents to tell.
+    if Application.get_env(:burrow, :start_cells, true), do: start_telling(project_id, chat_id, text)
+    :ok
+  end
+
+  defp start_telling(project_id, chat_id, text) do
     Task.Supervisor.start_child(Burrow.TaskSupervisor, fn ->
       with %{} = project <- Projects.get(project_id),
            :ok <- Chat.send_message(project, chat_id, "[Peon] " <> text) do
@@ -288,8 +296,9 @@ defmodule Burrow.Ship do
     end
   end
 
+  @doc false
   # Main failed: the newest change, a chat's, comes out again and its chat is told.
-  defp blame(project, run) do
+  def blame(project, run) do
     repo = Projects.repo_dir(project)
 
     with %{draft: chat_id} = change when chat_id != nil <- Repo.change(repo, run.change_id),

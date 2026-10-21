@@ -74,8 +74,9 @@ defmodule Burrow.Activity do
         do: (Env.info(project, "staging") || %{})[:good],
         else: check && check.status == "passed" && check.change_id
 
-    if candidate && Projects.settings(project)["auto_ship"] != true and candidate > (Repo.ref(repo, "prod") || 0),
-      do: candidate
+    if is_integer(candidate) and Projects.settings(project)["auto_ship"] != true and
+         candidate > (Repo.ref(repo, "prod") || 0),
+       do: candidate
   end
 
   @doc "The project's tile in the rails."
@@ -94,14 +95,29 @@ defmodule Burrow.Activity do
     prod = !repo? && Env.info(project, "prod")
 
     cond do
-      any?.("working") or any?.("landing") -> tile("working", "working", 60)
-      match?(%{status: {:crashed, _}}, prod) -> tile("stopped", "stopped", 8)
-      any?.("ready") or any?.("staged") or any?.("failed") -> tile("waiting", "waiting on you", 100)
-      Enum.any?(Secrets.list(project.id), &(not &1.set?)) -> tile("waiting", "waiting on you", 100)
-      !repo? && shippable(project) -> tile("waiting", "ready to ship", 100)
-      repo? -> tile("done", "ready", 100)
-      Repo.ref(Projects.repo_dir(project), "prod") == nil -> tile("waiting", "new", 100)
-      true -> tile("done", "live", 100)
+      any?.("working") or any?.("landing") ->
+        tile("working", "working", 60)
+
+      match?(%{status: {:crashed, _}}, prod) ->
+        tile("stopped", "stopped", 8)
+
+      any?.("ready") or any?.("staged") or any?.("failed") ->
+        tile("waiting", "waiting on you", 100)
+
+      Enum.any?(Secrets.list(project.id), &(not &1.set?)) ->
+        tile("waiting", "waiting on you", 100)
+
+      !repo? && shippable(project) ->
+        tile("waiting", "ready to ship", 100)
+
+      repo? ->
+        tile("done", "ready", 100)
+
+      Repo.ref(Projects.repo_dir(project), "prod") == nil ->
+        tile("waiting", "new", 100)
+
+      true ->
+        tile("done", "live", 100)
     end
   end
 
@@ -125,6 +141,8 @@ defmodule Burrow.Activity do
 
   def handle_info(_projects_or_teams_changed, state), do: {:noreply, schedule(state)}
 
-  defp schedule(%{timer: nil} = state), do: %{state | timer: Process.send_after(self(), :push, @debounce)}
+  defp schedule(%{timer: nil} = state),
+    do: %{state | timer: Process.send_after(self(), :push, @debounce)}
+
   defp schedule(state), do: state
 end

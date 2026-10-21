@@ -1,7 +1,7 @@
-defmodule Peon.ChatTest do
+defmodule Burrow.ChatTest do
   use ExUnit.Case, async: true
 
-  alias Peon.Chat
+  alias Burrow.Chat
 
   defp assistant(parts), do: %{"type" => "assistant", "id" => "m1", "content" => parts}
 
@@ -77,9 +77,25 @@ defmodule Peon.ChatTest do
     assert [%{role: :user, text: "/deploy"}] = Chat.normalize(user.("/deploy"))
   end
 
+  test "effort becomes the provider's model options; medium keeps the defaults" do
+    assert %{
+             "provider" => %{
+               "openai" => %{
+                 "models" => %{"gpt-x" => %{"options" => %{"reasoningEffort" => "high"}}}
+               }
+             }
+           } =
+             Chat.effort_config("openai/gpt-x", "high")
+
+    assert %{"provider" => %{"anthropic" => _}} = Chat.effort_config("anthropic/claude", "high")
+    assert Chat.effort_config("anthropic/claude", "low") == %{}
+    assert Chat.effort_config("openai/gpt-x", "medium") == %{}
+    assert Chat.effort_config(nil, nil) == %{}
+  end
+
   test "ports browsers refuse are never used" do
-    refute Peon.Ports.browser_safe?(5060)
-    refute Peon.Ports.browser_safe?(5061)
-    assert Peon.Ports.browser_safe?(5062)
+    refute Burrow.Ports.browser_safe?(5060)
+    refute Burrow.Ports.browser_safe?(5061)
+    assert Burrow.Ports.browser_safe?(5062)
   end
 end

@@ -1,7 +1,7 @@
-defmodule Peon.Env.UsageTest do
+defmodule Burrow.Env.UsageTest do
   use ExUnit.Case, async: true
 
-  alias Peon.Env.Usage
+  alias Burrow.Env.Usage
 
   test "a point a minute: requests summed, the worst p95, sessions and visitors as last seen" do
     usage =
