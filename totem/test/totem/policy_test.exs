@@ -1,7 +1,7 @@
-defmodule Peon.PolicyTest do
+defmodule Totem.PolicyTest do
   use ExUnit.Case, async: true
 
-  alias Peon.Policy
+  alias Totem.Policy
 
   @base %{"priv/repo/migrations/20260101_create_bookings.exs" => "h1", "lib/app.ex" => "h2"}
 
@@ -13,10 +13,13 @@ defmodule Peon.PolicyTest do
   test "AI may not touch forbidden paths; humans may" do
     files = [{"config/runtime.exs", "import Config"}, {"rel/env.sh", "x"}]
 
-    assert {:error, [%{rule: :forbidden_path}, %{rule: :forbidden_path}]} =
-             Policy.check(files, @base)
+    settings = [forbidden_paths: ["config/runtime.exs", "rel/**"]]
 
-    assert {:ok, %{restart_required: true}} = Policy.check(files, @base, author: :human)
+    assert {:error, [%{rule: :forbidden_path}, %{rule: :forbidden_path}]} =
+             Policy.check(files, @base, settings: settings)
+
+    assert {:ok, %{restart_required: true}} =
+             Policy.check(files, @base, author: :human, settings: settings)
   end
 
   test "restart paths are flagged" do

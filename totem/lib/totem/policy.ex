@@ -1,4 +1,4 @@
-defmodule Peon.Policy do
+defmodule Totem.Policy do
   @moduledoc """
   Deterministic changeset rules, applied at submit and again before any ref move.
 
@@ -23,12 +23,8 @@ defmodule Peon.Policy do
       "lib/*/application.ex",
       "lib/*_web/endpoint.ex"
     ],
-    forbidden_paths: [
-      "config/runtime.exs",
-      "AGENTS.md",
-      "rel/**",
-      "priv/peon/anonymize.exs"
-    ],
+    # Paths an AI change may not touch; whoever runs the agent sets them.
+    forbidden_paths: [],
     migration_paths: ["priv/repo/migrations/*.exs"]
   }
 

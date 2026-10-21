@@ -9,6 +9,15 @@ defmodule Totem.Tree do
   @type t :: %{String.t() => Blob.hash()}
   @type change :: {String.t(), Blob.hash() | :deleted}
 
+  @doc "One hash for the whole tree: two trees with the same files have the same hash."
+  @spec hash(t()) :: Blob.hash()
+  def hash(tree) do
+    tree
+    |> Enum.sort()
+    |> Enum.map_join("\n", fn {path, hash} -> "#{hash} #{path}" end)
+    |> Blob.hash()
+  end
+
   @spec apply_changes(t(), [change()]) :: t()
   def apply_changes(tree, changes) do
     Enum.reduce(changes, tree, fn
