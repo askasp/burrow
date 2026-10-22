@@ -72,6 +72,13 @@ if config_env() != :test do
       :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
     # The workspace (Burrow's own site) may show previews in a frame.
     frame_ancestors: [System.get_env("BURROW_PUBLIC_URL") || "http://localhost:#{burrow_port}"]
+
+  # The whole site behind one login (`BurrowWeb.BasicAuth`)
+  if username = System.get_env("BURROW_BASIC_AUTH_USERNAME") do
+    config :burrow, :basic_auth,
+      username: username,
+      password: System.fetch_env!("BURROW_BASIC_AUTH_PASSWORD")
+  end
 end
 
 if System.get_env("PHX_SERVER") do

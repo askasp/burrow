@@ -30,6 +30,8 @@ defmodule BurrowWeb.Endpoint do
     only: BurrowWeb.static_paths(),
     raise_on_missing_only: code_reloading?
 
+  plug BurrowWeb.BasicAuth
+
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
