@@ -482,11 +482,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   @doc """
   The peons' camp while the agent works: the logo on two legs, in pixels.
-  What the agent is on decides who works (`job`): reading mines gold,
-  fetching deps chops wood, writing code builds the hut, one step per
+  What the agent is on is what the whole crew does (`job`): reading mines
+  gold, fetching deps chops wood, writing code builds the hut, one step per
   change (`stage`), tests hit the training dummy, and handing the change in
-  raises the flag while everyone cheers. The rest nap. Click one for a line;
-  four quick clicks and it gets grumpy.
+  raises the flag while everyone cheers. Before the first tool they nap.
+  Click one for a line; four quick clicks and it gets grumpy.
   """
   def peon_at_work(assigns) do
     ~H"""
@@ -509,9 +509,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       }
 
       // The job and stage come in as data attributes, which LiveView keeps
-      // updating on an ignored element; the scene reads them every frame.
+      // updating on an ignored element; the scene reads them every few frames.
+      // The whole crew works the same job and runs over when it changes, once
+      // the new job has held for a moment, so quick tool calls don't make
+      // them run back and forth.
       function peonScene(canvas) {
-        const W = 200, H = 34, S = 2, GY = H - 3;
+        const W = 200, H = 34, S = 2, GY = H - 3, SETTLE = 90;
         const ctx = canvas.getContext("2d");
         ctx.imageSmoothingEnabled = false;
         const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -526,14 +529,21 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           BARK = "#7A4E2D", BARK2 = "#9A6A40", MUD = "#A07850", LEAF = "#4F7A2E", LEAF2 = "#6E9B3D", STEEL = "#C9CED6",
           SACK = "#C9A46B", SPARK = "#FFF4CC";
         const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
-        const DOOR = 14, GPILE = 32, TREE = 64, WPILE = 72, SITE = 104, DUMMY = 176;
+        const DOOR = 14, GPILE = 32, WPILE = 44, TREE = 76, SITE = 104, DUMMY = 176;
+        // Where the crew works at each station, facing it; more peons than
+        // spots take turns, waiting a step behind.
+        const stations = {
+          wood: { swing: 22, turn: 4, spots: [{ x: TREE - 9, dir: 1 }, { x: TREE + 11, dir: -1 }] },
+          build: { swing: 16, spots: [{ x: SITE - 6, dir: 1 }, { x: SITE + 40, dir: -1 }, { x: SITE + 10, dir: 1 }, { x: SITE + 24, dir: -1 }] },
+          test: { swing: 20, turn: 4, spots: [{ x: DUMMY - 9, dir: 1 }, { x: DUMMY + 9, dir: -1 }] }
+        };
         const lines = { mine: ["Me dig.", "Gold!"], wood: ["Chop chop.", "Wood!"], build: ["Work, work.", "Me build."], test: ["Hit it!", "Zug zug."] };
-        const mk = (job, home) => ({ job, x: home, home, dir: 1, st: "sit", t: 0, wait: 0, carry: null, hidden: false, hop: 0, bubble: null, clicks: [], shake: 0, target: home });
-        const peons = [mk("mine", 24), mk("wood", 52), mk("build", 96), mk("test", 160)];
+        const peons = [24, 60, 150, 188].map((home, i) =>
+          ({ i, x: home, home, dir: 1, st: "go", t: 0, wait: 0, carry: null, hidden: false, hop: 0, bubble: null, clicks: [], shake: 0, target: home, spot: null, queue: null }));
         const sim = { job: null, stage: 0, cheer: 0 };
         const sparks = [];
-        let gold = 3, wood = 2, frame = 0, raf = 0, wobble = 0, dummyHit = 0, merged = false;
-        const active = (p) => sim.job === p.job;
+        let crew, want, wantT = 0;
+        let gold = 3, wood = 2, frame = 0, raf = 0, wobble = 0, dummyHit = 0, dummyLean = 1, merged = false;
 
         const readSim = () => {
           const job = canvas.dataset.job || null;
@@ -545,54 +555,90 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             if (!merged) sim.stage = Math.min(5, parseInt(canvas.dataset.stage || "0", 10));
           }
         };
+        const setCrew = (job) => {
+          crew = job;
+          Object.values(stations).forEach((s) => s.spots.forEach((spot) => { spot.owner = null }));
+          peons.forEach((p) => {
+            if (p.hidden) { p.hidden = false; p.x = DOOR }
+            // They set off one after another, not as one blob.
+            Object.assign(p, { carry: null, spot: null, queue: null, st: "pause", wait: 1 + p.i * 20, t: 0 });
+          });
+        };
         readSim();
+        setCrew(sim.job);
+        want = sim.job;
 
         const walkTo = (p, x) => { p.target = x; p.st = "walk" };
-        const arrive = (p) => {
-          if (p.job === "mine") {
-            if (p.carry) { p.carry = null; gold = gold >= 12 ? 3 : gold + 1; p.hop = 8; p.st = "idle"; p.wait = 10; return }
-            if (Math.abs(p.x - DOOR) < 1 && active(p)) { p.hidden = true; p.st = "inside"; p.wait = 50; return }
-          }
-          if (p.job === "wood" && p.carry) { p.carry = null; wood = wood >= 8 ? 2 : wood + 1; p.hop = 8; p.st = "idle"; p.wait = 10; return }
-          p.st = Math.abs(p.x - p.home) < 1 && !active(p) ? "sit" : "work";
-          p.t = 0;
+        const queueAt = (spot) => spot.x - 10 * spot.dir;
+        // Hands a spot to the peon waiting for it, else leaves it free.
+        const leave = (p) => {
+          const spot = p.spot, next = peons.find((q) => q.st === "wait" && q.queue === spot);
+          p.spot = null;
+          spot.owner = next || null;
+          if (next) { next.spot = spot; next.queue = null; walkTo(next, spot.x) }
+          return spot;
         };
-        // Walks to the job's spot, then works there.
-        const workAt = (p, x) => {
-          if (Math.abs(p.x - x) > 0.5 && p.st !== "work") { walkTo(p, x); return false }
-          p.st = "work"; p.dir = 1; p.t += 1;
-          return true;
+        const arrive = (p) => {
+          if (p.carry) {
+            if (p.carry === "gold") gold = gold >= 12 ? 3 : gold + 1; else wood = wood >= 8 ? 2 : wood + 1;
+            Object.assign(p, { carry: null, hop: 8, st: "pause", wait: 10 });
+          } else if (crew === "mine" && p.x === DOOR) {
+            Object.assign(p, { hidden: true, st: "inside", wait: 40 + Math.floor(Math.random() * 40) });
+          } else if (p.spot && p.x === p.spot.x) {
+            Object.assign(p, { st: "work", t: 0, dir: p.spot.dir });
+          } else p.st = "go";
+        };
+        // What a peon does next, when it is not walking or working.
+        const decide = (p) => {
+          if (!crew) {
+            if (p.x === p.home) { p.st = "sit"; p.dir = 1 } else walkTo(p, p.home);
+            return;
+          }
+          if (crew === "mine") return walkTo(p, DOOR);
+          const spots = stations[crew].spots;
+          if (p.spot) return walkTo(p, p.spot.x);
+          const spot = [spots[p.i % spots.length], ...spots].find((s) => !s.owner);
+          if (spot) { spot.owner = p; p.spot = spot; return walkTo(p, spot.x) }
+          const queue = spots[p.i % spots.length];
+          if (p.x === queueAt(queue)) { p.st = "wait"; p.queue = queue; p.dir = queue.dir }
+          else walkTo(p, queueAt(queue));
+        };
+        const work = (p) => {
+          const s = stations[crew], swing = s.swing;
+          p.t += 1;
+          if (crew === "wood" && p.t % swing === swing / 2) {
+            wobble = 8;
+            for (let i = 0; i < 2; i++)
+              sparks.push({ x: TREE + 1 - 2 * p.dir, y: GY - 6, vx: -p.dir * (0.3 + Math.random() * 0.5), vy: -0.7 - Math.random() * 0.5, life: 36, c: BARK2 });
+          }
+          if (crew === "build" && p.t % swing === swing / 2)
+            for (let i = 0; i < 2; i++)
+              sparks.push({ x: p.x + 5 * p.dir, y: GY - 6, vx: Math.random() * 0.6 - 0.3, vy: -0.6 - Math.random() * 0.5, life: 18, c: SPARK });
+          if (crew === "test" && p.t % swing === swing / 2) { dummyHit = 6; dummyLean = p.dir }
+          if (!s.turn || p.t < swing * s.turn) return;
+          // A turn is done: the chopper carries its wood to the pile, the
+          // fighter steps back for whoever waits.
+          if (crew === "wood") { leave(p); p.carry = "wood"; walkTo(p, WPILE + 2) }
+          else if (peons.some((q) => q.st === "wait" && q.queue === p.spot)) {
+            const spot = leave(p);
+            p.queue = spot;
+            walkTo(p, queueAt(spot));
+          } else p.t = 0;
         };
         const step = (p) => {
           if (p.st === "walk") {
-            const d = p.target - p.x;
-            if (Math.abs(d) <= 0.5) { p.x = p.target; arrive(p) }
-            else { p.dir = d > 0 ? 1 : -1; p.x += p.dir * 0.5; p.t += 1 }
-            return;
-          }
-          if (p.st === "inside") {
+            const d = p.target - p.x, speed = p.carry ? 0.5 : 1;
+            if (Math.abs(d) <= speed) { p.x = p.target; arrive(p); return }
+            p.dir = d > 0 ? 1 : -1;
+            // Single file behind whoever walks ahead the same way.
+            if (peons.some((q) => q !== p && !q.hidden && q.st === "walk" && q.dir === p.dir && (q.x - p.x) * p.dir > 0 && (q.x - p.x) * p.dir < 10)) return;
+            p.x += p.dir * speed; p.t += 1;
+          } else if (p.st === "inside") {
             if (--p.wait <= 0) { p.hidden = false; p.carry = "gold"; walkTo(p, GPILE + 2) }
-            return;
-          }
-          if (p.st === "idle") { if (--p.wait > 0) return; p.st = "sit" }
-          if (!active(p)) {
-            if (Math.abs(p.x - p.home) > 0.5) walkTo(p, p.home);
-            else { p.st = "sit"; p.dir = 1 }
-            return;
-          }
-          if (p.job === "mine") walkTo(p, DOOR);
-          else if (p.job === "wood" && workAt(p, TREE - 9)) {
-            if (p.t % 22 === 11) {
-              wobble = 8;
-              for (let i = 0; i < 2; i++) sparks.push({ x: TREE - 1, y: GY - 6, vx: -0.3 - Math.random() * 0.5, vy: -0.7 - Math.random() * 0.5, life: 36, c: BARK2 });
-            }
-            if (p.t >= 22 * 4) { p.carry = "wood"; p.t = 0; walkTo(p, WPILE + 2) }
-          } else if (p.job === "build" && workAt(p, SITE - 6)) {
-            if (p.t % 16 === 8)
-              for (let i = 0; i < 2; i++) sparks.push({ x: SITE - 1, y: GY - 6, vx: Math.random() * 0.6 - 0.3, vy: -0.6 - Math.random() * 0.5, life: 18, c: SPARK });
-          } else if (p.job === "test" && workAt(p, DUMMY - 9)) {
-            if (p.t % 20 === 10) dummyHit = 6;
-          }
+          } else if (p.st === "pause") {
+            if (--p.wait <= 0) p.st = "go";
+          } else if (p.st === "work") work(p);
+          else if (p.st !== "wait" || !crew) decide(p);
         };
 
         const drawZ = (x, y) => { px(x, y, 3, 1, col.rock2); px(x + 1, y + 1, 1, 1, col.rock2); px(x, y + 2, 3, 1, col.rock2) };
@@ -602,6 +648,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           const sx = Math.round(p.x - 4) + (p.shake ? ((frame >> 1) % 2 ? 1 : -1) : 0);
           const lift = p.hop > 0 ? Math.round(Math.sin((p.hop / 10) * Math.PI) * 3) : 0;
           const sy = GY - 9 - lift + (sitting ? 1 : 0);
+          // A tool, drawn from the peon's facing side.
+          const tool = (dx, y, w, h, c) => px(p.dir > 0 ? sx + dx : sx + 8 - dx - w, sy + y, w, h, c);
           px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
           const o = p.dir > 0 ? 1 : 0;
           const a = sx + 1 + o, b = sx + 5 + o;
@@ -609,7 +657,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           else { px(a, sy + 2, 1, 1, EYE); px(b, sy + 2, 1, 1, EYE) }
           px(a, sy + 5, 1, 2, TUSK); px(b, sy + 5, 1, 2, TUSK);
           if (!sitting) {
-            const leg = p.st === "walk" && (p.t >> 3) % 2;
+            const leg = p.st === "walk" && (p.t >> (p.carry ? 3 : 2)) % 2;
             px(sx + (leg ? 1 : 2), sy + 8, 1, 1, EYE); px(sx + (leg ? 6 : 5), sy + 8, 1, 1, EYE);
           }
           const z = (frame + p.home * 7) % 150;
@@ -617,16 +665,16 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           if (p.carry === "gold") { px(sx + 2, sy - 3, 4, 2, GOLD); px(sx + 3, sy - 4, 2, 1, GOLD2) }
           if (p.carry === "wood") { px(sx - 1, sy - 3, 10, 2, BARK); px(sx + 8, sy - 3, 1, 2, BARK2) }
           if (p.st === "work") {
-            const up = p.t % { wood: 22, build: 16, test: 20 }[p.job] < { wood: 11, build: 8, test: 10 }[p.job];
-            if (p.job === "wood") {
-              if (up) { px(sx + 8, sy - 1, 1, 5, BARK); px(sx + 7, sy - 3, 3, 2, STEEL) }
-              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 1, 2, 4, STEEL) }
-            } else if (p.job === "build") {
-              if (up) { px(sx + 8, sy + 1, 1, 3, BARK); px(sx + 7, sy, 3, 1, STEEL) }
-              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 2, 1, 3, STEEL) }
-            } else if (p.job === "test") {
-              if (up) { px(sx + 8, sy - 3, 1, 6, STEEL); px(sx + 7, sy + 2, 3, 1, BARK) }
-              else { px(sx + 8, sy + 3, 6, 1, STEEL); px(sx + 7, sy + 2, 1, 3, BARK) }
+            const swing = stations[crew].swing, up = p.t % swing < swing / 2;
+            if (crew === "wood") {
+              if (up) { tool(8, -1, 1, 5, BARK); tool(7, -3, 3, 2, STEEL) }
+              else { tool(8, 3, 3, 1, BARK); tool(10, 1, 2, 4, STEEL) }
+            } else if (crew === "build") {
+              if (up) { tool(8, 1, 1, 3, BARK); tool(7, 0, 3, 1, STEEL) }
+              else { tool(8, 3, 3, 1, BARK); tool(10, 2, 1, 3, STEEL) }
+            } else if (crew === "test") {
+              if (up) { tool(8, -3, 1, 6, STEEL); tool(7, 2, 3, 1, BARK) }
+              else { tool(8, 3, 6, 1, STEEL); tool(7, 2, 1, 3, BARK) }
             }
           }
         };
@@ -635,7 +683,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           px(DOOR - 4, GY - 8, 8, 8, col.dark); px(DOOR - 3, GY - 9, 6, 1, col.dark);
           px(DOOR - 5, GY - 9, 1, 9, BARK); px(DOOR + 4, GY - 9, 1, 9, BARK); px(DOOR - 5, GY - 10, 10, 1, BARK2);
           [[5, GY - 4], [21, GY - 5], [9, GY - 9], [18, GY - 11]].forEach(([x, y], k) =>
-            px(x, y, 1, 1, sim.job === "mine" && ((frame >> 3) + k) % 3 === 0 ? SPARK : GOLD));
+            px(x, y, 1, 1, crew === "mine" && ((frame >> 3) + k) % 3 === 0 ? SPARK : GOLD));
           for (let i = 0; i < gold; i++) {
             const r = i < 5 ? 0 : i < 9 ? 1 : 2, k = i - [0, 5, 9][r];
             px(GPILE - 2 + r + k * 2, GY - 2 - r * 2, 2, 2, (i + r) % 3 ? GOLD : GOLD2);
@@ -670,7 +718,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           }
         };
         const drawDummy = () => {
-          const lean = dummyHit > 0 ? 1 : 0;
+          const lean = dummyHit > 0 ? dummyLean : 0;
           px(DUMMY, GY - 10, 1, 10, BARK);
           px(DUMMY - 3 + lean, GY - 8, 7, 1, BARK2);
           px(DUMMY - 1 + lean, GY - 13, 3, 3, SACK);
@@ -697,6 +745,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           frame += 1;
           if (frame % 120 === 0) readCols();
           if (frame % 10 === 0) readSim();
+          if (sim.job !== want) { want = sim.job; wantT = 0 } else wantT += 1;
+          if (want !== crew && wantT >= SETTLE) setCrew(want);
           if (sim.cheer > 0) { sim.cheer -= 1; peons.forEach((p) => { if (p.hop <= 0 && (frame + p.home) % 24 === 0) p.hop = 10 }) }
           peons.forEach((p) => {
             if (p.bubble && --p.bubble.t <= 0) p.bubble = null;
@@ -727,7 +777,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           p.clicks = p.clicks.filter((t) => now - t < 2500).concat(now);
           if (p.clicks.length >= 4) { p.bubble = { text: "Me busy!", t: 110 }; p.shake = 26; p.clicks = [] }
           else {
-            const ls = p.st === "sit" ? ["Zzz…", "Me rest."] : lines[p.job];
+            const ls = !crew || p.st === "sit" ? ["Zzz…", "Me rest."] : lines[crew];
             p.bubble = { text: ls[Math.floor(Math.random() * ls.length)], t: 90 }; p.hop = 10;
           }
           if (reduce) draw();
