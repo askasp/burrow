@@ -32,7 +32,7 @@ defmodule Burrow.Chat do
 
   require Logger
 
-  alias Burrow.{Chats, GitRepo, Incidents, Projects, Sandbox, Secrets, Workspace}
+  alias Burrow.{BuildCache, Chats, GitRepo, Incidents, Projects, Sandbox, Secrets, Workspace}
   alias Burrow.Agent.{MCP, Prompt}
   alias Burrow.GitRepo.{HostPreview, PreviewPack}
   alias Burrow.OpenCode.Client
@@ -347,6 +347,7 @@ defmodule Burrow.Chat do
       Workspace.reset(repo, state.dir, Totem.Repo.ref(repo, "main"))
     end
 
+    BuildCache.seed(state.dir)
     Sandbox.create_network(state.project.slug, state.network)
     state = state |> start_preview() |> start_agent() |> touch()
     send(self(), :wait_agent)
@@ -633,7 +634,7 @@ defmodule Burrow.Chat do
     script =
       "mkdir -p .peon && " <>
         Sandbox.unlock_deps() <>
-        "(mix deps.get && mix ecto.migrate && mix phx.server) 2>&1 | tee -a .peon/preview.log"
+        "mix do deps.get + ecto.migrate + phx.server 2>&1 | tee -a .peon/preview.log"
 
     # Secrets go to the preview only, never to the agent's container.
     secrets = Secrets.env(state.project.id)

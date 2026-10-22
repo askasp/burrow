@@ -22,8 +22,8 @@ defmodule Burrow.Sandbox do
   Returns `{exit_status, output, duration_ms}`; a timeout kills the container
   and returns status `:timeout`.
 
-  Options: `:project` (slug, required), `:env` (map), `:timeout` (ms,
-  default 10 min), `:name`.
+  Options: `:project` (slug, required) or `:label` (instead of the
+  project's), `:env` (map), `:timeout` (ms, default 10 min), `:name`.
   """
   def run(dir, script, opts \\ []) do
     name = Keyword.get(opts, :name, "burrow-#{System.unique_integer([:positive])}")
@@ -184,7 +184,7 @@ defmodule Burrow.Sandbox do
       |> Keyword.get(:env, %{})
       |> Enum.flat_map(fn {k, v} -> ["-e", "#{k}=#{v}"] end)
 
-    ["--label", Keyword.get(opts, :label, "burrow.project=#{Keyword.fetch!(opts, :project)}")] ++
+    ["--label", opts[:label] || "burrow.project=#{Keyword.fetch!(opts, :project)}"] ++
       ["--user", host_user(), "--cpus", "2", "--memory", "#{@memory_mb}m", "--pids-limit", "512"] ++
       ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++
       ["-v", "#{Totem.source_dir()}:/opt/totem:ro", "-e", "TOTEM_PATH=/opt/totem"] ++ env

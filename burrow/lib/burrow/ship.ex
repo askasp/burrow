@@ -30,7 +30,7 @@ defmodule Burrow.Ship do
 
   require Logger
 
-  alias Burrow.{Chat, Design, Projects, Runs, Sandbox, Workspace}
+  alias Burrow.{BuildCache, Chat, Design, Projects, Runs, Sandbox, Workspace}
   alias Totem.Repo
 
   @forbidden ~w(config/runtime.exs AGENTS.md rel/** priv/peon/anonymize.exs)
@@ -340,6 +340,7 @@ defmodule Burrow.Ship do
     repo = Projects.repo_dir(project)
     dir = Path.join(Projects.dir(project), "main-check")
     Workspace.reset(repo, dir, run.change_id)
+    BuildCache.seed(dir)
 
     prod = %{
       "MIX_ENV" => "prod",
@@ -351,9 +352,8 @@ defmodule Burrow.Ship do
 
     steps = [
       {"test", %{"MIX_ENV" => "test"},
-       Sandbox.unlock_deps() <> "mix deps.get && rm -f *_test.db *_test.db-*; mix test"},
-      {"build", prod,
-       "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy"},
+       Sandbox.unlock_deps() <> "rm -f *_test.db *_test.db-*; mix do deps.get + test"},
+      {"build", prod, "mix do deps.get --only prod + compile + assets.setup + assets.deploy"},
       {"boot", prod,
        "mix ecto.migrate && (mix phx.server > /tmp/boot.log 2>&1 &) && " <>
          "for i in $(seq 60); do curl -sf -o /dev/null http://localhost:4000/health && exit 0; sleep 2; done; " <>

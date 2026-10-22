@@ -28,7 +28,7 @@ defmodule Burrow.Env do
 
   require Logger
 
-  alias Burrow.{Incidents, Projects, Runs, Sandbox, Secrets, Ship, Workspace}
+  alias Burrow.{BuildCache, Incidents, Projects, Runs, Sandbox, Secrets, Ship, Workspace}
   alias Burrow.Env.Usage
   alias Totem.{Repo, Tree}
 
@@ -349,13 +349,14 @@ defmodule Burrow.Env do
 
   defp boot(state) do
     Workspace.reset(state.repo, state.dir, state.deploy.target)
+    BuildCache.seed(state.dir)
     state = drop_link(state)
     secrets = Secrets.env(state.project.id)
 
     script =
       Sandbox.unlock_deps() <>
-        "mix deps.get --only prod && mix compile && mix assets.setup && mix assets.deploy && " <>
-        ~s(mix ecto.migrate && exec elixir --sname app --cookie "$PEON_COOKIE" -S mix phx.server)
+        "mix do deps.get --only prod + compile + assets.setup + assets.deploy + ecto.migrate && " <>
+        ~s(exec elixir --sname app --cookie "$PEON_COOKIE" -S mix phx.server)
 
     app =
       Sandbox.start(state.dir, script,

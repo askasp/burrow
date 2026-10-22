@@ -25,6 +25,8 @@ defmodule Burrow.Application do
       {Registry, keys: :unique, name: Burrow.OpenCodeRegistry},
       {DynamicSupervisor, name: Burrow.OpenCodeSupervisor, strategy: :one_for_one},
       Burrow.Activity,
+      # Deps built once, for new checkouts to copy.
+      Burrow.BuildCache,
       # Desired state is the projects table: start every project.
       {Task,
        fn ->

@@ -9,7 +9,7 @@ defmodule Burrow.Bootstrap do
 
   require Logger
 
-  alias Burrow.{Chats, Projects, Sandbox, Secrets, Template, Workspace}
+  alias Burrow.{BuildCache, Chats, Projects, Sandbox, Secrets, Template, Workspace}
 
   @basic_auth [
     {"BASIC_AUTH_USERNAME", "The username the app asks for."},
@@ -56,6 +56,8 @@ defmodule Burrow.Bootstrap do
       File.mkdir_p!(Path.dirname(Path.join(dir, path)))
       File.write!(Path.join(dir, path), Map.fetch!(blobs, hash))
     end
+
+    BuildCache.seed(dir)
 
     # Drops what the lock has only for left-out code (bcrypt, without accounts).
     script = "mix deps.unlock --unused && mix deps.get && mix format"
