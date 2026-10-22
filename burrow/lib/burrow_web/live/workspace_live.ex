@@ -909,7 +909,11 @@ defmodule BurrowWeb.WorkspaceLive do
                   <.block block={block} />
                 <% end %>
                 <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
-                <.peon_at_work :if={@info && @info.busy?} />
+                <.peon_at_work
+                  :if={@info && @info.busy?}
+                  job={job(@info.messages)}
+                  stage={stage(@info.messages)}
+                />
                 <div :if={@info && @info.busy?} class="ws-working" role="status">
                   <span class="font-medium shrink-0">{peon_says(@info.messages)}</span>
                   <span class="mono muted text-[12.5px] truncate">{doing(@info.messages)}</span>
@@ -1258,17 +1262,48 @@ defmodule BurrowWeb.WorkspaceLive do
     kept
   end
 
-  # What the peon is on right now, in plain words, from its latest tool call.
-  defp doing(messages) do
+  # The tool calls of the turn so far, latest first.
+  defp turn_tools(messages) do
     messages
     |> Enum.reverse()
     |> Enum.take_while(&(&1.role != :user))
-    |> Enum.find(&(&1.role == :tool))
-    |> case do
-      nil -> "Thinking it over…"
-      %{text: text} -> text |> split_tool() |> activity()
+    |> Enum.filter(&(&1.role == :tool))
+    |> Enum.map(&split_tool(&1.text))
+  end
+
+  # What the peon is on right now, in plain words, from its latest tool call.
+  defp doing(messages) do
+    case turn_tools(messages) do
+      [] -> "Thinking it over…"
+      [tool | _] -> activity(tool)
     end
   end
+
+  # Which peon in the camp works, from the latest tool call; none naps.
+  defp job(messages) do
+    case turn_tools(messages) do
+      [] -> nil
+      [tool | _] -> tool_job(tool)
+    end
+  end
+
+  # How far the camp's hut is: a step per change to the code this turn.
+  defp stage(messages),
+    do: messages |> turn_tools() |> Enum.count(&(tool_job(&1) == "build")) |> min(5)
+
+  defp tool_job({"bash", command}) do
+    cond do
+      command =~ "mix test" -> "test"
+      command =~ ~r/deps\.get|npm (install|ci)/ -> "wood"
+      command =~ ~r/mix (compile|format)/ -> "build"
+      true -> "mine"
+    end
+  end
+
+  defp tool_job({tool, _}) when tool in ~w(edit write patch apply_patch multiedit), do: "build"
+  defp tool_job({"peon_submit_changeset", _}), do: "merge"
+  defp tool_job({"todowrite", _}), do: nil
+  defp tool_job(_), do: "mine"
 
   # What the peon says while it works, as in Warcraft III; a new line as the
   # turn goes on.

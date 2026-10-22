@@ -376,7 +376,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .say-error { padding: 8px 12px; border-radius: 6px; background: var(--err-soft); color: var(--err); font-size: 13px; white-space: pre-wrap }
 .ws-root .swing { display: flex; animation: bw-swing 1.1s ease-in-out infinite; transform-origin: 25% 85% }
 /* Peon at work: the logo on legs, in pixels (a canvas, 200 × 44 logical px at 2×) */
-.ws-root .peon-scene { display: block; width: 400px; max-width: 100%; height: auto; margin-bottom: -12px; image-rendering: pixelated; image-rendering: crisp-edges }
+.ws-root .peon-scene { display: block; width: 400px; max-width: 100%; height: auto; margin-bottom: -8px; image-rendering: pixelated; image-rendering: crisp-edges }
 
 .ws-root .ws-bottom { flex: none; width: 100%; max-width: 800px; margin: 0 auto; padding: 10px 20px 20px; display: flex; flex-direction: column; gap: 12px }
 .ws-root .framed { background: transparent; border: 1px solid var(--border-strong); border-radius: 8px }

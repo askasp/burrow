@@ -477,10 +477,16 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   ## Peon at work
 
+  attr :job, :string, default: nil, doc: "mine, wood, build, test or merge; none naps"
+  attr :stage, :integer, default: 0, doc: "how far the build is, 0 to 5"
+
   @doc """
-  Peons at work while the agent is: the logo on two legs, in pixels, mining
-  gold and chopping wood. Click one for a line; four quick clicks and it gets
-  grumpy.
+  The peons' camp while the agent works: the logo on two legs, in pixels.
+  What the agent is on decides who works (`job`): reading mines gold,
+  fetching deps chops wood, writing code builds the hut, one step per
+  change (`stage`), tests hit the training dummy, and handing the change in
+  raises the flag while everyone cheers. The rest nap. Click one for a line;
+  four quick clicks and it gets grumpy.
   """
   def peon_at_work(assigns) do
     ~H"""
@@ -489,10 +495,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       class="peon-scene"
       phx-hook=".PeonScene"
       phx-update="ignore"
+      data-job={@job}
+      data-stage={@stage}
       width="400"
-      height="88"
+      height="68"
       role="img"
-      aria-label="Peons mining gold and chopping wood"
+      aria-label={"Peons at work: " <> job_name(@job)}
     ></canvas>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonScene">
       export default {
@@ -500,8 +508,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         destroyed() { this.stop() }
       }
 
+      // The job and stage come in as data attributes, which LiveView keeps
+      // updating on an ignored element; the scene reads them every frame.
       function peonScene(canvas) {
-        const W = 200, H = 44, S = 2, GY = H - 4;
+        const W = 200, H = 34, S = 2, GY = H - 3;
         const ctx = canvas.getContext("2d");
         ctx.imageSmoothingEnabled = false;
         const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -513,129 +523,181 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         };
         readCols();
         const G = "#8FBF5A", GD = "#6E9B3D", EYE = "#1C2412", TUSK = "#F7F4EA", GOLD = "#E6B65E", GOLD2 = "#B8862F",
-          BARK = "#7A4E2D", BARK2 = "#9A6A40", LEAF = "#4F7A2E", LEAF2 = "#6E9B3D", STEEL = "#C9CED6";
+          BARK = "#7A4E2D", BARK2 = "#9A6A40", MUD = "#A07850", LEAF = "#4F7A2E", LEAF2 = "#6E9B3D", STEEL = "#C9CED6",
+          SACK = "#C9A46B", SPARK = "#FFF4CC";
         const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
-        const MINE = 24, HOME = 140, TREE = 182;
-        const lines = ["Work, work.", "Zug zug.", "Okie dokie.", "Something need doing?", "What you want?", "Ready to work!"];
-        const mk = (o) => ({ dir: 1, t: 0, wait: 0, carry: null, hidden: false, bubble: null, clicks: [], shake: 0, pause: 0, hop: 0, ...o });
-        const peons = [
-          mk({ kind: "gold", x: 72, dir: -1, st: "walk", target: MINE }),
-          mk({ kind: "gold", x: 104, st: "walk", target: HOME - 6, carry: "gold" }),
-          mk({ kind: "wood", x: TREE - 9, st: "chop", t: 30 })
-        ];
-        const chips = [];
-        let gold = 7, wood = 3, frame = 0, raf = 0, wobble = 0, glint = 0;
+        const DOOR = 14, GPILE = 32, TREE = 64, WPILE = 72, SITE = 104, DUMMY = 176;
+        const lines = { mine: ["Me dig.", "Gold!"], wood: ["Chop chop.", "Wood!"], build: ["Work, work.", "Me build."], test: ["Hit it!", "Zug zug."] };
+        const mk = (job, home) => ({ job, x: home, home, dir: 1, st: "sit", t: 0, wait: 0, carry: null, hidden: false, hop: 0, bubble: null, clicks: [], shake: 0, target: home });
+        const peons = [mk("mine", 24), mk("wood", 52), mk("build", 96), mk("test", 160)];
+        const sim = { job: null, stage: 0, cheer: 0 };
+        const sparks = [];
+        let gold = 3, wood = 2, frame = 0, raf = 0, wobble = 0, dummyHit = 0, merged = false;
+        const active = (p) => sim.job === p.job;
 
+        const readSim = () => {
+          const job = canvas.dataset.job || null;
+          if (job === "merge") {
+            sim.job = null;
+            if (!merged) { merged = true; sim.stage = 6; sim.cheer = 140 }
+          } else {
+            sim.job = job;
+            if (!merged) sim.stage = Math.min(5, parseInt(canvas.dataset.stage || "0", 10));
+          }
+        };
+        readSim();
+
+        const walkTo = (p, x) => { p.target = x; p.st = "walk" };
         const arrive = (p) => {
-          if (p.kind === "gold" && !p.carry) { p.st = "mine"; p.wait = 80; p.hidden = true }
-          else if (p.carry) {
-            p.st = "drop"; p.wait = 16; p.hop = 8;
-            if (p.carry === "gold") gold = Math.min(gold + 1, 15); else wood = Math.min(wood + 1, 8);
-            p.carry = null;
-          } else { p.st = "chop"; p.t = 0; p.dir = 1 }
+          if (p.job === "mine") {
+            if (p.carry) { p.carry = null; gold = gold >= 12 ? 3 : gold + 1; p.hop = 8; p.st = "idle"; p.wait = 10; return }
+            if (Math.abs(p.x - DOOR) < 1 && active(p)) { p.hidden = true; p.st = "inside"; p.wait = 50; return }
+          }
+          if (p.job === "wood" && p.carry) { p.carry = null; wood = wood >= 8 ? 2 : wood + 1; p.hop = 8; p.st = "idle"; p.wait = 10; return }
+          p.st = Math.abs(p.x - p.home) < 1 && !active(p) ? "sit" : "work";
+          p.t = 0;
+        };
+        // Walks to the job's spot, then works there.
+        const workAt = (p, x) => {
+          if (Math.abs(p.x - x) > 0.5 && p.st !== "work") { walkTo(p, x); return false }
+          p.st = "work"; p.dir = 1; p.t += 1;
+          return true;
         };
         const step = (p) => {
-          if (p.pause > 0) { p.pause -= 1; return }
           if (p.st === "walk") {
             const d = p.target - p.x;
             if (Math.abs(d) <= 0.5) { p.x = p.target; arrive(p) }
             else { p.dir = d > 0 ? 1 : -1; p.x += p.dir * 0.5; p.t += 1 }
-          } else if (p.st === "mine") {
-            glint = 1;
-            if (--p.wait <= 0) { p.hidden = false; p.st = "walk"; p.carry = "gold"; p.x = MINE; p.target = HOME - 6 }
-          } else if (p.st === "drop") {
-            if (--p.wait <= 0) { p.st = "walk"; p.target = p.kind === "gold" ? MINE : TREE - 9 }
-          } else if (p.st === "chop") {
-            p.t += 1;
+            return;
+          }
+          if (p.st === "inside") {
+            if (--p.wait <= 0) { p.hidden = false; p.carry = "gold"; walkTo(p, GPILE + 2) }
+            return;
+          }
+          if (p.st === "idle") { if (--p.wait > 0) return; p.st = "sit" }
+          if (!active(p)) {
+            if (Math.abs(p.x - p.home) > 0.5) walkTo(p, p.home);
+            else { p.st = "sit"; p.dir = 1 }
+            return;
+          }
+          if (p.job === "mine") walkTo(p, DOOR);
+          else if (p.job === "wood" && workAt(p, TREE - 9)) {
             if (p.t % 22 === 11) {
               wobble = 8;
-              for (let i = 0; i < 3; i++) chips.push({ x: TREE - 1, y: GY - 6, vx: -0.3 - Math.random() * 0.6, vy: -0.8 - Math.random() * 0.6, life: 40 });
+              for (let i = 0; i < 2; i++) sparks.push({ x: TREE - 1, y: GY - 6, vx: -0.3 - Math.random() * 0.5, vy: -0.7 - Math.random() * 0.5, life: 36, c: BARK2 });
             }
-            if (p.t >= 22 * 6) { p.st = "walk"; p.carry = "wood"; p.target = HOME + 14; p.t = 0 }
+            if (p.t >= 22 * 4) { p.carry = "wood"; p.t = 0; walkTo(p, WPILE + 2) }
+          } else if (p.job === "build" && workAt(p, SITE - 6)) {
+            if (p.t % 16 === 8)
+              for (let i = 0; i < 2; i++) sparks.push({ x: SITE - 1, y: GY - 6, vx: Math.random() * 0.6 - 0.3, vy: -0.6 - Math.random() * 0.5, life: 18, c: SPARK });
+          } else if (p.job === "test" && workAt(p, DUMMY - 9)) {
+            if (p.t % 20 === 10) dummyHit = 6;
           }
         };
 
-        const hill = (x0, n, top) => {
-          for (let i = 0; i < n; i++) {
-            const h = Math.round(top * Math.sin((Math.PI * (i + 0.5)) / n));
-            px(x0 + i * 2, GY - h, 2, h, col.rock);
+        const drawZ = (x, y) => { px(x, y, 3, 1, col.rock2); px(x + 1, y + 1, 1, 1, col.rock2); px(x, y + 2, 3, 1, col.rock2) };
+        const drawPeon = (p) => {
+          if (p.hidden) return;
+          const sitting = p.st === "sit" && p.hop <= 0;
+          const sx = Math.round(p.x - 4) + (p.shake ? ((frame >> 1) % 2 ? 1 : -1) : 0);
+          const lift = p.hop > 0 ? Math.round(Math.sin((p.hop / 10) * Math.PI) * 3) : 0;
+          const sy = GY - 9 - lift + (sitting ? 1 : 0);
+          px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
+          const o = p.dir > 0 ? 1 : 0;
+          const a = sx + 1 + o, b = sx + 5 + o;
+          if (sitting) { px(a, sy + 3, 2, 1, EYE); px(b - 1, sy + 3, 2, 1, EYE) }
+          else { px(a, sy + 2, 1, 1, EYE); px(b, sy + 2, 1, 1, EYE) }
+          px(a, sy + 5, 1, 2, TUSK); px(b, sy + 5, 1, 2, TUSK);
+          if (!sitting) {
+            const leg = p.st === "walk" && (p.t >> 3) % 2;
+            px(sx + (leg ? 1 : 2), sy + 8, 1, 1, EYE); px(sx + (leg ? 6 : 5), sy + 8, 1, 1, EYE);
+          }
+          const z = (frame + p.home * 7) % 150;
+          if (sitting && z < 60) drawZ(sx + 7 + Math.floor(z / 20), sy - 3 - Math.floor(z / 12));
+          if (p.carry === "gold") { px(sx + 2, sy - 3, 4, 2, GOLD); px(sx + 3, sy - 4, 2, 1, GOLD2) }
+          if (p.carry === "wood") { px(sx - 1, sy - 3, 10, 2, BARK); px(sx + 8, sy - 3, 1, 2, BARK2) }
+          if (p.st === "work") {
+            const up = p.t % { wood: 22, build: 16, test: 20 }[p.job] < { wood: 11, build: 8, test: 10 }[p.job];
+            if (p.job === "wood") {
+              if (up) { px(sx + 8, sy - 1, 1, 5, BARK); px(sx + 7, sy - 3, 3, 2, STEEL) }
+              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 1, 2, 4, STEEL) }
+            } else if (p.job === "build") {
+              if (up) { px(sx + 8, sy + 1, 1, 3, BARK); px(sx + 7, sy, 3, 1, STEEL) }
+              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 2, 1, 3, STEEL) }
+            } else if (p.job === "test") {
+              if (up) { px(sx + 8, sy - 3, 1, 6, STEEL); px(sx + 7, sy + 2, 3, 1, BARK) }
+              else { px(sx + 8, sy + 3, 6, 1, STEEL); px(sx + 7, sy + 2, 1, 3, BARK) }
+            }
           }
         };
         const drawMine = () => {
-          hill(2, 22, 17);
-          px(10, GY - 13, 6, 1, col.rock2); px(30, GY - 11, 5, 1, col.rock2); px(6, GY - 8, 3, 1, col.rock2);
-          px(MINE - 4, GY - 9, 8, 9, col.dark); px(MINE - 3, GY - 10, 6, 1, col.dark);
-          px(MINE - 5, GY - 10, 1, 10, BARK); px(MINE + 4, GY - 10, 1, 10, BARK); px(MINE - 5, GY - 11, 10, 1, BARK2);
-          [[8, GY - 5], [14, GY - 10], [34, GY - 6], [39, GY - 3], [18, GY - 15], [29, GY - 13]].forEach(([x, y], k) =>
-            px(x, y, 1, 1, glint && ((frame >> 3) + k) % 3 === 0 ? "#FFF4CC" : GOLD));
-        };
-        const drawHome = () => {
-          hill(126, 16, 12);
-          px(132, GY - 9, 8, 1, col.rock2);
-          px(HOME - 2, GY - 7, 6, 7, col.dark); px(HOME - 1, GY - 8, 4, 1, col.dark);
-          px(155, GY - 20, 1, 20, BARK);
-          const f = (frame >> 4) % 2;
-          px(156, GY - 20, 5, 3, col.rust); px(161, GY - 19 + f, 1, 2, col.rust);
+          for (let i = 0; i < 14; i++) { const h = Math.round(13 * Math.sin((Math.PI * (i + 0.5)) / 14)); px(i * 2, GY - h, 2, h, col.rock) }
+          px(DOOR - 4, GY - 8, 8, 8, col.dark); px(DOOR - 3, GY - 9, 6, 1, col.dark);
+          px(DOOR - 5, GY - 9, 1, 9, BARK); px(DOOR + 4, GY - 9, 1, 9, BARK); px(DOOR - 5, GY - 10, 10, 1, BARK2);
+          [[5, GY - 4], [21, GY - 5], [9, GY - 9], [18, GY - 11]].forEach(([x, y], k) =>
+            px(x, y, 1, 1, sim.job === "mine" && ((frame >> 3) + k) % 3 === 0 ? SPARK : GOLD));
           for (let i = 0; i < gold; i++) {
-            const row = i < 5 ? 0 : i < 9 ? 1 : i < 12 ? 2 : 3, idx = i - [0, 5, 9, 12][row];
-            px(112 + row + idx * 2, GY - 2 - row * 2, 2, 2, (i + row) % 3 ? GOLD : GOLD2);
-          }
-          for (let i = 0; i < wood; i++) {
-            const row = Math.floor(i / 3);
-            px(160 + (i % 3) * 2 + row, GY - 2 - row * 2, 6, 2, i % 2 ? BARK : BARK2);
+            const r = i < 5 ? 0 : i < 9 ? 1 : 2, k = i - [0, 5, 9][r];
+            px(GPILE - 2 + r + k * 2, GY - 2 - r * 2, 2, 2, (i + r) % 3 ? GOLD : GOLD2);
           }
         };
         const drawTree = () => {
           const sway = wobble ? (wobble % 4 < 2 ? 1 : -1) : 0;
-          px(TREE, GY - 10, 3, 10, BARK);
-          for (let r = 0; r < 18; r++) {
-            const w = 2 + Math.floor((r % 6) * 1.6) + Math.floor(r / 6) * 2;
-            px(TREE + 1 - Math.floor(w / 2) + (r < 9 ? sway : 0), GY - 28 + r, w + 1, 1, r % 6 === 5 ? LEAF2 : LEAF);
+          px(TREE, GY - 8, 3, 8, BARK);
+          for (let r = 0; r < 16; r++) {
+            const w = 2 + Math.floor((r % 6) * 1.5) + Math.floor(r / 6) * 2;
+            px(TREE + 1 - Math.floor(w / 2) + (r < 8 ? sway : 0), GY - 24 + r, w + 1, 1, r % 6 === 5 ? LEAF2 : LEAF);
+          }
+          for (let i = 0; i < wood; i++) { const r = Math.floor(i / 3); px(WPILE - 2 + (i % 3) * 2 + r, GY - 2 - r * 2, 6, 2, i % 2 ? BARK : BARK2) }
+        };
+        // The hut, one step per change; the flag goes up when it is handed in.
+        const drawSite = () => {
+          const st = sim.stage, x0 = SITE, w = 34;
+          if (st < 1) { px(x0, GY - 3, 1, 3, BARK); px(x0 + w - 1, GY - 3, 1, 3, BARK); px(x0, GY - 3, w, 1, BARK2); return }
+          px(x0, GY - 2, w, 2, col.rock);
+          if (st >= 2) px(x0 + 2, GY - 7, w - 4, 5, MUD);
+          if (st >= 3) { px(x0 + 2, GY - 12, w - 4, 5, MUD); px(x0 + 3, GY - 9, w - 6, 1, BARK2) }
+          if (st >= 2) px(x0 + 14, GY - 9, 6, st >= 3 ? 7 : 4, col.dark);
+          if (st >= 4) for (let i = 0; i <= 8; i++) { px(x0 + 1 + i * 2, GY - 13 - i, 2, 1, BARK); px(x0 + w - 3 - i * 2, GY - 13 - i, 2, 1, BARK) }
+          if (st >= 5) for (let r = 0; r < 8; r++) { const ww = w - 4 - r * 4; if (ww > 0) px(x0 + 2 + r * 2, GY - 13 - r, ww, 1, r % 2 ? BARK2 : BARK) }
+          if (st <= 4) {
+            const top = GY - [0, 6, 9, 14, 20][st];
+            px(x0 - 2, top, 1, GY - top, BARK); px(x0 + w + 1, top, 1, GY - top, BARK); px(x0 - 2, top + 2, w + 4, 1, BARK2);
+          }
+          if (st >= 6) {
+            const f = (frame >> 4) % 2;
+            px(x0 + w / 2, GY - 29, 1, 8, BARK); px(x0 + w / 2 + 1, GY - 29, 5, 3, col.rust); px(x0 + w / 2 + 6, GY - 28 + f, 1, 2, col.rust);
           }
         };
-        // The logo tile on two legs: eyes and tusks face where it walks.
-        const drawPeon = (p) => {
-          if (p.hidden) return;
-          const walking = p.st === "walk" && p.pause <= 0;
-          const sx = Math.round(p.x - 4) + (p.shake ? ((frame >> 1) % 2 ? 1 : -1) : 0);
-          const sy = GY - 9 - (p.hop > 0 ? Math.round(Math.sin((p.hop / 10) * Math.PI) * 3) : 0);
-          px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
-          const o = p.dir > 0 ? 1 : 0, a = sx + 1 + o, b = sx + 4 + o;
-          px(a, sy + 2, 1, 1, EYE); px(b + 1, sy + 2, 1, 1, EYE);
-          px(a, sy + 5, 1, 2, TUSK); px(b + 1, sy + 5, 1, 2, TUSK);
-          const leg = walking && (p.t >> 3) % 2;
-          px(sx + (leg ? 1 : 2), sy + 8, 1, 1, EYE); px(sx + (leg ? 6 : 5), sy + 8, 1, 1, EYE);
-          if (p.carry === "gold") { px(sx + 2, sy - 3, 4, 2, GOLD); px(sx + 3, sy - 4, 2, 1, GOLD2) }
-          if (p.carry === "wood") { px(sx - 1, sy - 3, 10, 2, BARK); px(sx + 8, sy - 3, 1, 2, BARK2) }
-          if (p.st === "chop" && p.pause <= 0) {
-            if (p.t % 22 < 11) { px(sx + 8, sy - 1, 1, 5, BARK); px(sx + 7, sy - 3, 3, 2, STEEL) }
-            else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 1, 2, 4, STEEL) }
-          }
+        const drawDummy = () => {
+          const lean = dummyHit > 0 ? 1 : 0;
+          px(DUMMY, GY - 10, 1, 10, BARK);
+          px(DUMMY - 3 + lean, GY - 8, 7, 1, BARK2);
+          px(DUMMY - 1 + lean, GY - 13, 3, 3, SACK);
         };
         const drawBubble = (p) => {
           if (!p.bubble || p.hidden) return;
           ctx.font = "600 7px Rubik, system-ui, sans-serif";
           const w = Math.ceil(ctx.measureText(p.bubble.text).width) + 6;
-          const bx = Math.max(1, Math.min(W - w - 1, Math.round(p.x - w / 2))), by = GY - 24;
-          px(bx, by, w, 10, col.rock); px(bx + 1, by + 1, w - 2, 8, col.raised);
-          px(Math.round(p.x) - 1, by + 10, 3, 1, col.rock); px(Math.round(p.x), by + 11, 1, 1, col.rock);
+          const bx = Math.max(1, Math.min(W - w - 1, Math.round(p.x - w / 2)));
+          px(bx, 0, w, 10, col.rock); px(bx + 1, 1, w - 2, 8, col.raised);
           ctx.fillStyle = col.text;
-          ctx.fillText(p.bubble.text, bx + 3, by + 7.5);
+          ctx.fillText(p.bubble.text, bx + 3, 7.5);
         };
         const draw = () => {
           ctx.setTransform(S, 0, 0, S, 0, 0);
           ctx.clearRect(0, 0, W, H);
           px(0, GY, W, 1, col.rock);
-          [[52, 2], [88, 1], [104, 3], [172, 2]].forEach(([x, w]) => px(x, GY + 1, w, 1, col.rock));
-          drawMine(); drawHome(); drawTree();
-          chips.forEach((c) => px(c.x, c.y, 1, 1, BARK2));
+          drawMine(); drawTree(); drawSite(); drawDummy();
+          sparks.forEach((c) => px(c.x, c.y, 1, 1, c.c));
           peons.forEach(drawPeon);
           peons.forEach(drawBubble);
         };
         const tick = () => {
           frame += 1;
           if (frame % 120 === 0) readCols();
-          glint = 0;
+          if (frame % 10 === 0) readSim();
+          if (sim.cheer > 0) { sim.cheer -= 1; peons.forEach((p) => { if (p.hop <= 0 && (frame + p.home) % 24 === 0) p.hop = 10 }) }
           peons.forEach((p) => {
             if (p.bubble && --p.bubble.t <= 0) p.bubble = null;
             if (p.shake) p.shake -= 1;
@@ -643,11 +705,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             step(p);
           });
           if (wobble) wobble -= 1;
-          for (let i = chips.length - 1; i >= 0; i--) {
-            const c = chips[i];
+          if (dummyHit) dummyHit -= 1;
+          for (let i = sparks.length - 1; i >= 0; i--) {
+            const c = sparks[i];
             c.x += c.vx; c.y += c.vy; c.vy += 0.08; c.life -= 1;
             if (c.y > GY - 1) { c.y = GY - 1; c.vx *= 0.5 }
-            if (c.life <= 0) chips.splice(i, 1);
+            if (c.life <= 0) sparks.splice(i, 1);
           }
           draw();
           raf = requestAnimationFrame(tick);
@@ -656,25 +719,40 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           const r = canvas.getBoundingClientRect();
           return [((e.clientX - r.left) / r.width) * W, ((e.clientY - r.top) / r.height) * H];
         };
-        const hit = (lx, ly) => peons.find((p) => !p.hidden && lx >= p.x - 7 && lx <= p.x + 7 && ly >= GY - 15 && ly <= GY + 2);
+        const hit = (lx, ly) => peons.find((p) => !p.hidden && lx >= p.x - 6 && lx <= p.x + 6 && ly >= GY - 15 && ly <= GY + 2);
         const onClick = (e) => {
           const p = hit(...toLogical(e));
           if (!p || p.shake > 0) return;
           const now = Date.now();
           p.clicks = p.clicks.filter((t) => now - t < 2500).concat(now);
-          if (p.clicks.length >= 4) { p.bubble = { text: "Me busy. Leave me alone!", t: 110 }; p.shake = 26; p.pause = 60; p.clicks = [] }
-          else { p.bubble = { text: lines[Math.floor(Math.random() * lines.length)], t: 90 }; p.hop = 10 }
+          if (p.clicks.length >= 4) { p.bubble = { text: "Me busy!", t: 110 }; p.shake = 26; p.clicks = [] }
+          else {
+            const ls = p.st === "sit" ? ["Zzz…", "Me rest."] : lines[p.job];
+            p.bubble = { text: ls[Math.floor(Math.random() * ls.length)], t: 90 }; p.hop = 10;
+          }
           if (reduce) draw();
         };
         const onMove = (e) => { canvas.style.cursor = hit(...toLogical(e)) ? "pointer" : "default" };
         canvas.addEventListener("click", onClick);
         canvas.addEventListener("mousemove", onMove);
-        if (reduce) draw(); else raf = requestAnimationFrame(tick);
+        if (reduce) {
+          draw();
+          const redraw = setInterval(() => { readSim(); draw() }, 1000);
+          return () => clearInterval(redraw);
+        }
+        raf = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(raf);
       }
     </script>
     """
   end
+
+  defp job_name("mine"), do: "mining gold"
+  defp job_name("wood"), do: "chopping wood"
+  defp job_name("build"), do: "building"
+  defp job_name("test"), do: "at the training dummy"
+  defp job_name("merge"), do: "cheering"
+  defp job_name(_), do: "napping"
 
   ## Change card
 
