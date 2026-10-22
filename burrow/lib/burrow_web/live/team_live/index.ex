@@ -263,10 +263,10 @@ defmodule BurrowWeb.TeamLive.Index do
             <div class="sec-h"><span class="eyebrow">Shared projects</span></div>
             <ul id="shared-projects" class="rows">
               <li :if={@shared == []} class="text-[var(--text-3)]">
-                None yet. Share a project from its page on Projects.
+                None yet. Share a project from its ⋯ menu on Projects.
               </li>
               <li :for={p <- @shared}>
-                <.link navigate={~p"/projects?p=#{p.id}"} class="flex-1 min-w-0 truncate font-medium">
+                <.link navigate={~p"/projects/#{p.id}"} class="flex-1 min-w-0 truncate font-medium">
                   {p.name}
                 </.link>
                 <span class="mono text-[12px] text-[var(--text-3)]">by {p.user.email}</span>

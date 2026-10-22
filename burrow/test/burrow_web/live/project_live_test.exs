@@ -23,9 +23,11 @@ defmodule BurrowWeb.ProjectLiveTest do
              "slug: sauna_booking"
 
     lv |> form("#project_form", project: %{name: "Sauna Booking"}) |> render_submit()
-    assert has_element?(lv, "#selected-project h2", "Sauna Booking")
+    [project] = Projects.list(Scope.for_user(user))
+    assert has_element?(lv, "#project-#{project.id} a.nm", "Sauna Booking")
     refute has_element?(lv, "#new-project-dialog")
-    assert has_element?(lv, "#project-meta", "sauna_booking · live")
+    assert has_element?(lv, "#project-#{project.id} .sub", "live only · private")
+    assert has_element?(lv, "#project-#{project.id} .chg", "Nothing built yet")
     refute has_element?(lv, "#project_form")
 
     # With projects, New project opens the form.
@@ -63,7 +65,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     )
     |> render_submit()
 
-    assert has_element?(lv, "#selected-project h2", "Stash")
+    assert has_element?(lv, "#projects a.nm", "Stash")
     assert [%{auth: "basic"}] = Burrow.Repo.all(Burrow.Projects.Project)
 
     # A repo keeps its own login, so the choice goes away.
@@ -83,32 +85,37 @@ defmodule BurrowWeb.ProjectLiveTest do
     {:ok, _} = Teams.add_member(scope, team, mate.email)
     {:ok, project} = Projects.create(scope, %{"name" => "Procedures"})
 
-    {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
+    {:ok, lv, _html} = live(conn, ~p"/projects")
     refute has_element?(lv, "#share-form")
-    assert has_element?(lv, "#project-menu-button[aria-expanded='false']")
-    lv |> element("#project-menu-button") |> render_click()
-    assert has_element?(lv, "#project-menu-button[aria-expanded='true']")
-    lv |> element("#project-menu button", "Share") |> render_click()
+    assert has_element?(lv, "#project-menu-#{project.id}[aria-expanded='false']")
+    lv |> element("#project-menu-#{project.id}") |> render_click()
+    assert has_element?(lv, "#project-menu-#{project.id}[aria-expanded='true']")
+    lv |> element("#project-menu-items-#{project.id} button", "Share") |> render_click()
     lv |> form("#share-form", share: %{team_id: team.id}) |> render_change()
     assert has_element?(lv, "#project-#{project.id}", "shared")
+    refute has_element?(lv, "#share-form")
     assert Projects.get!(scope, project.id).team_id == team.id
 
+    # A teammate can restart it, but only the owner shares or deletes it.
     {:ok, mate_lv, _html} = live(log_in_user(build_conn(), mate), ~p"/projects")
     assert has_element?(mate_lv, "#project-#{project.id}", user.email)
-    refute has_element?(mate_lv, "#project-menu-button")
+    mate_lv |> element("#project-menu-#{project.id}") |> render_click()
+    assert has_element?(mate_lv, "#project-menu-items-#{project.id} button", "Restart")
+    refute has_element?(mate_lv, "#project-menu-items-#{project.id} button", "Share")
+    refute has_element?(mate_lv, "#delete-project-#{project.id}")
   end
 
-  test "a project with staging and prod keeps its overview", %{conn: conn, user: user} do
+  test "a project with staging and prod can't add them again", %{conn: conn, user: user} do
     {:ok, project} = Projects.create(Scope.for_user(user), %{"name" => "Procedures"})
     pipeline!(project)
 
-    {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
-    assert has_element?(lv, "#restart-peon")
-    assert has_element?(lv, "#selected-project", "Only you can see it.")
-    assert has_element?(lv, "#project-meta", "staging · prod")
+    {:ok, lv, _html} = live(conn, ~p"/projects")
+    assert has_element?(lv, "#project-#{project.id} .sub", "staging · prod · private")
+    assert has_element?(lv, "#project-#{project.id} .c5", "main — · staging — · prod —")
 
-    lv |> element("#project-menu-button") |> render_click()
-    refute has_element?(lv, "#add-envs")
+    lv |> element("#project-menu-#{project.id}") |> render_click()
+    assert has_element?(lv, "#project-menu-items-#{project.id} button", "Restart")
+    refute has_element?(lv, "#add-envs-#{project.id}")
   end
 
   describe "a live-only project" do
@@ -117,22 +124,10 @@ defmodule BurrowWeb.ProjectLiveTest do
       %{project: project}
     end
 
-    test "its row opens its workspace; the arrow shows its details", %{
-      conn: conn,
-      project: project
-    } do
+    test "its card opens its workspace", %{conn: conn, project: project} do
       {:ok, lv, _html} = live(conn, ~p"/projects")
-
-      assert has_element?(
-               lv,
-               "#project-#{project.id} a.prow[href='/projects/#{project.id}']"
-             )
-
-      refute has_element?(lv, "#open-workspace")
-
-      lv |> element("#project-#{project.id} .prow-more") |> render_click()
-      assert_patch(lv, ~p"/projects?p=#{project.id}")
-      assert has_element?(lv, "#selected-project #restart-peon")
+      assert has_element?(lv, "#project-#{project.id} a.nm[href='/projects/#{project.id}']")
+      assert has_element?(lv, "#project-#{project.id} .c6", "0 chats")
     end
 
     @tag :tmp_dir
@@ -142,11 +137,11 @@ defmodule BurrowWeb.ProjectLiveTest do
       tmp_dir: dir
     } do
       Burrow.ProjectHelpers.start_project!(project, dir)
-      {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
+      {:ok, lv, _html} = live(conn, ~p"/projects")
       running!(project)
 
-      lv |> element("#project-menu-button") |> render_click()
-      lv |> element("#add-envs") |> render_click()
+      lv |> element("#project-menu-#{project.id}") |> render_click()
+      lv |> element("#add-envs-#{project.id}") |> render_click()
       assert render(lv) =~ "Watchtower has staging and prod now."
       assert Projects.get(project.id).envs == "pipeline"
     end
@@ -154,23 +149,26 @@ defmodule BurrowWeb.ProjectLiveTest do
 
   describe "deleting" do
     @tag :tmp_dir
-    test "the owner deletes a project with its chats and history", %{
+    test "the owner deletes any project, with its chats and history", %{
       conn: conn,
       user: user,
       tmp_dir: dir
     } do
-      {:ok, project} =
-        Projects.create(Burrow.Accounts.Scope.for_user(user), %{"name" => "Gone soon"})
+      scope = Burrow.Accounts.Scope.for_user(user)
+      {:ok, kept} = Projects.create(scope, %{"name" => "Kept"})
+      {:ok, project} = Projects.create(scope, %{"name" => "Gone soon"})
 
       Burrow.ProjectHelpers.start_project!(project, dir)
       chat = Burrow.Chats.create(project.id, "Hello", user.email)
       assert File.dir?(Projects.repo_dir(project))
 
-      {:ok, lv, _html} = live(conn, ~p"/projects?p=#{project.id}")
-      lv |> element("#project-menu-button") |> render_click()
-      lv |> element("#delete-project") |> render_click()
+      {:ok, lv, _html} = live(conn, ~p"/projects")
+      lv |> element("#project-menu-#{project.id}") |> render_click()
+      lv |> element("#delete-project-#{project.id}") |> render_click()
 
       assert render(lv) =~ "Gone soon is deleted."
+      refute has_element?(lv, "#project-#{project.id}")
+      assert has_element?(lv, "#project-#{kept.id}")
       assert Projects.get(project.id) == nil
       assert Burrow.Chats.get(chat.id) == nil
       refute File.exists?(Projects.dir(project))

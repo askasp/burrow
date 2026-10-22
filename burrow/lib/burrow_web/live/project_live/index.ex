@@ -1,15 +1,15 @@
 defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
-  The projects screen: your projects and those shared with your teams on the
-  left; a project opens its workspace, which has a rail back to
-  all of them. Its details (`?p=<id>`: its status, sharing, the ⋯ menu with
-  share, hand over and adding staging and prod) show on the right. New
-  project opens the form.
+  The projects screen: a card per project, yours and those shared with your
+  teams, with what it is doing (`Burrow.Activity`), its latest change and
+  its chats. A card opens the project's workspace, which has a rail back to
+  all of them; its ⋯ menu restarts the project and, for its owner, shares,
+  hands over, adds staging and prod or deletes it. New project opens the form.
   """
 
   use BurrowWeb, :live_view
 
-  alias Burrow.{Cell, Projects, Teams}
+  alias Burrow.{Activity, Cell, Chat, Chats, Projects, Teams}
   alias Burrow.Projects.Project
 
   @impl true
@@ -18,6 +18,7 @@ defmodule BurrowWeb.ProjectLive.Index do
       Cell.subscribe()
       Projects.subscribe()
       Teams.subscribe()
+      Activity.subscribe()
     end
 
     scope = socket.assigns.current_scope
@@ -26,43 +27,110 @@ defmodule BurrowWeb.ProjectLive.Index do
      socket
      |> assign(page_title: "Projects", ai_connected: nil)
      |> assign(form: new_form(), slug: nil)
-     |> assign(menu_open: false, panel: nil)
+     |> assign(menu: nil, dialog: nil)
      |> load()
      |> then(&assign(&1, creating: &1.assigns.projects == []))
      |> start_async(:ai, fn -> Burrow.OpenCode.connected?(scope.user.id) end)}
-  end
-
-  @impl true
-  def handle_params(params, _uri, socket) do
-    was = socket.assigns[:selected]
-    socket = socket |> assign(selected_id: parse_id(params["p"])) |> select()
-    now = socket.assigns.selected
-
-    if was && now && was.id == now.id,
-      do: {:noreply, socket},
-      else: {:noreply, assign(socket, menu_open: false, panel: nil)}
   end
 
   defp load(socket) do
     scope = socket.assigns.current_scope
     projects = Projects.list(scope)
 
-    socket
-    |> assign(projects: projects, teams: Teams.list(scope))
-    |> assign(statuses: Map.new(projects, &{&1.id, Cell.status(&1.id)}))
-    |> select()
+    assign(socket,
+      projects: projects,
+      cards: Map.new(projects, &{&1.id, card(&1)}),
+      teams: Teams.list(scope)
+    )
   end
 
-  defp select(socket) do
-    %{projects: projects} = socket.assigns
-    id = socket.assigns[:selected_id]
-    selected = Enum.find(projects, &(&1.id == id)) || List.first(projects)
+  # What a row shows besides the project's own fields: its status, main's
+  # latest change and where the refs are (a repo project has neither; its
+  # history is in git), and its chats.
+  defp card(project) do
+    phases = for c <- Activity.chats(project, Chat.busy_ids(project.id)), do: c.phase
 
-    socket
-    |> assign(selected: selected)
-    |> assign(share_form: to_form(%{"team_id" => selected && selected.team_id}, as: "share"))
-    |> assign(teammates: teammates(selected))
+    {latest, refs} =
+      if Project.repo?(project) do
+        {nil, %{}}
+      else
+        dir = Projects.repo_dir(project)
+        refs = Totem.Repo.refs(dir)
+        {refs["main"] && Totem.Repo.change(dir, refs["main"]), refs}
+      end
+
+    {st, job, label, sub} = status(project, Activity.of(project), phases, refs)
+
+    %{
+      st: st,
+      job: job,
+      label: label,
+      sub: sub,
+      latest: latest,
+      where: where(project, refs),
+      chats: length(phases),
+      prs: Enum.count(Chats.list(project.id), & &1.pr_url)
+    }
   end
+
+  # The row's tone, its peon's job, a label and the line under it: the peon
+  # builds while the project works, waves a flag while it waits on a person,
+  # raises a red one when something is broken and naps when all is done.
+  defp status(project, tile, phases, refs) do
+    working = Enum.count(phases, &(&1 == "working"))
+
+    case tile do
+      %{"label" => "starting"} ->
+        {"working", "build", "starting", "setting up"}
+
+      %{"state" => "working"} when working > 0 ->
+        {"working", "build", "working", "#{count(working, "chat")} working"}
+
+      %{"state" => "working"} ->
+        {"working", "build", "checking", "main runs its checks"}
+
+      %{"state" => "stopped"} ->
+        {"need", "need", "stopped", "restart it from ⋯"}
+
+      %{"label" => "ready to ship"} ->
+        ahead =
+          if refs["staging"], do: "staging ##{refs["staging"]}", else: "main ##{refs["main"]}"
+
+        {"waiting", "wave", "ready to ship", "#{ahead} is ahead of #{prod_name(project)}"}
+
+      %{"label" => "new"} ->
+        {"idle", "nap", "new", "nothing built yet"}
+
+      %{"state" => "waiting"} ->
+        cond do
+          "failed" in phases -> {"need", "need", "needs you", "checks failed"}
+          "staged" in phases -> {"waiting", "wave", "on staging", "ship it to prod"}
+          "ready" in phases -> {"waiting", "wave", "pull request open", "waiting for review"}
+          true -> {"need", "need", "needs you", "a secret is missing"}
+        end
+
+      %{"label" => label} ->
+        {"idle", "nap", label, "nothing open"}
+    end
+  end
+
+  # "main #3 · live #2"; a repo project's repo instead.
+  defp where(project, refs) do
+    if Project.repo?(project) do
+      project.repo_url
+      |> String.replace(~r{\Ahttps?://(www\.)?(github\.com/)?}, "")
+      |> String.trim_trailing(".git")
+    else
+      names = if Project.live_only?(project), do: ~w(main prod), else: ~w(main staging prod)
+
+      Enum.map_join(names, " · ", fn ref ->
+        name = if ref == "prod", do: prod_name(project), else: ref
+        if refs[ref], do: "#{name} ##{refs[ref]}", else: "#{name} —"
+      end)
+    end
+  end
+
+  defp prod_name(project), do: if(Project.live_only?(project), do: "live", else: "prod")
 
   # Who the owner can hand the project to: the others in its team.
   defp teammates(%Project{team: %Burrow.Teams.Team{} = team, user_id: owner_id}),
@@ -72,20 +140,13 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   defp new_form(attrs \\ %{}), do: to_form(Projects.change(attrs), as: "project")
 
-  defp parse_id(nil), do: nil
-
-  defp parse_id(id) do
-    case Integer.parse(id) do
-      {id, ""} -> id
-      _ -> nil
-    end
-  end
+  defp project!(socket, id), do: Projects.get!(socket.assigns.current_scope, id)
 
   @impl true
   def handle_event("new_project", _params, socket), do: {:noreply, assign(socket, creating: true)}
 
   def handle_event("close_dialog", _params, socket),
-    do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil)}
+    do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil, dialog: nil)}
 
   def handle_event("cancel_new", _params, socket),
     do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil)}
@@ -103,16 +164,36 @@ defmodule BurrowWeb.ProjectLive.Index do
          socket
          |> put_flash(:info, "Creating #{project.name}. It starts in a few seconds.")
          |> assign(form: new_form(), slug: nil, creating: false)
-         |> load()
-         |> push_patch(to: ~p"/projects?p=#{project.id}")}
+         |> load()}
 
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset, as: "project"))}
     end
   end
 
+  def handle_event("menu", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+    {:noreply, update(socket, :menu, &if(&1 == id, do: nil, else: id))}
+  end
+
+  def handle_event("close_menu", _params, socket), do: {:noreply, assign(socket, menu: nil)}
+
+  def handle_event("dialog", %{"dialog" => kind, "id" => id}, socket)
+      when kind in ["share", "hand_over"] do
+    project = project!(socket, id)
+
+    dialog = %{
+      kind: String.to_existing_atom(kind),
+      project: project,
+      form: to_form(%{"team_id" => project.team_id}, as: "share"),
+      teammates: teammates(project)
+    }
+
+    {:noreply, assign(socket, dialog: dialog, menu: nil)}
+  end
+
   def handle_event("hand_over", %{"hand_over" => %{"user_id" => user_id}}, socket) do
-    project = socket.assigns.selected
+    project = socket.assigns.dialog.project
 
     case Projects.hand_over(socket.assigns.current_scope, project, user_id) do
       {:ok, project} ->
@@ -122,6 +203,7 @@ defmodule BurrowWeb.ProjectLive.Index do
            :info,
            "#{project.name} now belongs to #{project.user.email}. Its chats restart on their AI login."
          )
+         |> assign(dialog: nil)
          |> load()}
 
       {:error, _} ->
@@ -130,15 +212,22 @@ defmodule BurrowWeb.ProjectLive.Index do
   end
 
   def handle_event("share", %{"share" => %{"team_id" => team_id}}, socket) do
-    project = socket.assigns.selected
+    project = socket.assigns.dialog.project
 
     case Projects.share(socket.assigns.current_scope, project, team_id) do
       {:ok, %Project{team: nil}} ->
-        {:noreply, socket |> put_flash(:info, "#{project.name} is private now.") |> load()}
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{project.name} is private now.")
+         |> assign(dialog: nil)
+         |> load()}
 
       {:ok, %Project{team: team}} ->
         {:noreply,
-         socket |> put_flash(:info, "#{project.name} is shared with #{team.name}.") |> load()}
+         socket
+         |> put_flash(:info, "#{project.name} is shared with #{team.name}.")
+         |> assign(dialog: nil)
+         |> load()}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Only the project's owner can share it.")}
@@ -146,39 +235,26 @@ defmodule BurrowWeb.ProjectLive.Index do
   end
 
   def handle_event("restart", %{"id" => id}, socket) do
-    project = Projects.get!(socket.assigns.current_scope, id)
-    Cell.restart(project.id)
-    {:noreply, socket}
+    Cell.restart(project!(socket, id).id)
+    {:noreply, assign(socket, menu: nil)}
   end
 
-  def handle_event("toggle_menu", _params, socket),
-    do: {:noreply, update(socket, :menu_open, &(!&1))}
+  def handle_event("delete_project", %{"id" => id}, socket) do
+    socket = assign(socket, menu: nil)
 
-  def handle_event("close_menu", _params, socket),
-    do: {:noreply, assign(socket, menu_open: false)}
-
-  def handle_event("panel", %{"panel" => panel}, socket) when panel in ["share", "hand_over"],
-    do: {:noreply, assign(socket, panel: String.to_existing_atom(panel), menu_open: false)}
-
-  def handle_event("close_panel", _params, socket), do: {:noreply, assign(socket, panel: nil)}
-
-  def handle_event("delete_project", _params, socket) do
-    case Projects.delete(socket.assigns.current_scope, socket.assigns.selected) do
+    case Projects.delete(socket.assigns.current_scope, project!(socket, id)) do
       {:ok, project} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "#{project.name} is deleted.")
-         |> push_patch(to: ~p"/projects")}
+        {:noreply, socket |> put_flash(:info, "#{project.name} is deleted.") |> load()}
 
       {:error, :not_owner} ->
         {:noreply, put_flash(socket, :error, "Only the project's owner can delete it.")}
     end
   end
 
-  def handle_event("add_envs", _params, socket) do
-    socket = assign(socket, menu_open: false)
+  def handle_event("add_envs", %{"id" => id}, socket) do
+    socket = assign(socket, menu: nil)
 
-    case Projects.add_envs(socket.assigns.current_scope, socket.assigns.selected) do
+    case Projects.add_envs(socket.assigns.current_scope, project!(socket, id)) do
       {:ok, project} ->
         {:noreply,
          socket
@@ -201,11 +277,14 @@ defmodule BurrowWeb.ProjectLive.Index do
   def handle_async(:ai, {:exit, _}, socket), do: {:noreply, assign(socket, ai_connected: false)}
 
   @impl true
-  def handle_info({:cell, id, status}, socket) do
-    if Map.has_key?(socket.assigns.statuses, id),
-      do: {:noreply, update(socket, :statuses, &Map.put(&1, id, status))},
-      else: {:noreply, socket}
+  def handle_info({:cell, id, _status}, socket) do
+    case Enum.find(socket.assigns.projects, &(&1.id == id)) do
+      nil -> {:noreply, socket}
+      project -> {:noreply, update(socket, :cards, &Map.put(&1, id, card(project)))}
+    end
   end
+
+  def handle_info(:rail_changed, socket), do: {:noreply, load(socket)}
 
   def handle_info({event, _}, socket)
       when event in [:project_created, :project_updated, :project_deleted, :team_changed],
@@ -308,254 +387,290 @@ defmodule BurrowWeb.ProjectLive.Index do
         </.form>
       </.modal>
 
+      <.modal
+        :if={@dialog}
+        id="project-dialog"
+        title={"#{if @dialog.kind == :share, do: "Share", else: "Hand over"} #{@dialog.project.name}"}
+        return_to={"project-menu-#{@dialog.project.id}"}
+      >
+        <.form
+          :if={@dialog.kind == :share}
+          for={@dialog.form}
+          id="share-form"
+          phx-change="share"
+          class="flex flex-col gap-3"
+        >
+          <.input
+            field={@dialog.form[:team_id]}
+            type="select"
+            label="Who can see this project"
+            options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+          />
+          <p :if={@teams == []} class="hint m-0">
+            To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
+          </p>
+          <div class="flex justify-end">
+            <button type="button" class="btn btn-ghost" phx-click="close_dialog">Close</button>
+          </div>
+        </.form>
+        <.form
+          :if={@dialog.kind == :hand_over}
+          for={%{}}
+          as={:hand_over}
+          id="hand-over-form"
+          phx-submit="hand_over"
+          data-confirm="Hand this project over? It will run on their AI login, and only they can share it or hand it on."
+          class="flex flex-col gap-3"
+        >
+          <.input
+            :if={@dialog.teammates != []}
+            name="hand_over[user_id]"
+            value=""
+            type="select"
+            label="Hand it over to"
+            options={Enum.map(@dialog.teammates, &{&1.email, &1.id})}
+          />
+          <p :if={@dialog.teammates == []} class="hint m-0">
+            No one else is in {@dialog.project.team.name} yet.
+          </p>
+          <div class="flex gap-2 justify-end">
+            <.button :if={@dialog.teammates != []} class="btn btn-secondary">Hand over</.button>
+            <button type="button" class="btn btn-ghost" phx-click="close_dialog">Cancel</button>
+          </div>
+        </.form>
+      </.modal>
+
       <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
         <span class="st warn"><span class="dot"></span>No AI login</span>
         <span class="text-[var(--text-2)]">Connect an AI provider so Peon can work.</span>
         <.link navigate={~p"/ai"} class="btn btn-secondary btn-sm ml-auto">Connect</.link>
       </div>
 
-      <div class="flex flex-wrap gap-12 items-start">
-        <ul id="projects" aria-label="Projects" class="plist flex-[1_1_340px] max-w-[420px]">
-          <li :if={@projects == []} class="py-4 text-sm text-[var(--text-3)]">No projects yet.</li>
-          <li :for={p <- @projects} id={"project-#{p.id}"} class="relative">
+      <p :if={@projects == []} class="m-0 text-[15px] text-[var(--text-2)]">
+        Name your first project. It starts in a few seconds; then open its workspace and describe what to build.
+      </p>
+
+      <div :if={@projects != []} class="proj head" aria-hidden="true">
+        <span></span><span>Project</span><span class="c3">Current change</span><span>Status</span><span class="c5">Where</span><span class="c6">Chats</span><span></span>
+      </div>
+      <ul :if={@projects != []} id="projects" aria-label="Projects" class="projs">
+        <li :for={p <- @projects} id={"project-#{p.id}"} class="proj">
+          <% c = @cards[p.id] %>
+          <% owner? = Projects.owner?(@current_scope, p) %>
+          <canvas
+            id={"peon-mini-#{p.id}"}
+            class="mini"
+            phx-hook=".PeonMini"
+            phx-update="ignore"
+            data-job={c.job}
+            width="144"
+            height="34"
+            aria-hidden="true"
+          ></canvas>
+          <div class="flex flex-col min-w-0">
             <.link
               navigate={~p"/projects/#{p.id}"}
               data-kb="item"
-              class={["prow", @selected && @selected.id == p.id && "sel"]}
-              title={"Open #{p.name}"}
+              class="nm"
+              aria-label={"#{p.name}, #{c.label}, #{c.sub}"}
             >
-              <span class="r1">
-                <span class="name">{p.name}</span>
-                <.status status={@statuses[p.id]} />
-              </span>
-              <span class="r2 mono">
-                <span>{p.slug}</span>
-                <span>{envs_label(p)}</span>
-                <span :if={p.team}>shared · <b>{p.team.name}</b></span>
-                <span :if={!p.team}>private</span>
-                <span :if={p.user_id != @current_scope.user.id}>by <b>{p.user.email}</b></span>
-              </span>
-              <span class={["hp", tone(@statuses[p.id])]} aria-hidden="true"><i></i></span>
+              {p.name}
             </.link>
-            <.link
-              patch={~p"/projects?p=#{p.id}"}
-              class="icon-btn sm prow-more"
-              aria-label={"Details for #{p.name}"}
-              title="Details"
-              aria-current={@selected && @selected.id == p.id && "true"}
-            >
-              <.icon name="hero-chevron-right" class="size-4" />
-            </.link>
-          </li>
-        </ul>
-
-        <section
-          :if={@selected}
-          id="selected-project"
-          aria-label="Selected project"
-          class="flex-[999_1_560px] min-w-0 flex flex-col gap-8"
-        >
-          <% live? = Project.live_only?(@selected) %>
-          <% owner? = Projects.owner?(@current_scope, @selected) %>
-          <div class="flex items-start justify-between gap-4 flex-wrap">
-            <div class="flex flex-col gap-0.5 min-w-0">
-              <h2 class="m-0 text-2xl leading-8 font-semibold tracking-[-0.01em]">
-                {@selected.name}
-              </h2>
-              <span id="project-meta" class="mono text-[12.5px] text-[var(--text-3)]">
-                {@selected.slug} · {envs_label(@selected)}
-              </span>
-            </div>
-            <div class="flex items-center gap-2">
-              <div :if={owner?} class="menuw" phx-click-away={@menu_open && "close_menu"}>
-                <button
-                  id="project-menu-button"
-                  type="button"
-                  class="icon-btn"
-                  aria-label={"More for #{@selected.name}"}
-                  aria-haspopup="menu"
-                  aria-expanded={to_string(@menu_open)}
-                  aria-controls="project-menu"
-                  phx-click="toggle_menu"
-                  data-kb-key="."
-                  data-kb-label="More"
-                  data-kb-group="Project"
-                >
-                  <.icon name="hero-ellipsis-horizontal" class="size-5" />
-                </button>
-                <div
-                  :if={@menu_open}
-                  id="project-menu"
-                  class="menu"
-                  role="menu"
-                  aria-label={@selected.name}
-                  phx-window-keydown="close_menu"
-                  phx-key="Escape"
-                >
-                  <button type="button" role="menuitem" phx-click="panel" phx-value-panel="share">
-                    Share
-                    <span class="k">{if @selected.team, do: @selected.team.name, else: "Only me"}</span>
-                  </button>
-                  <button
-                    :if={@selected.team && @teammates != []}
-                    type="button"
-                    role="menuitem"
-                    phx-click="panel"
-                    phx-value-panel="hand_over"
-                  >
-                    Hand over
-                  </button>
-                  <div :if={live?} class="msep" role="separator"></div>
-                  <button
-                    :if={live?}
-                    id="add-envs"
-                    type="button"
-                    role="menuitem"
-                    phx-click="add_envs"
-                    data-confirm={"Add staging and prod to #{@selected.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
-                  >
-                    Add staging and prod
-                  </button>
-                  <div class="msep" role="separator"></div>
-                  <button
-                    id="delete-project"
-                    type="button"
-                    role="menuitem"
-                    class="text-[var(--err)]"
-                    phx-click="delete_project"
-                    data-confirm={"Delete #{@selected.name} for good? Its chats, code history, environments and secrets go with it."}
-                  >
-                    Delete project
-                  </button>
-                </div>
-              </div>
-            </div>
+            <span class="sub">{meta(p, owner?)}</span>
           </div>
-
-          <div :if={@panel} id="project-panel" class="panel">
-            <div class="sec-h">
-              <span class="eyebrow">{if @panel == :share, do: "Share", else: "Hand over"}</span>
-              <button type="button" class="icon-btn sm" aria-label="Close" phx-click="close_panel">
-                <.icon name="hero-x-mark" class="size-4" />
+          <div class={["chg c3", !c.latest && "none"]}>
+            <%= cond do %>
+              <% c.latest -> %>
+                <b>#{c.latest.id}</b>{c.latest.intent}
+              <% Project.repo?(p) -> %>
+                {if c.prs == 0, do: "No pull requests yet", else: count(c.prs, "pull request")}
+              <% true -> %>
+                Nothing built yet
+            <% end %>
+          </div>
+          <div class="flex flex-col min-w-0">
+            <span class={["state", c.st]}>{c.label}</span>
+            <span class="sub">{c.sub}</span>
+          </div>
+          <span class="sub c5">{c.where}</span>
+          <span class="ch c6">{count(c.chats, "chat")}</span>
+          <div class="menuw c7" phx-click-away={@menu == p.id && "close_menu"}>
+            <button
+              id={"project-menu-#{p.id}"}
+              type="button"
+              class="icon-btn sm"
+              aria-label={"More for #{p.name}"}
+              aria-haspopup="menu"
+              aria-expanded={to_string(@menu == p.id)}
+              phx-click="menu"
+              phx-value-id={p.id}
+            >
+              <.icon name="hero-ellipsis-horizontal" class="size-5" />
+            </button>
+            <div
+              :if={@menu == p.id}
+              id={"project-menu-items-#{p.id}"}
+              class="menu"
+              role="menu"
+              aria-label={p.name}
+              phx-window-keydown="close_menu"
+              phx-key="Escape"
+            >
+              <button type="button" role="menuitem" phx-click="restart" phx-value-id={p.id}>
+                Restart <.icon name="hero-arrow-path" class="size-4 text-[var(--text-3)]" />
+              </button>
+              <button
+                :if={owner?}
+                type="button"
+                role="menuitem"
+                phx-click="dialog"
+                phx-value-dialog="share"
+                phx-value-id={p.id}
+              >
+                Share <span class="k">{if p.team, do: p.team.name, else: "Only me"}</span>
+              </button>
+              <button
+                :if={owner? && p.team}
+                type="button"
+                role="menuitem"
+                phx-click="dialog"
+                phx-value-dialog="hand_over"
+                phx-value-id={p.id}
+              >
+                Hand over
+              </button>
+              <div :if={owner? && Project.live_only?(p)} class="msep" role="separator"></div>
+              <button
+                :if={owner? && Project.live_only?(p)}
+                id={"add-envs-#{p.id}"}
+                type="button"
+                role="menuitem"
+                phx-click="add_envs"
+                phx-value-id={p.id}
+                data-confirm={"Add staging and prod to #{p.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
+              >
+                Add staging and prod
+              </button>
+              <div :if={owner?} class="msep" role="separator"></div>
+              <button
+                :if={owner?}
+                id={"delete-project-#{p.id}"}
+                type="button"
+                role="menuitem"
+                class="danger"
+                phx-click="delete_project"
+                phx-value-id={p.id}
+                data-confirm={"Delete #{p.name} for good? Its chats, code history, environments and secrets go with it."}
+              >
+                Delete project
               </button>
             </div>
-            <.form
-              :if={@panel == :share}
-              for={@share_form}
-              id="share-form"
-              phx-change="share"
-              class="border-t border-[var(--border-strong)] pt-4 max-w-[420px]"
-            >
-              <.input
-                field={@share_form[:team_id]}
-                type="select"
-                label="Who can see this project"
-                options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
-              />
-              <p :if={@teams == []} class="hint m-0">
-                To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
-              </p>
-            </.form>
-            <.form
-              :if={@panel == :hand_over && @selected.team && @teammates != []}
-              for={%{}}
-              as={:hand_over}
-              id="hand-over-form"
-              phx-submit="hand_over"
-              data-confirm="Hand this project over? It will run on their AI login, and only they can share it or hand it on."
-              class="border-t border-[var(--border-strong)] pt-4 max-w-[420px] flex gap-2 items-end"
-            >
-              <div class="flex-1">
-                <.input
-                  name="hand_over[user_id]"
-                  value=""
-                  type="select"
-                  label="Hand it over to"
-                  options={Enum.map(@teammates, &{&1.email, &1.id})}
-                />
-              </div>
-              <.button class="btn btn-secondary btn-sm mb-1">Hand over</.button>
-            </.form>
           </div>
+          <span class={["hp", c.st]} aria-hidden="true"><i></i></span>
+        </li>
+      </ul>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonMini">
+        export default {
+          mounted() { this.stop = peonMini(this.el) },
+          destroyed() { this.stop() }
+        }
 
-          <div>
-            <div class="cells">
-              <div class="cell">
-                <div class="flex items-center gap-2.5">
-                  <span class="eyebrow">project</span>
-                  <.status status={@statuses[@selected.id]} />
-                </div>
-                <div class="tip">ports<small>{@selected.preview_ports}</small></div>
-                <button
-                  id="restart-peon"
-                  data-kb-key="R"
-                  data-kb-label="Restart the project"
-                  data-kb-group="Project"
-                  type="button"
-                  class="xlink w-fit"
-                  phx-click="restart"
-                  phx-value-id={@selected.id}
-                >
-                  Restart <.icon name="hero-arrow-path" class="size-3.5" />
-                </button>
-              </div>
-              <div class="cell">
-                <span class="eyebrow">sharing</span>
-                <div class="tip plain">
-                  {if @selected.team, do: @selected.team.name, else: "Private"}
-                </div>
-                <span class="meta">
-                  {if @selected.team,
-                    do: "Everyone in #{@selected.team.name} can open and restart it.",
-                    else: "Only you can see it."}
-                </span>
-              </div>
-            </div>
-            <p class="m-0 py-3 text-[13.5px] text-[var(--text-2)]">
-              <%= if owner? do %>
-                Runs on your AI login{if @selected.team, do: ", also when teammates chat in it"}.
-              <% else %>
-                Owned by {@selected.user.email}. Runs on their AI login.
-              <% end %>
-            </p>
-          </div>
-        </section>
-
-        <section
-          :if={!@selected}
-          class="flex-[999_1_560px] min-w-0 pt-4 text-[15px] text-[var(--text-2)]"
-        >
-          Name your first project. It starts in a few seconds; then open its workspace and describe what to build.
-        </section>
-      </div>
+        // One peon and one prop, in pixels, per the UI kit's board 3c. The job
+        // comes in as data-job, which LiveView keeps updating on this ignored
+        // element: build hammers a hut that grows, wave holds up an amber flag
+        // (waiting on you), need a red flag and "!", nap sits with z's.
+        function peonMini(canvas) {
+          const W = 72, H = 17, S = 2, GY = 16;
+          canvas.width = W * S;
+          canvas.height = H * S;
+          const ctx = canvas.getContext("2d");
+          ctx.imageSmoothingEnabled = false;
+          const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+          let col = {};
+          const readCols = () => {
+            const cs = getComputedStyle(canvas);
+            const v = (n) => cs.getPropertyValue(n).trim();
+            col = { rock: v("--border-strong"), rock2: v("--text-3"), warn: v("--warn"), err: v("--err") };
+          };
+          readCols();
+          const G = "#8FBF5A", GD = "#6E9B3D", EYE = "#1C2412", TUSK = "#F7F4EA", BARK = "#7A4E2D",
+            BARK2 = "#9A6A40", MUD = "#A07850", STEEL = "#C9CED6", SPARK = "#FFF4CC", DOOR = "#1C1612";
+          const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
+          let frame = Math.floor(Math.random() * 200), raf = 0;
+          const peon = (x, lift, dir, sit) => {
+            const sx = Math.round(x - 4), sy = GY - 9 - lift + (sit ? 1 : 0);
+            px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
+            const f = dir > 0 ? 1 : 0, a = sx + 1 + f, b = sx + 5 + f;
+            if (sit) { px(a, sy + 3, 2, 1, EYE); px(b - 1, sy + 3, 2, 1, EYE) } else { px(a, sy + 2, 1, 1, EYE); px(b, sy + 2, 1, 1, EYE) }
+            px(a, sy + 5, 1, 2, TUSK); px(b, sy + 5, 1, 2, TUSK);
+            if (!sit) { px(sx + 2, sy + 8, 1, 1, EYE); px(sx + 5, sy + 8, 1, 1, EYE) }
+            return { sx, sy };
+          };
+          const draw = () => {
+            const job = canvas.dataset.job;
+            ctx.setTransform(S, 0, 0, S, 0, 0);
+            ctx.clearRect(0, 0, W, H);
+            px(0, GY, W, 1, col.rock);
+            if (job === "build") {
+              const stage = 1 + Math.floor(frame / 180) % 4, x0 = 34;
+              px(x0, GY - 2, 26, 2, col.rock);
+              if (stage >= 2) px(x0 + 2, GY - 6, 22, 4, MUD);
+              if (stage >= 3) px(x0 + 2, GY - 10, 22, 4, MUD);
+              if (stage >= 4) for (let i = 0; i < 6; i++) { px(x0 + 1 + i * 2, GY - 11 - i, 2, 1, BARK); px(x0 + 23 - i * 2, GY - 11 - i, 2, 1, BARK) }
+              px(x0 - 2, GY - 12, 1, 12, BARK); px(x0 - 2, GY - 9, 4, 1, BARK2);
+              const { sx, sy } = peon(24, 0, 1);
+              if (frame % 16 < 8) { px(sx + 8, sy + 1, 1, 3, BARK); px(sx + 7, sy, 3, 1, STEEL) }
+              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 2, 1, 3, STEEL); if (frame % 16 < 11) px(sx + 12, sy + 1, 1, 1, SPARK) }
+            } else if (job === "wave" || job === "need") {
+              const c = job === "need" ? col.err : col.warn;
+              const { sx, sy } = peon(30, job === "need" && frame % 40 < 6 ? 1 : 0, 1);
+              px(sx + 8, sy - 6, 1, 11, BARK);
+              const w = (frame >> 4) % 2;
+              px(sx + 9, sy - 6, 5, 3, c); px(sx + 14, sy - 5 + w, 1, 2, c);
+              if (job === "need") { px(sx + 3, sy - 7, 2, 4, c); px(sx + 3, sy - 2, 2, 1, c) }
+              px(48, GY - 8, 14, 8, MUD); px(53, GY - 5, 4, 5, DOOR);
+            } else {
+              px(46, GY - 8, 14, 8, MUD); px(51, GY - 5, 4, 5, DOOR);
+              const { sx, sy } = peon(30, 0, 1, true);
+              const t = frame % 150;
+              if (t < 70) { const zx = sx + 8 + Math.floor(t / 24), zy = sy - 1 - Math.floor(t / 14); px(zx, zy, 3, 1, col.rock2); px(zx + 1, zy + 1, 1, 1, col.rock2); px(zx, zy + 2, 3, 1, col.rock2) }
+            }
+          };
+          const tick = () => {
+            frame += 1;
+            if (frame % 120 === 0) readCols();
+            draw();
+            raf = requestAnimationFrame(tick);
+          };
+          if (reduce) draw(); else raf = requestAnimationFrame(tick);
+          return () => cancelAnimationFrame(raf);
+        }
+      </script>
     </Layouts.app>
     """
   end
 
   defp blank?(value), do: value in [nil, ""] or String.trim(to_string(value)) == ""
 
-  attr :status, :any, required: true
+  # "live only · private", "staging · prod · shared · Ops", "git repo · by mira@…"
+  defp meta(project, owner?) do
+    envs =
+      cond do
+        Project.repo?(project) -> "git repo"
+        Project.live_only?(project) -> "live only"
+        true -> "staging · prod"
+      end
 
-  defp status(assigns) do
-    ~H"""
-    <span class={["st", tone(@status)]}><span class="dot"></span>{status_text(@status)}</span>
-    """
+    who =
+      cond do
+        !owner? -> "by #{project.user.email}"
+        project.team -> "shared · #{project.team.name}"
+        true -> "private"
+      end
+
+    "#{envs} · #{who}"
   end
 
-  defp tone(:running), do: "ok"
-  defp tone(:starting), do: "warn"
-  defp tone({:exited, _}), do: "err"
-  defp tone(_), do: "idle"
-
-  defp status_text({:exited, code}), do: "exited (#{code})"
-  defp status_text(nil), do: "stopped"
-  defp status_text(status), do: to_string(status)
-
-  defp envs_label(project) do
-    cond do
-      Project.repo?(project) -> "git repo"
-      Project.live_only?(project) -> "live"
-      true -> "staging · prod"
-    end
-  end
+  defp count(1, noun), do: "1 #{noun}"
+  defp count(n, noun), do: "#{n} #{noun}s"
 end
