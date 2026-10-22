@@ -58,6 +58,19 @@ defmodule Burrow.ProjectsTest do
     refute Project.live_only?(project)
     [first, last] = project.preview_ports |> String.split("-") |> Enum.map(&String.to_integer/1)
     assert Burrow.Cell.ports(project) == {first..last, %{}}
+    assert Burrow.Secrets.value(project.id, "GITHUB_TOKEN") == nil
+
+    # A token given with it is there before the first clone; an app has no use for one.
+    {:ok, other} =
+      Projects.create(scope, %{
+        "name" => "Shop",
+        "repo_url" => "https://github.com/a/shop.git",
+        "github_token" => " ghp_x "
+      })
+
+    assert Burrow.Secrets.value(other.id, "GITHUB_TOKEN") == "ghp_x"
+    {:ok, app} = Projects.create(scope, %{"name" => "Plain", "github_token" => "ghp_x"})
+    assert Burrow.Secrets.value(app.id, "GITHUB_TOKEN") == nil
   end
 
   describe "the new app's login" do

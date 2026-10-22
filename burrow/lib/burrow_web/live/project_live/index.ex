@@ -338,6 +338,16 @@ defmodule BurrowWeb.ProjectLive.Index do
               hint="needs .peon/preview.json for a preview"
             />
           </div>
+          <div :if={!blank?(@form[:repo_url].value)} class="min-w-0">
+            <.input
+              field={@form[:github_token]}
+              type="password"
+              label="GitHub token (optional for public repos)"
+              class="field"
+              autocomplete="off"
+              hint="fine-grained, for this repo: Contents and Pull requests, read and write"
+            />
+          </div>
           <div :if={blank?(@form[:repo_url].value)} class="min-w-0">
             <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
           </div>

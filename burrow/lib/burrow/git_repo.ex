@@ -74,6 +74,9 @@ defmodule Burrow.GitRepo do
 
   def token(project), do: Secrets.value(project.id, @token)
 
+  @doc "Sets the token, e.g. given with the new project."
+  def put_token(project, token, set_by), do: Secrets.put(project.id, @token, token, set_by)
+
   def checked_out?(dir), do: File.dir?(Path.join(dir, ".git"))
 
   @doc "Makes `dir` a clone of the mirror on a new branch `peon/<chat_id>`, `origin` the real repo."

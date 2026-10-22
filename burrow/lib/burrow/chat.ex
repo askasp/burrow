@@ -17,8 +17,9 @@ defmodule Burrow.Chat do
     * `{:status, status}` - see `info/1`
 
   Containers stop after `@idle_timeout` without activity, unless the chat is
-  kept running (`Burrow.Chats.keep_running/2`); the next use starts them
-  again. At most `:max_running_chats` chats of a project run at once (see
+  kept running (`Burrow.Chats.keep_running/2`) or its change is on main and
+  not live yet (`Burrow.Activity.unshipped?/2`: its preview stays to look
+  into); the next use starts them again. At most `:max_running_chats` chats of a project run at once (see
   `make_room/2`). A chat that stops broadcasts `{:stopped, reason}`:
   `:idle`, `:room`, `:deleted` or `:exited`.
 
@@ -377,7 +378,7 @@ defmodule Burrow.Chat do
   end
 
   def handle_call(:activity, _from, state) do
-    stoppable? = not state.busy? and not Chats.kept_running?(Chats.get(state.id))
+    stoppable? = not state.busy? and not kept?(state)
 
     {:reply, %{used_at: state.used_at, stoppable?: stoppable?, busy?: state.busy?}, state}
   end
@@ -557,7 +558,7 @@ defmodule Burrow.Chat do
   def handle_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
 
   def handle_info(:idle, state) do
-    if Chats.kept_running?(Chats.get(state.id)),
+    if kept?(state),
       do: {:noreply, touch(state)},
       else: {:stop, :normal, %{state | stopped: :idle}}
   end
@@ -567,6 +568,11 @@ defmodule Burrow.Chat do
   def handle_info(:make_room, state), do: {:stop, :normal, %{state | stopped: :room}}
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp kept?(state),
+    do:
+      Chats.kept_running?(Chats.get(state.id)) or
+        Burrow.Activity.unshipped?(state.project, state.id)
 
   @impl true
   def terminate(_reason, %{repo: true} = state) do
@@ -746,7 +752,7 @@ defmodule Burrow.Chat do
 
     File.write!(
       Path.join([state.dir, ".peon", "instructions.md"]),
-      Prompt.instructions(state.project)
+      Prompt.instructions(state.project, with(%{follows: id} <- Chats.get(state.id), do: id))
     )
 
     ".peon/instructions.md"

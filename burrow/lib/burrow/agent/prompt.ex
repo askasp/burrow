@@ -6,7 +6,8 @@ defmodule Burrow.Agent.Prompt do
 
   alias Burrow.{Projects, Secrets}
 
-  def instructions(project) do
+  @doc "The instructions for a template app; `follows` is the change the chat follows up on."
+  def instructions(project, follows \\ nil) do
     repo = Projects.repo_dir(project)
     otp_app = Burrow.Template.otp_app(project.slug)
     module = Macro.camelize(otp_app)
@@ -53,6 +54,18 @@ defmodule Burrow.Agent.Prompt do
     - Finish with one or two lines: what users can now do, where (URL paths), and
       anything that needs the user's approval.
 
+    ## Boards: drawing before building
+    - When the user asks you to draw, sketch or mock up something, or for takes on a page,
+      draw boards instead of changing the app. A board is one self-contained HTML file
+      under `design/`, one per take: three takes on settings are `design/settings/a.html`,
+      `b.html` and `c.html`. Each is a 1280 × 800 page with a short `<title>` naming the
+      take ("tabs", "sidebar"), in the app's own look; shared styles may go in
+      `design/tokens.css`. The user sees them in Design, next to the chat, as you write
+      them.
+    - Don't submit boards: the user lands them with Submit design (no checks; boards never
+      ship). "Build design/settings/b.html" means: build that board as the real page,
+      then submit as usual; the board lands with the code.
+
     ## Data we provide ourselves is code, not tables
     There are no admin panels: the owner changes the app by chatting with you. So data
     the business provides itself (products, prices, categories, texts, roles, settings)
@@ -87,7 +100,29 @@ defmodule Burrow.Agent.Prompt do
 
     ## Recent changes on main
     #{recent}
+    #{follows(repo, follows)}
     """
+  end
+
+  # "Follow up on #N": the change the chat goes on from, and the files it touched.
+  defp follows(_repo, nil), do: ""
+
+  defp follows(repo, id) do
+    case Totem.Repo.change(repo, id) do
+      nil ->
+        ""
+
+      change ->
+        files = Enum.map_join(change.files, "\n", fn {path, _hash} -> "- #{path}" end)
+
+        """
+
+        ## This chat follows up on ##{id}
+        The user goes on from change ##{id}, on main: #{change.intent}
+        It touched these files; read them before you change anything:
+        #{files}
+        """
+    end
   end
 
   @doc """

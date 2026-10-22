@@ -17,6 +17,8 @@ defmodule Burrow.Chats.Chat do
     field :keep_until, :utc_datetime
     # When its first message went in; nil while the chat is empty
     field :started_at, :utc_datetime
+    # The change it follows up on ("Follow up on #N"); its agent starts from it
+    field :follows, :integer
     timestamps(type: :utc_datetime)
   end
 end

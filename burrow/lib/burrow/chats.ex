@@ -34,7 +34,10 @@ defmodule Burrow.Chats do
       else: {:error, :full}
   end
 
-  @doc "Creates a chat. Options: `:model` and `:effort` (see `pick_model/3`), `started: false`."
+  @doc """
+  Creates a chat. Options: `:model` and `:effort` (see `pick_model/3`),
+  `:follows` (the change it follows up on), `started: false`.
+  """
   def create(project_id, title, created_by, opts \\ []) do
     chat =
       Repo.insert!(%Chat{
@@ -44,6 +47,7 @@ defmodule Burrow.Chats do
         created_by: created_by,
         model: model(opts[:model]),
         effort: effort(opts[:effort]),
+        follows: opts[:follows],
         started_at: if(opts[:started] != false, do: DateTime.utc_now(:second))
       })
 

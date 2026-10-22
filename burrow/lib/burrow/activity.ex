@@ -9,6 +9,7 @@ defmodule Burrow.Activity do
     * `"working"` - the agent works, or its draft is being checked
     * `"failed"` - its checks failed, or main did not pass with it
     * `"ready"` - a repo chat whose PR is open
+    * `"drawn"` - its boards are on main (`Burrow.Design`); it goes on
     * `"landing"` - on main, not shipped yet
     * `"staged"` - on staging, not on prod yet
     * `"live"` - on prod
@@ -21,7 +22,7 @@ defmodule Burrow.Activity do
 
   use GenServer
 
-  alias Burrow.{Cell, Chat, Chats, Env, Projects, Secrets, Ship}
+  alias Burrow.{Cell, Chat, Chats, Design, Env, Projects, Secrets, Ship}
   alias Totem.Repo
 
   @debounce 300
@@ -54,8 +55,9 @@ defmodule Burrow.Activity do
   defp phase(_chat, %{status: "checking"}, false, _refs), do: "working"
   defp phase(_chat, %{status: "failed"}, false, _refs), do: "failed"
 
-  defp phase(_chat, %{status: "landed", change: id}, false, refs) do
+  defp phase(_chat, %{status: "landed", change: id} = draft, false, refs) do
     cond do
+      Design.only?(draft.files) -> "drawn"
       id <= (refs["prod"] || 0) -> "live"
       id <= (refs["staging"] || 0) -> "staged"
       true -> "landing"
@@ -63,6 +65,18 @@ defmodule Burrow.Activity do
   end
 
   defp phase(_chat, _draft, false, _refs), do: "idle"
+
+  @doc "Whether the chat's change is on main or staging and not live yet."
+  def unshipped?(project, chat_id) do
+    with false <- Projects.Project.repo?(project),
+         repo = Projects.repo_dir(project),
+         %{status: "landed"} = draft <- Repo.draft(repo, chat_id),
+         %{} = chat <- Chats.get(chat_id) do
+      phase(chat, draft, false, Repo.refs(repo)) in ~w(landing staged)
+    else
+      _ -> false
+    end
+  end
 
   @doc "The change main could ship to prod now, when a person has to press Ship; else nil."
   def shippable(project) do

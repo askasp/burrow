@@ -17,6 +17,9 @@ defmodule Burrow.Workspace do
 
   def base_id(dir), do: read_base(dir)["change"]
 
+  @doc "The tree `dir` was made from: path => hash."
+  def base_tree(dir), do: read_base(dir)["tree"]
+
   @doc """
   Makes `dir` match change `id` of `repo`, writing only what differs from
   its previous base, so deps and _build stay.

@@ -323,10 +323,14 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :base, :string, required: true, doc: "the workspace's path"
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
+  attr :live_only?, :boolean, required: true
 
-  @doc "A tab per chat, with where its change stands; up to `Burrow.Chats.max/0`."
+  @doc """
+  A tab per chat, with where its change stands (a check once it is done);
+  up to `Burrow.Chats.max/0`. Each closes; prefix q closes the open one.
+  """
   def chat_tabs(assigns) do
-    assigns = assign(assigns, full?: length(assigns.tabs) >= Chats.max())
+    assigns = assign(assigns, full?: length(assigns.tabs) >= Chats.max(), prefix: "⌃B")
 
     ~H"""
     <div class="chead">
@@ -341,24 +345,32 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             data-kb-current={if(@chat && @chat.id == t.chat.id, do: "1")}
             title={tab_tip(t, @project, @nothing_built?)}
           >
-            <span class={["cdot", dot(t.phase)]} aria-hidden="true"></span>
+            <span :if={finished?(t, @live_only?)} class="ok" aria-hidden="true">
+              <.icon name="hero-check" class="size-[13px]" />
+            </span>
+            <span :if={!finished?(t, @live_only?)} class={["cdot", dot(t.phase)]} aria-hidden="true"></span>
             <span :if={number(t)} class="n">#{number(t)}</span>
             <span class="t">{tab_title(t, @project, @nothing_built?)}</span>
           </.link>
           <button
-            :if={closable?(t, @repo?)}
             type="button"
             class="cx"
             phx-click="close_chat"
             phx-value-id={t.chat.id}
             aria-label={"Close #{tab_title(t, @project, @nothing_built?)}"}
-            data-confirm={close_confirm(t, @repo?)}
+            title={"Close (#{@prefix} Q)"}
+            data-confirm={close_confirm(t, @repo?, @live_only?)}
+            data-kb-key={if(@chat && @chat.id == t.chat.id, do: "q")}
+            data-kb-label="Close this chat"
+            data-kb-group="Chats"
           >
             <.icon name="hero-x-mark" class="size-3" />
           </button>
         </div>
       </div>
-      <span title={if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat"}>
+      <span title={
+        if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat (#{@prefix} C)"
+      }>
         <button
           id="new-chat"
           type="button"
@@ -378,6 +390,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
+  defp tab_title(%{chat: %{title: "", follows: id}}, _project, _nothing_built?) when id != nil,
+    do: "Follow-up to ##{id}"
+
   defp tab_title(%{chat: %{title: ""}}, project, true),
     do: "What should #{project && project.name} do?"
 
@@ -396,6 +411,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp phase_text("working"), do: "working"
   defp phase_text("failed"), do: "checks failed"
   defp phase_text("ready"), do: "pull request open"
+  defp phase_text("drawn"), do: "boards on main"
   defp phase_text("landing"), do: "on main"
   defp phase_text("staged"), do: "on staging"
   defp phase_text("live"), do: "live"
@@ -404,24 +420,34 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp dot(phase) when phase in ~w(working landing), do: "working"
   defp dot(phase) when phase in ~w(ready staged failed), do: "waiting"
-  defp dot("live"), do: "done"
+  defp dot(phase) when phase in ~w(live drawn), do: "done"
   defp dot(_), do: "new"
 
-  # Shipped (live) chats and chats with nothing submitted close; a repo chat's
-  # pull request stays open.
-  defp closable?(%{phase: phase}, true), do: phase in ~w(new idle ready)
-  defp closable?(%{phase: phase}, false), do: phase in ~w(new idle live)
+  @doc "A chat whose change is live, or on main where main is what goes live: it is done."
+  def finished?(%{phase: "live"}, _live_only?), do: true
+  def finished?(%{phase: "landing"}, live_only?), do: live_only?
+  def finished?(_tab, _live_only?), do: false
 
-  defp close_confirm(%{phase: "new"}, _repo?), do: nil
+  # Closing a done or empty chat loses nothing; any other asks first. What a
+  # chat merged stays, and so does a repo chat's pull request.
+  defp close_confirm(%{phase: "new"}, _repo?, _live_only?), do: nil
 
-  defp close_confirm(%{phase: "live"}, _repo?),
-    do: "Close this chat? What it merged stays; its agent and preview go."
+  defp close_confirm(%{phase: phase} = tab, _repo?, live_only?)
+       when phase in ~w(landing staged live drawn),
+       do:
+         if(!finished?(tab, live_only?),
+           do: "Close this chat? What it merged stays; its agent and preview go."
+         )
 
-  defp close_confirm(_tab, true),
+  defp close_confirm(_tab, true, _live_only?),
     do:
       "Close this chat? Its agent, preview and checkout go; a pull request it opened stays open."
 
-  defp close_confirm(_tab, false), do: "Close this chat? The conversation goes with it."
+  defp close_confirm(%{phase: "failed"}, false, _live_only?),
+    do: "Discard this change? The chat closes with it."
+
+  defp close_confirm(_tab, false, _live_only?),
+    do: "Close this chat? The conversation goes with it."
 
   ## Model and thinking level
 
@@ -922,6 +948,59 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
+  attr :tab, :map, required: true, doc: "a finished chat's tab (`finished?/2`)"
+  attr :full?, :boolean, required: true, doc: "no room for another chat"
+  attr :attach?, :boolean, required: true, doc: "its agent runs, so opencode can attach"
+
+  @doc """
+  In place of a finished chat's box: its change is out, so the next one
+  starts in a new chat, maybe following up on this one.
+  """
+  def chat_done(assigns) do
+    assigns = assign(assigns, id: assigns.tab.draft.change, full: "Up to #{Chats.max()} chats.")
+
+    ~H"""
+    <section id="chat-done" class="ws-done" aria-label="This chat is finished">
+      <div class="h">
+        <.icon name="hero-check" class="size-[17px] self-center text-[var(--ok)]" />
+        <b>#{@id} {if @tab.phase == "live", do: "is live.", else: "is on main."}</b>
+        <span>This chat is done. The next change starts in a new one.</span>
+      </div>
+      <div class="a">
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          phx-click="new_chat"
+          disabled={@full?}
+          title={@full? && @full}
+        >
+          New chat <kbd>⌃B C</kbd>
+        </button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          phx-click="follow_up"
+          disabled={@full?}
+          title={@full? && @full}
+        >
+          Follow up on #{@id}
+        </button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          phx-click="close_chat"
+          phx-value-id={@tab.chat.id}
+        >
+          Close this chat <kbd>⌃B Q</kbd>
+        </button>
+        <button :if={@attach?} type="button" class="xlink mono ml-auto" phx-click="toggle_attach">
+          Open in opencode
+        </button>
+      </div>
+    </section>
+    """
+  end
+
   defp reached("landing"), do: 1
   defp reached("staged"), do: 2
   defp reached("live"), do: 3
@@ -977,8 +1056,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :show_logs, :boolean, required: true
   attr :logs, :string, required: true
   attr :project, :map
+  attr :design, :map, default: nil, doc: "the design view's switch: `%{count, drawing, note}`"
+  slot :inner_block, doc: "the design view"
 
-  @doc "The version switch and what it shows: the chat's dev preview, staging or prod."
+  @doc """
+  The version switch and what it shows: the chat's dev preview, staging or
+  prod, or its boards (the inner block) in the design view.
+  """
   def preview_pane(assigns) do
     ~H"""
     <div class="vbar">
@@ -998,110 +1082,136 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           phx-value-view="dev"
           aria-pressed={to_string(@view == "dev")}
           disabled={!@dev?}
-          title={if !@dev?, do: "The chat's dev preview starts with its first message"}
+          title={
+            if !@dev?,
+              do:
+                "The chat's dev preview starts with its first message, and goes once its change is live"
+          }
         >
           {if @number && @dev?, do: "dev ##{@number}", else: "dev"}
         </button>
-      </div>
-      <span :if={@preview.status} class={["st", st_tone(@preview.status)]}>
-        <span class="dot"></span>{preview_word(@preview.status)}
-      </span>
-      <div class="ws-url mono">
-        <.icon name="hero-lock-closed" class="size-3.5 shrink-0 muted" />
-        <span class="truncate">{@preview.url || "no preview yet"}</span>
-      </div>
-      <a
-        :for={{name, url} <- @preview[:links] || []}
-        href={url}
-        target="_blank"
-        rel="noopener"
-        class="tag mono"
-        title={"Open #{name} in a new tab"}
-      >
-        {name} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
-      </a>
-      <a
-        :if={@preview[:pr]}
-        href={@preview.pr}
-        target="_blank"
-        rel="noopener"
-        class="tag mono"
-        title="The chat's pull request"
-      >
-        PR {pr_number(@preview.pr)} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
-      </a>
-      <button
-        :if={@preview.url && !@preview[:empty]}
-        type="button"
-        phx-click="reload_preview"
-        data-kb-key="r"
-        data-kb-label="Reload preview"
-        data-kb-group="Agent & preview"
-        class="icon-btn"
-        aria-label="Reload preview"
-      >
-        <.icon name="hero-arrow-path" class="size-[17px]" />
-      </button>
-      <a
-        :if={@preview.url && !@preview[:empty]}
-        href={@preview.url}
-        target="_blank"
-        rel="noopener"
-        data-kb="row"
-        class="icon-btn"
-        aria-label={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
-        title={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
-      >
-        <.icon name="hero-arrow-top-right-on-square" class="size-4" />
-      </a>
-      <form
-        :if={(@view == "dev" and @chat) && @info}
-        id="keep-running-form"
-        phx-change="keep_running"
-        class="shrink-0"
-      >
-        <label class="sr-only" for="keep-running">Keep running</label>
-        <select
-          id="keep-running"
-          name="hours"
-          class="field keep"
-          title="How long the agent and preview stay up without use, e.g. while others test the preview"
+        <button
+          :if={@design}
+          id="design-view"
+          type="button"
+          phx-click="view"
+          phx-value-view="design"
+          aria-pressed={to_string(@view == "design")}
+          data-kb-key="d"
+          data-kb-label="Design"
+          data-kb-group="Agent & preview"
+          title="Boards in design/"
         >
-          <option :if={Chats.kept_running?(@chat)} value="kept" selected>
-            Running until {Calendar.strftime(@chat.keep_until, "%b %-d, %H:%M UTC")}
-          </option>
-          <option value="">Stops after 30 min idle</option>
-          <option value="4">Keep running 4 hours</option>
-          <option value="24">Keep running 1 day</option>
-          <option value="168">Keep running 7 days</option>
-        </select>
-      </form>
-      <button
-        :if={@view == "dev" and @info}
-        type="button"
-        phx-click="restart_preview"
-        data-kb-key="R"
-        data-kb-label="Restart preview"
-        data-kb-group="Agent & preview"
-        class="btn btn-ghost btn-sm"
-      >
-        Restart
-      </button>
-      <button
-        :if={@preview.url && !@preview[:empty]}
-        type="button"
-        phx-click="toggle_logs"
-        data-kb-key="v"
-        data-kb-label="Preview logs"
-        data-kb-group="Agent & preview"
-        aria-pressed={to_string(@show_logs)}
-        class="btn btn-secondary btn-sm"
-      >
-        <.icon name="hero-command-line" class="size-4" /> Logs
-      </button>
+          design<span
+            :if={@design.count > 0}
+            class="dcnt"
+            aria-label={"#{@design.count} boards changed in this chat"}
+          >{@design.count}</span><span :if={@design.drawing} class="ddot" aria-hidden="true"></span>
+        </button>
+      </div>
+      <span :if={@view == "design"} class="mono muted text-[12px] truncate">{@design.note}</span>
+      <div :if={@view != "design"} class="contents">
+        <span :if={@preview.status} class={["st", st_tone(@preview.status)]}>
+          <span class="dot"></span>{preview_word(@preview.status)}
+        </span>
+        <div class="ws-url mono">
+          <.icon name="hero-lock-closed" class="size-3.5 shrink-0 muted" />
+          <span class="truncate">{@preview.url || "no preview yet"}</span>
+        </div>
+        <a
+          :for={{name, url} <- @preview[:links] || []}
+          href={url}
+          target="_blank"
+          rel="noopener"
+          class="tag mono"
+          title={"Open #{name} in a new tab"}
+        >
+          {name} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
+        </a>
+        <a
+          :if={@preview[:pr]}
+          href={@preview.pr}
+          target="_blank"
+          rel="noopener"
+          class="tag mono"
+          title="The chat's pull request"
+        >
+          PR {pr_number(@preview.pr)} <.icon name="hero-arrow-top-right-on-square" class="size-3" />
+        </a>
+        <button
+          :if={@preview.url && !@preview[:empty]}
+          type="button"
+          phx-click="reload_preview"
+          data-kb-key="r"
+          data-kb-label="Reload preview"
+          data-kb-group="Agent & preview"
+          class="icon-btn"
+          aria-label="Reload preview"
+        >
+          <.icon name="hero-arrow-path" class="size-[17px]" />
+        </button>
+        <a
+          :if={@preview.url && !@preview[:empty]}
+          href={@preview.url}
+          target="_blank"
+          rel="noopener"
+          data-kb="row"
+          class="icon-btn"
+          aria-label={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
+          title={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
+        >
+          <.icon name="hero-arrow-top-right-on-square" class="size-4" />
+        </a>
+        <form
+          :if={(@view == "dev" and @chat) && @info}
+          id="keep-running-form"
+          phx-change="keep_running"
+          class="shrink-0"
+        >
+          <label class="sr-only" for="keep-running">Keep running</label>
+          <select
+            id="keep-running"
+            name="hours"
+            class="field keep"
+            title="How long the agent and preview stay up without use, e.g. while others test the preview"
+          >
+            <option :if={Chats.kept_running?(@chat)} value="kept" selected>
+              Running until {Calendar.strftime(@chat.keep_until, "%b %-d, %H:%M UTC")}
+            </option>
+            <option value="">Stops after 30 min idle</option>
+            <option value="4">Keep running 4 hours</option>
+            <option value="24">Keep running 1 day</option>
+            <option value="168">Keep running 7 days</option>
+          </select>
+        </form>
+        <button
+          :if={@view == "dev" and @info}
+          type="button"
+          phx-click="restart_preview"
+          data-kb-key="R"
+          data-kb-label="Restart preview"
+          data-kb-group="Agent & preview"
+          class="btn btn-ghost btn-sm"
+        >
+          Restart
+        </button>
+        <button
+          :if={@preview.url && !@preview[:empty]}
+          type="button"
+          phx-click="toggle_logs"
+          data-kb-key="v"
+          data-kb-label="Preview logs"
+          data-kb-group="Agent & preview"
+          aria-pressed={to_string(@show_logs)}
+          class="btn btn-secondary btn-sm"
+        >
+          <.icon name="hero-command-line" class="size-4" /> Logs
+        </button>
+      </div>
     </div>
 
-    <div class="ws-prev-body">
+    {if @view == "design", do: render_slot(@inner_block)}
+    <div :if={@view != "design"} class="ws-prev-body">
       <iframe
         :if={@preview.live?}
         id={"preview-#{@view}-#{@frame_key}"}
@@ -1607,6 +1717,23 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             />
             <div id="np-repo-hint" class="mono hint">needs .peon/preview.json for a preview</div>
           </div>
+          <div :if={@p.repo_url != ""}>
+            <label class="flabel" for="np-token">
+              GitHub token <span>(optional for public repos)</span>
+            </label>
+            <input
+              id="np-token"
+              name="project[github_token]"
+              type="password"
+              class="field"
+              autocomplete="off"
+              value={@p.github_token}
+              aria-describedby="np-token-hint"
+            />
+            <div id="np-token-hint" class="mono hint">
+              fine-grained, for this repo: Contents and Pull requests, read and write
+            </div>
+          </div>
           <div>
             <label class="flabel" for="np-share">Shared with</label>
             <select id="np-share" name="project[team_id]" class="field">
@@ -1905,7 +2032,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   def block(%{block: {:peon, messages, ack?}} = assigns) do
-    assigns = assign(assigns, messages: messages, ack?: ack?)
+    drawn =
+      for %{role: :tool, text: text} <- messages,
+          path <- Burrow.Design.drawn(text),
+          uniq: true,
+          do: String.replace_prefix(path, "design/", "")
+
+    assigns = assign(assigns, messages: messages, ack?: ack?, drawn: drawn)
 
     ~H"""
     <div class="say-peon-turn">
@@ -1914,9 +2047,20 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         <div class="text-[13px] font-semibold leading-[18px]">Peon</div>
         <div :if={@ack?} class="say-agent">Zug zug.</div>
         <.message :for={m <- @messages} message={m} />
+        <div :if={@drawn != []} class="blink">
+          <button type="button" phx-click="view" phx-value-view="design">Open Design</button>
+          · {drawn_text(@drawn)}
+        </div>
       </div>
     </div>
     """
+  end
+
+  defp drawn_text([one]), do: "#{one} is in Design."
+
+  defp drawn_text(names) do
+    {init, [last]} = Enum.split(names, -1)
+    "#{Enum.join(init, ", ")} and #{last} are in Design."
   end
 
   attr :message, :map, required: true

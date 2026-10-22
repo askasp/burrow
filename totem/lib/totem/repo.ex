@@ -141,7 +141,8 @@ defmodule Totem.Repo do
         {path, content} -> base_tree[path] == Totem.Blob.hash(content)
       end)
 
-    policy = [author: String.to_existing_atom(kind), settings: Keyword.get(opts, :policy, [])]
+    author = if kind == "human", do: :human, else: :ai
+    policy = [author: author, settings: Keyword.get(opts, :policy, [])]
 
     with :ok <- valid_paths(files),
          [_ | _] <- files || {:error, :no_changes},

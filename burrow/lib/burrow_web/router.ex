@@ -24,6 +24,12 @@ defmodule BurrowWeb.Router do
     get "/manifest.webmanifest", ManifestController, :show
   end
 
+  # A chat's boards, for the workspace's sandboxed frames: no session (they
+  # send no cookies), the URL's signed token says which chat.
+  scope "/", BurrowWeb do
+    get "/design/:token/*path", DesignController, :show
+  end
+
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:burrow, :dev_routes) do
     pipeline :local_only do

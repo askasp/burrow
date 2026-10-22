@@ -76,6 +76,18 @@ defmodule BurrowWeb.ProjectLiveTest do
     |> render_change()
 
     refute has_element?(lv, "#project_auth")
+
+    # Its token comes with it, as the project's GITHUB_TOKEN.
+    assert has_element?(lv, "#project_github_token[type=password]")
+
+    lv
+    |> form("#project_form",
+      project: %{name: "Amino", repo_url: "https://github.com/a/b.git", github_token: "ghp_x"}
+    )
+    |> render_submit()
+
+    amino = Enum.find(Burrow.Repo.all(Burrow.Projects.Project), &(&1.name == "Amino"))
+    assert Burrow.Secrets.value(amino.id, "GITHUB_TOKEN") == "ghp_x"
   end
 
   test "the owner shares a project with a team; teammates see it", %{conn: conn, user: user} do

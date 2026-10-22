@@ -93,7 +93,8 @@ defmodule Burrow.Projects do
 
   `"auth"` picks the new app's login (`Project.auths/0`, default
   `"accounts"`); `"basic"` needs `"basic_username"` and `"basic_password"`,
-  which become the app's secrets and are not stored here.
+  which become the app's secrets and are not stored here. A repo project's
+  `"github_token"` becomes its `GITHUB_TOKEN` secret (`Burrow.GitRepo`).
   """
   def create(%Scope{user: user} = scope, attrs) do
     Repo.transaction(fn ->
@@ -119,6 +120,12 @@ defmodule Burrow.Projects do
     end)
     |> case do
       {:ok, project} ->
+        # A repo's token, when given, is there before its first clone.
+        token = String.trim(attrs["github_token"] || attrs[:github_token] || "")
+
+        if Project.repo?(project) and token != "",
+          do: Burrow.GitRepo.put_token(project, token, user.email)
+
         # Only the first start gets a basic auth login (`Burrow.Bootstrap`).
         Burrow.Cell.ensure_started(project)
         project = %{project | basic_username: nil, basic_password: nil}

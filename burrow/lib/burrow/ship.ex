@@ -16,6 +16,11 @@ defmodule Burrow.Ship do
        `"auto_ship"` does it after a passed check; prod (or staging first,
        when the project has it) moves to main, and `Burrow.Env` loads it.
 
+  Boards (`Burrow.Design`) skip the checks: a change that is only boards
+  lands as it is, from the agent's submit or a person's `submit_design/3`,
+  and main's check stays on the newest change with code. Boards never ship
+  by themselves.
+
   Broadcasts on the project's `"ship"` topic: `{:draft, chat_id, status}`,
   `{:check_step, chat_id, step, status}` and `{:main_check, run}`; and on
   `"refs"`: `{:ref_moved, name, change_id}`.
@@ -25,7 +30,7 @@ defmodule Burrow.Ship do
 
   require Logger
 
-  alias Burrow.{Chat, Projects, Runs, Sandbox, Workspace}
+  alias Burrow.{Chat, Design, Projects, Runs, Sandbox, Workspace}
   alias Totem.Repo
 
   @forbidden ~w(config/runtime.exs AGENTS.md rel/** priv/peon/anonymize.exs)
@@ -45,7 +50,10 @@ defmodule Burrow.Ship do
 
   ## Land
 
-  @doc "The agent submits its chat's edits: `{text for the agent, failed?}`."
+  @doc """
+  The agent submits its chat's edits: `{text for the agent, failed?}`. Boards
+  alone (`Burrow.Design`) land without the checks.
+  """
   def submit(project, chat_id, intent) do
     repo = Projects.repo_dir(project)
     dir = Chat.workspace_dir(project, chat_id)
@@ -54,10 +62,17 @@ defmodule Burrow.Ship do
 
     case Repo.put_draft(repo, chat_id, base, files, opts) do
       {:ok, draft} ->
-        draft(project, chat_id, status: "checking", checks: %{})
-        {status, steps} = check(project, chat_id, draft)
-        draft(project, chat_id, status: status, checks: %{"steps" => steps})
-        if status == "passed", do: land(project, chat_id), else: {failed(steps), true}
+        if Design.only?(draft.files) do
+          project |> land(chat_id) |> landed(:design)
+        else
+          draft(project, chat_id, status: "checking", checks: %{})
+          {status, steps} = check(project, chat_id, draft)
+          draft(project, chat_id, status: status, checks: %{"steps" => steps})
+
+          if status == "passed",
+            do: project |> land(chat_id) |> landed(:code),
+            else: {failed(steps), true}
+        end
 
       {:error, :no_changes} ->
         {"There are no changes in /app to submit.", true}
@@ -113,6 +128,28 @@ defmodule Burrow.Ship do
     end)
   end
 
+  @doc """
+  A person lands the chat's boards: when all it changed is under design/,
+  that goes to main as it is, without the checks. `{:ok, change}`, or
+  `{:error, :not_design_only | {:conflict, paths} | :no_changes}`.
+  """
+  def submit_design(project, chat_id, actor) do
+    {base, files} = Workspace.changes(Chat.workspace_dir(project, chat_id))
+    names = Enum.map(files, fn {path, _} -> String.replace_prefix(path, "design/", "") end)
+
+    opts = [
+      intent: "Boards: " <> Enum.join(names, ", "),
+      kind: "human",
+      author: actor,
+      policy: [forbidden_paths: @forbidden]
+    ]
+
+    with true <- Design.only?(files) || {:error, :not_design_only},
+         {:ok, _draft} <- Repo.put_draft(Projects.repo_dir(project), chat_id, base, files, opts) do
+      land(project, chat_id)
+    end
+  end
+
   defp land(project, chat_id) do
     repo = Projects.repo_dir(project)
 
@@ -122,24 +159,35 @@ defmodule Burrow.Ship do
         Workspace.rebase(repo, Chat.workspace_dir(project, chat_id), change.id)
         Projects.broadcast(project.id, "ship", {:draft, chat_id, "landed"})
         moved(project, "main", change.id)
+        {:ok, change}
 
-        {"It landed on main as ##{change.id}. Main is now tested, built and booted in prod " <>
-           "mode; if that fails you get a message here. Then the user ships it.", false}
-
-      {:error, {:conflict, paths}} ->
+      {:error, {:conflict, _paths}} = error ->
         draft(project, chat_id, status: "open")
         Workspace.rebase(repo, Chat.workspace_dir(project, chat_id), Repo.ref(repo, "main"))
+        error
 
-        {"""
-         It did not land: another chat changed the same lines of #{Enum.join(paths, ", ")}. \
-         /app is now on main's latest version; your version of those files is kept and \
-         main's is in .peon/main/<path>. Merge main's changes into your files and submit again.\
-         """, true}
-
-      {:error, :no_changes} ->
-        {"Main already has these changes.", false}
+      error ->
+        error
     end
   end
+
+  defp landed({:ok, change}, :code),
+    do:
+      {"It landed on main as ##{change.id}. Main is now tested, built and booted in prod " <>
+         "mode; if that fails you get a message here. Then the user ships it.", false}
+
+  defp landed({:ok, change}, :design),
+    do: {"The boards landed on main as ##{change.id}. Boards are never shipped.", false}
+
+  defp landed({:error, {:conflict, paths}}, _kind),
+    do:
+      {"""
+       It did not land: another chat changed the same lines of #{Enum.join(paths, ", ")}. \
+       /app is now on main's latest version; your version of those files is kept and \
+       main's is in .peon/main/<path>. Merge main's changes into your files and submit again.\
+       """, true}
+
+  defp landed({:error, :no_changes}, _kind), do: {"Main already has these changes.", false}
 
   defp draft(project, chat_id, fields) do
     Repo.update_draft(Projects.repo_dir(project), chat_id, fields)
@@ -252,7 +300,7 @@ defmodule Burrow.Ship do
   def handle_info(_msg, state), do: {:noreply, state}
 
   defp next(%{task: nil, project: project} = state) do
-    tip = Repo.ref(Projects.repo_dir(project), "main")
+    tip = code_tip(Projects.repo_dir(project))
     last = main_check(project)
 
     if tip && (last == nil or last.change_id != tip or last.status == "running") do
@@ -269,6 +317,21 @@ defmodule Burrow.Ship do
   end
 
   defp next(state), do: state
+
+  # Main's newest change that isn't boards only: boards need no check.
+  defp code_tip(repo), do: code_tip(repo, Repo.ref(repo, "main"))
+
+  defp code_tip(_repo, nil), do: nil
+
+  defp code_tip(repo, id) do
+    case Repo.change(repo, id) do
+      %{files: files, parent: parent} ->
+        if Design.only?(files), do: code_tip(repo, parent), else: id
+
+      nil ->
+        nil
+    end
+  end
 
   @doc false
   # Tests, then a prod build that must boot and answer /health, in a fresh
