@@ -294,25 +294,23 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ws-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column }
 .ws-root .ws-split { flex: 1; min-height: 0; display: flex }
 
-/* The project rail: Burrow's projects, drawn by Peon */
-.ws-root .rail { flex: none; width: 64px; display: flex; flex-direction: column; background: var(--sunken); border-right: 1px solid var(--border); transition: width .18s ease; overflow: hidden }
-.ws-root .rail.open { width: 236px }
-.ws-root .rtop { display: flex; align-items: center; height: 60px; padding: 0 14px; flex: none }
-.ws-root .rlogo { display: flex; align-items: center; gap: 9px; color: var(--text); text-decoration: none; border-radius: 8px }
-.ws-root .rword { font-size: 18px; font-weight: 700; letter-spacing: -.03em; white-space: nowrap }
-.ws-root .rlist { list-style: none; margin: 0; padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; overflow-y: auto }
-.ws-root .ritem { position: relative; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px; border-radius: 8px; color: var(--text-2); text-decoration: none }
-.ws-root .ritem:hover { background: var(--surface); color: var(--text) }
-.ws-root .ritem[aria-current="page"] { color: var(--text) }
-.ws-root .ri { position: relative; flex: none; width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-strong); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; overflow: hidden; background: var(--bg) }
-.ws-root .ritem[aria-current="page"] .ri { border-color: var(--text-2) }
-.ws-root .ritem::before, .ws-root .ritem::after { content: ""; position: absolute; width: 8px; height: 8px; opacity: 0; pointer-events: none }
-.ws-root .ritem::before { left: 1px; top: 1px; border-left: 1.5px solid var(--accent-text); border-top: 1.5px solid var(--accent-text) }
-.ws-root .ritem::after { left: 41px; top: 39px; border-right: 1.5px solid var(--accent-text); border-bottom: 1.5px solid var(--accent-text) }
-.ws-root .ritem[aria-current="page"]::before, .ws-root .ritem[aria-current="page"]::after { opacity: 1 }
-.ws-root .rn { display: flex; flex-direction: column; gap: 3px; min-width: 0; opacity: 0; transition: opacity .12s ease }
-.ws-root .rail.open .rn { opacity: 1 }
-.ws-root .rn .nm { font-size: 14px; font-weight: 500; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+/* The chat drawer: the project switcher on top, then the project's chats */
+.ws-root .drawer { flex: none; width: 264px; display: flex; flex-direction: column; min-height: 0; background: var(--sunken); border-right: 1px solid var(--border) }
+.ws-root .dtop { display: flex; align-items: center; gap: 4px; padding: 10px 8px 6px }
+.ws-root .pmw { flex: 1; min-width: 0 }
+.ws-root .pswitch { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 6px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); font-family: inherit; text-align: left; cursor: pointer }
+.ws-root .pswitch:hover, .ws-root .pswitch[aria-expanded="true"] { border-color: var(--border-strong); background: var(--surface) }
+.ws-root .pchev { color: var(--text-3) }
+.ws-root .ri { position: relative; flex: none; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border-strong); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; overflow: hidden; background: var(--bg) }
+.ws-root .pn { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 }
+.ws-root .pn .nm { font-size: 15px; font-weight: 600; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ws-root .pn .mm { font-size: 12px; line-height: 15px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.ws-root .pmenu { position: absolute; left: 0; top: calc(100% + 6px); z-index: 30; width: 280px; max-height: 70vh; overflow-y: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--raised); display: flex; flex-direction: column }
+.ws-root .pmrow { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 6px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); font-family: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: pointer }
+.ws-root .pmrow:hover { background: var(--sunken) }
+.ws-root .pmrow > [class*="hero-"] { color: var(--text-2) }
+.ws-root .pmrow .nm { font-size: 14px; font-weight: 500 }
+.ws-root .msec { padding: 6px 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3) }
 .ws-root .lbl { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap }
 .ws-root .lbl.working { color: var(--text-2) } .ws-root .lbl.waiting { color: var(--warn) } .ws-root .lbl.done { color: var(--ok) } .ws-root .lbl.stopped { color: var(--err) }
 .ws-root .rhp { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--border) }
@@ -322,18 +320,63 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .rhp.waiting i { background: var(--warn); animation: bw-pulse 1.8s ease-in-out infinite }
 .ws-root .rhp.done i { background: var(--ok) }
 .ws-root .rhp.stopped i { background: var(--err) }
-.ws-root .rbot { flex: none; display: flex; flex-direction: column; gap: 2px; padding: 8px; border-top: 1px solid var(--border) }
-.ws-root .rbtn { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-family: inherit; font-size: 13.5px; text-decoration: none; white-space: nowrap; cursor: pointer }
-.ws-root .rbtn:hover { background: var(--surface); color: var(--text) }
-.ws-root .rt { opacity: 0; transition: opacity .12s ease }
-.ws-root .rail.open .rt { opacity: 1 }
-.ws-root .rchev { transition: transform .18s ease }
-.ws-root :is(.ritem, .rbtn, .rlogo, .ctab, .cx):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root .ncw { display: flex; margin: 2px 8px 6px }
+.ws-root .newchat { display: flex; align-items: center; gap: 8px; width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: transparent; color: var(--text); font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer }
+.ws-root .newchat:hover { border-color: var(--text-2) }
+.ws-root .newchat[disabled] { opacity: .45; cursor: not-allowed }
+.ws-root .newchat kbd { margin-left: auto; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; font-weight: 400; color: var(--text-3); padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px }
+.ws-root .dscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px }
+.ws-root .dsec { display: flex; align-items: center; justify-content: space-between; padding: 14px 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3) }
+.ws-root .dsec .mono { letter-spacing: 0; font-weight: 400 }
+.ws-root .crow { position: relative; display: flex; align-items: center; border-radius: 6px }
+.ws-root .crow:hover, .ws-root .crow[data-on="true"] { background: var(--surface) }
+.ws-root .crow[data-on="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--text) }
+.ws-root .crb { display: flex; align-items: flex-start; gap: 9px; flex: 1; min-width: 0; padding: 7px 8px 7px 10px; border-radius: 6px; color: var(--text-2); text-decoration: none }
+.ws-root .crb .cdot { margin-top: 6px }
+.ws-root .crow[data-on="true"] .crb, .ws-root .crow.past[data-on="true"] .crb { color: var(--text) }
+.ws-root .crow.past .crb { color: var(--text-3) }
+.ws-root .okic { display: flex; margin-top: 3px; color: var(--ok) }
+.ws-root .cb { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 }
+.ws-root .ct { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13.5px; line-height: 19px }
+.ws-root .ct .n { flex: none; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11.5px; color: var(--text-3) }
+.ws-root .ct .tt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ws-root .cs2 { font-size: 12px; line-height: 16px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ws-root .cs2.waiting { color: var(--warn) }
+.ws-root .cs2.working { color: var(--text-2) }
+.ws-root .crow .cx { margin-right: 4px }
+@media (hover: hover) { .ws-root .crow:not(:hover, :focus-within, [data-on="true"]) .cx { opacity: 0 } }
+.ws-root .dnone { margin: 0; padding: 6px 10px; font-size: 13px; line-height: 19px; color: var(--text-3) }
+.ws-root .dbot { flex: none; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px; border-top: 1px solid var(--border) }
+.ws-root .dlink { font-size: 13px; color: var(--text-2); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px }
+.ws-root .dlink:hover { color: var(--text) }
+.ws-root .dtheme { margin-left: auto }
+.ws-root .dshow { display: none }
+.ws-root :is(.pswitch, .pmrow, .newchat, .crb, .dlink, .cx):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+/* Collapsed (wide screens only): a 56px strip of the tile, New chat and a dot per open chat */
+@media (min-width: 961px) {
+  .ws-root .drawer.closed { width: 56px }
+  .ws-root .drawer.closed :is(.pn, .pchev, .dhide, .dt, .newchat kbd, .dsec, .dday, .dnone, .cb, .cx, .dbot > :not(.dshow)) { display: none }
+  .ws-root .drawer.closed .dtop { justify-content: center; padding: 10px 0 6px }
+  .ws-root .drawer.closed .pswitch { width: auto; padding: 4px }
+  .ws-root .drawer.closed .pmenu { left: calc(100% + 10px); top: 0 }
+  .ws-root .drawer.closed .ncw { justify-content: center; margin: 2px 0 6px }
+  .ws-root .drawer.closed .newchat { width: 32px; height: 32px; padding: 0; justify-content: center; border-color: transparent }
+  .ws-root .drawer.closed .newchat:hover { border-color: var(--border-strong) }
+  .ws-root .drawer.closed .dscroll { padding: 6px 0; border-top: 1px solid var(--border); margin: 0 12px }
+  .ws-root .drawer.closed .crow { justify-content: center }
+  .ws-root .drawer.closed .crow[data-on="true"]::before { display: none }
+  .ws-root .drawer.closed .crb { flex: none; justify-content: center; width: 32px; padding: 8px 0 }
+  .ws-root .drawer.closed .crb .cdot { margin-top: 0 }
+  .ws-root .drawer.closed .dbot { justify-content: center; padding: 8px 0; border-top: 0 }
+  .ws-root .drawer.closed .dshow { display: inline-flex }
+}
 
 /* The project bar and its ⋯ menu */
 .ws-root .pbar { flex: none; display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; min-height: 56px; padding: 8px 12px 8px 20px; border-bottom: 1px solid var(--border) }
 .ws-root .pbar-title { display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; min-width: 0 }
-.ws-root .pbar-name { margin: 0; font-size: 18px; line-height: 26px; font-weight: 600 }
+.ws-root .pbar-name { margin: 0; display: flex; align-items: baseline; gap: 8px; min-width: 0; max-width: 100%; font-size: 17px; line-height: 26px; font-weight: 600 }
+.ws-root .pbar-n { flex: none; font-size: 13px; font-weight: 500; color: var(--text-3) }
+.ws-root .pbar-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ws-root .pbar-meta { font-size: 12.5px; color: var(--text-3); min-width: 0 }
 .ws-root .pbar-menu, .ws-root .ws-scrim { display: none }
 .ws-root .pbar-acts { margin-left: auto; display: flex; align-items: center; gap: 4px }
@@ -352,22 +395,12 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .menu-meta { padding: 4px 10px 8px; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere }
 .ws-root .menu .phone-only, .ws-root .menu-meta.phone-only { display: none }
 
-/* The chat column: tabs, thread, changeset, composer */
+/* The chat column: thread, changeset, composer */
 .ws-root .ws-chat { flex: 1 1 460px; min-width: 0; min-height: 0; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); border-right: 1px solid var(--border) }
-.ws-root .chead { flex: none; display: flex; align-items: flex-end; gap: 6px; padding: 6px 20px 0; border-bottom: 1px solid var(--border) }
-.ws-root .chead > span { margin-bottom: 3px }
-.ws-root .ctabs { display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow-x: auto }
-.ws-root .tabw { display: flex; align-items: center; flex: none }
-.ws-root .ctab { display: inline-flex; align-items: center; gap: 8px; max-width: 220px; height: 38px; padding: 0 10px; border-bottom: 2px solid transparent; color: var(--text-2); font-size: 13.5px; text-decoration: none; flex: none }
-.ws-root .ctab:hover { color: var(--text) }
-.ws-root .ctab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--text) }
-.ws-root .ctab .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.ws-root .ctab .n { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--text-3) }
 .ws-root .cdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-3) }
 .ws-root .cdot.working { background: var(--accent-text); animation: bw-pulse 1.1s ease-in-out infinite }
 .ws-root .cdot.waiting { background: var(--warn) }
 .ws-root .cdot.done { background: var(--ok) }
-.ws-root .ctab .ok { display: flex; color: var(--ok) }
 .ws-root .cx { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: -4px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); cursor: pointer; flex: none }
 .ws-root .cx:hover { background: var(--sunken); color: var(--text) }
 .ws-root .icon-btn[disabled] { opacity: .4; cursor: not-allowed; border-color: transparent }
@@ -381,7 +414,13 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .evt .ln { flex: 1; height: 1px; background: var(--border) }
 .ws-root .evt .mono { white-space: nowrap }
 .ws-root .evt.ok .mono { color: var(--ok) }
+.ws-root .evt.warn .mono { color: var(--warn) }
+.ws-root .evt.note .mono { display: inline-flex; align-items: center; gap: 6px; white-space: normal; text-align: center }
 .ws-root .bubble-user { align-self: flex-end; max-width: 82%; background: var(--accent-soft); color: var(--text); padding: 10px 14px; border-radius: 14px 14px 4px 14px; font-size: 15px; line-height: 22px; white-space: pre-wrap }
+/* Sent while Peon was busy: opencode hands it over at Peon's next step */
+.ws-root .ws-inbox { display: flex; flex-direction: column; align-items: flex-end; gap: 4px }
+.ws-root .ws-inbox .bubble-user, .ws-root .ws-inbox .bubble-imgs { opacity: .65 }
+.ws-root .ws-inbox .meta { display: flex; gap: 10px; align-items: baseline }
 .ws-root .say-peon-turn { display: flex; gap: 12px; align-items: flex-start }
 .ws-root .say-agent { font-size: 15px; line-height: 24px; white-space: pre-wrap }
 .ws-root .tool { font-size: 13px; line-height: 20px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
@@ -424,6 +463,29 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ctx { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; max-width: 100%; height: 26px; margin: 2px 6px 0; padding: 0 4px 0 9px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 12.5px; color: var(--text-2) }
 .ws-root .ctx > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ws-root .ctx .cx { margin-right: 0 }
+/* Images going with the message, and those sent with one */
+.ws-root .shots { display: flex; gap: 8px; flex-wrap: wrap; padding: 4px 6px 0 }
+.ws-root .shot { position: relative; display: flex; flex-direction: column; gap: 4px; max-width: 120px }
+.ws-root .shot img { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border) }
+.ws-root .shot .cx { position: absolute; top: 3px; left: 51px; background: var(--raised); box-shadow: 0 0 0 1px var(--border-strong) }
+.ws-root .shot .err { font-size: 12px; color: var(--err) }
+.ws-root .bubble-imgs { align-self: flex-end; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 82%; margin-bottom: -12px }
+.ws-root .bubble-imgs img { display: block; max-width: 240px; max-height: 180px; border-radius: 10px; border: 1px solid var(--border) }
+.ws-root .composer.phx-drop-target-active { border-color: var(--accent-text); background: var(--accent-soft) }
+.ws-root #queue-btn + .ws-send { margin-left: 0 }
+/* The chat's queue: the agent's tk tickets */
+.ws-root .ws-queue { padding: 6px 12px 8px }
+.ws-root .ws-queue > summary { list-style: none } .ws-root .ws-queue > summary::-webkit-details-marker { display: none }
+.ws-root .qhead { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 13.5px; cursor: pointer }
+.ws-root .ws-queue[open] .chev { transform: rotate(90deg) }
+.ws-root .qlist { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; max-height: 220px; overflow-y: auto }
+.ws-root .qrow { display: flex; align-items: center; gap: 10px; min-height: 30px; font-size: 13.5px }
+.ws-root .qrow .qi { display: flex; flex: none; color: var(--text-3) }
+.ws-root .qrow.in_progress .qi { color: var(--accent-text) }
+.ws-root .qrow.closed { color: var(--text-3) } .ws-root .qrow.closed .qi { color: var(--ok) }
+.ws-root .qrow .qt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ws-root .qrow .qid { flex: none; font-size: 11.5px; color: var(--text-3) }
+@media (hover: hover) { .ws-root .qrow:not(:hover, :focus-within) .cx { opacity: 0 } }
 /* A finished chat: in place of its box, what comes next */
 .ws-root .ws-done { border: 1px solid var(--ok); background: var(--ok-soft); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 12px }
 .ws-root .ws-done .h { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 15px }
@@ -566,7 +628,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 @keyframes bw-shimmer { to { left: 100% } }
 @keyframes bw-slide { 0% { left: -40% } 100% { left: 100% } }
 @media (prefers-reduced-motion: reduce) {
-  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .rail, .ws-root .rn, .ws-root .rt, .ws-root .rchev { animation: none; transition: none }
+  .ws-root .rhp i, .ws-root .rhp.working i::after, .ws-root .rhp.waiting i, .ws-root .swing, .ws-root .cdot.working, .ws-root .dbar i, .ws-root .ws-logs, .ws-root .drawer { animation: none; transition: none }
 }
 @media (max-width: 640px) {
   .ws-root .env + .env { padding-left: 0; border-left: 0; border-top: 1px solid var(--border) }
@@ -577,11 +639,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
    project bar with Chat / Preview, then one of the two */
 @media (max-width: 960px) {
   .ws-root { flex-direction: column }
-  .ws-root .rail, .ws-root .rail.open { position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: min(280px, 85vw); transform: translateX(-100%); transition: transform .2s ease-out }
-  .ws-root.drawer .rail { transform: none }
-  .ws-root .rail .rn, .ws-root .rail .rt { opacity: 1 }
-  .ws-root .rail .rcollapse { display: none }
-  .ws-root.drawer .ws-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(10, 8, 6, .5) }
+  /* The drawer slides in over the page, never collapsed */
+  .ws-root .drawer { position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: min(280px, 85vw); transform: translateX(-100%); transition: transform .2s ease-out }
+  .ws-root.show-drawer .drawer { transform: none }
+  .ws-root .dhide, .ws-root .dshow { display: none }
+  .ws-root.show-drawer .ws-scrim { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(10, 8, 6, .5) }
   .ws-root .pbar-menu { display: inline-flex; margin-left: -6px }
   .ws-root .pbar { flex-wrap: nowrap; gap: 6px; min-height: 52px; padding: 6px 8px }
   .ws-root .pbar-title { flex: 1; flex-direction: column; flex-wrap: nowrap; gap: 0 }
@@ -599,7 +661,6 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .ws-root .ws-panes button { height: 28px; padding: 0 9px }
   .ws-root .ws-chat, .ws-root .ws-prev { flex: 1 1 auto; min-height: 0; border-right: 0 }
   .ws-root[data-pane="chat"] .ws-prev, .ws-root[data-pane="preview"] .ws-chat { display: none }
-  .ws-root .chead { padding: 6px 12px 0 }
   .ws-root .ws-thread { padding: 16px 16px 8px }
   .ws-root .ws-bottom { padding: 8px 12px 12px }
   .ws-root .composer textarea { font-size: 16px } /* below 16px iOS zooms in on focus */

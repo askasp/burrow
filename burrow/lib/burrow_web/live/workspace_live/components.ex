@@ -1,108 +1,386 @@
 defmodule BurrowWeb.WorkspaceLive.Components do
   @moduledoc """
-  The workspace's parts (`BurrowWeb.WorkspaceLive`): the project rail, the
-  project bar, the chat tabs and change card, the preview pane, "Deploys
-  and usage", and the dialogs.
+  The workspace's parts (`BurrowWeb.WorkspaceLive`): the chat drawer with
+  the project switcher, the bar over the chat, the change card, the preview
+  pane, "Deploys and usage", and the dialogs.
   """
 
   use BurrowWeb, :html
 
-  alias Burrow.Chats
+  alias Burrow.{Activity, Chats}
 
-  ## Project rail
+  ## Chat drawer
 
-  attr :rail, :list, required: true
-  attr :open, :boolean, required: true
+  attr :rail, :list, required: true, doc: "every project the user can open"
+  attr :status, :string, required: true, doc: "the line under the project's name"
+  attr :tabs, :list, required: true, doc: "the project's chats (`Burrow.Activity.chats/2`)"
+  attr :chat, :map
+  attr :project, :map
+  attr :base, :string, required: true, doc: "the workspace's path"
+  attr :collapsed, :boolean, required: true
   attr :theme, :string, required: true
+  attr :nothing_built?, :boolean, required: true
+  attr :repo?, :boolean, required: true
+  attr :live_only?, :boolean, required: true
 
   @doc """
-  Every project the user can open, a tile each with a health bar along its
-  bottom (`Burrow.Activity`); names show when the rail is open.
+  The project switcher on top: the project's tile with its health bar
+  (`Burrow.Activity`), opening every project the user can open. Then New
+  chat, the chats still open (what needs the user first) and the done ones
+  by day. Collapses to a strip of the tile, New chat and a dot per open
+  chat; on phones it slides in from the left.
   """
-  def rail(assigns) do
+  def drawer(assigns) do
+    open = open_chats(assigns.tabs, assigns.live_only?)
+
+    assigns =
+      assign(assigns,
+        open: open,
+        done: assigns.tabs |> Enum.filter(&Activity.done?(&1, assigns.live_only?)) |> by_day(),
+        tile: Enum.find(assigns.rail, & &1.current) || %{state: "stopped", pct: 8},
+        full?: length(open) >= Chats.max()
+      )
+
     ~H"""
-    <nav class={["rail", @open && "open"]} aria-label="Projects" data-kb-zoom-hide>
-      <div class="rtop">
-        <.link class="rlogo" navigate={~p"/projects"} title="All projects" aria-label="All projects">
-          <Layouts.mark size={34} /><span class="rword rt">peon</span>
-        </.link>
-      </div>
-      <ul class="rlist">
-        <li :for={p <- @rail}>
-          <.link
-            class="ritem"
-            navigate={p.url}
-            aria-current={if p.current, do: "page"}
-            data-kb-current={if p.current, do: "1"}
-            data-kb="item"
-            title={"#{p.name} · #{p.label}"}
+    <nav
+      id="drawer"
+      class={["drawer", @collapsed && "closed"]}
+      aria-label="Project and chats"
+      phx-hook=".Drawer"
+      data-kb-zoom-hide
+    >
+      <div class="dtop">
+        <div class="menuw pmw">
+          <button
+            id="project-switch"
+            type="button"
+            class="pswitch"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-label={"#{@project.name}, switch project"}
+            title="Switch project (⌃B P)"
+            phx-click={
+              JS.toggle(to: "#project-menu")
+              |> JS.toggle_attribute({"aria-expanded", "true", "false"})
+            }
+            data-kb-key="P"
+            data-kb-label="Switch project"
+            data-kb-group="Projects"
           >
-            <span class="ri" aria-hidden="true">
-              {initial(p.name)}<span class={["rhp", p.state]}><i style={"width: #{p.pct}%"}></i></span>
+            <.tile name={@project.name} state={@tile.state} pct={@tile.pct} />
+            <span class="pn">
+              <span class="nm">{@project.name}</span><span class="mm">{@status}</span>
             </span>
-            <span class="rn">
-              <span class="nm">{p.name}</span>
-              <span class={["lbl", p.state]}>
-                <span :if={p.state == "working"} class="swing" aria-hidden="true">
-                  <.icon name="hero-wrench" class="size-3" />
-                </span>{p.label}
+            <.icon name="hero-chevron-down" class="size-[14px] shrink-0 pchev" />
+          </button>
+          <div
+            id="project-menu"
+            class="pmenu"
+            role="menu"
+            aria-label="Projects"
+            style="display: none"
+            phx-click-away={hide_projects()}
+          >
+            <div class="msec">Projects</div>
+            <.link
+              :for={p <- @rail}
+              navigate={p.url}
+              class="pmrow"
+              role="menuitem"
+              aria-current={if p.current, do: "page"}
+            >
+              <.tile name={p.name} state={p.state} pct={p.pct} />
+              <span class="pn">
+                <span class="nm">{p.name}</span>
+                <span class={["lbl", p.state]}>
+                  <span :if={p.state == "working"} class="swing" aria-hidden="true">
+                    <.icon name="hero-wrench" class="size-3" />
+                  </span>{p.label}
+                </span>
               </span>
-            </span>
-            <span class="sr-only">, {p.label}</span>
-          </.link>
-        </li>
-      </ul>
-      <div class="rbot">
+              <.icon :if={p.current} name="hero-check" class="size-[13px] shrink-0" />
+            </.link>
+            <div class="msep" role="separator"></div>
+            <button
+              id="new-project-btn"
+              type="button"
+              class="pmrow"
+              role="menuitem"
+              aria-haspopup="dialog"
+              phx-click={
+                hide_projects()
+                |> JS.remove_class("show-drawer", to: ".ws-root")
+                |> JS.push("dialog", value: %{dialog: "new_project"})
+              }
+              data-kb-key="N"
+              data-kb-label="New project"
+              data-kb-group="Projects"
+            >
+              <.icon name="hero-plus" class="size-4 shrink-0" />New project
+            </button>
+            <.link class="pmrow" role="menuitem" navigate={~p"/projects"}>
+              <.icon name="hero-squares-2x2" class="size-4 shrink-0" />All projects
+            </.link>
+          </div>
+        </div>
         <button
-          id="new-project-btn"
           type="button"
-          class="rbtn"
-          title="New project"
-          aria-haspopup="dialog"
-          phx-click={
-            JS.remove_class("drawer", to: ".ws-root")
-            |> JS.push("dialog", value: %{dialog: "new_project"})
-          }
-          data-kb-key="N"
-          data-kb-label="New project"
-          data-kb-group="Projects"
+          class="icon-btn dhide"
+          phx-click="toggle_drawer"
+          aria-label="Hide chats"
+          aria-expanded="true"
+          title="Hide chats (⌃B H)"
+          data-kb-key="h"
+          data-kb-label="Hide or show chats"
+          data-kb-group="Chats"
         >
-          <.icon name="hero-plus" class="size-[18px] shrink-0" /><span class="rt">New project</span>
+          <.icon name="hero-chevron-double-left" class="size-4" />
         </button>
-        <.link class="rbtn" navigate={~p"/projects"} title="Projects, teams and AI login">
-          <.icon name="hero-squares-2x2" class="size-[18px] shrink-0" /><span class="rt">Account</span>
+      </div>
+      <span class="ncw" title={if @full?, do: full_text(), else: "New chat (⌃B C)"}>
+        <button
+          id="new-chat"
+          type="button"
+          class="newchat"
+          aria-label="New chat"
+          phx-click="new_chat"
+          disabled={@full?}
+          data-kb-key="c"
+          data-kb-label="New chat"
+          data-kb-group="Chats"
+          data-kb-focus="#chat-input"
+        >
+          <.icon name="hero-plus" class="size-4 shrink-0" /><span class="dt">New chat</span><kbd>⌃B C</kbd>
+        </button>
+      </span>
+      <div class="dscroll">
+        <div class="dsec">
+          <span>Open</span><span class="mono">{length(@open)} of {Chats.max()}</span>
+        </div>
+        <.chat_row
+          :for={t <- @open}
+          tab={t}
+          url={"#{@base}/c/#{t.chat.id}"}
+          current={@chat != nil and @chat.id == t.chat.id}
+          title={chat_title(t, @project, @nothing_built?)}
+          sub={sub(t, @live_only?)}
+          confirm={close_confirm(t, @repo?)}
+        />
+        <p :if={@open == []} class="dnone">Nothing open. Start a new chat for the next change.</p>
+        <div :for={{day, tabs} <- @done} class="dday">
+          <div class="dsec"><span>{day}</span></div>
+          <.chat_row
+            :for={t <- tabs}
+            tab={t}
+            url={"#{@base}/c/#{t.chat.id}"}
+            current={@chat != nil and @chat.id == t.chat.id}
+            title={chat_title(t, @project, @nothing_built?)}
+            sub={sub(t, @live_only?)}
+            done
+          />
+        </div>
+      </div>
+      <div class="dbot">
+        <Layouts.mark size={22} />
+        <.link class="dlink" navigate={~p"/projects"} title="Projects, teams and AI login">
+          Account
         </.link>
         <button
           type="button"
-          class="rbtn"
+          class="icon-btn dtheme"
           phx-click="theme"
           title={"Theme: #{theme_name(@theme)}. Click for #{theme_name(next_theme(@theme))}."}
           aria-label={"Theme: #{theme_name(@theme)}"}
         >
-          <.icon name={theme_icon(@theme)} class="size-[18px] shrink-0" /><span class="rt">{theme_name(
-            @theme
-          )}</span>
+          <.icon name={theme_icon(@theme)} class="size-4" />
         </button>
         <button
           type="button"
-          class="rbtn rcollapse"
-          phx-click="toggle_rail"
-          aria-expanded={to_string(@open)}
-          aria-label={if @open, do: "Collapse projects", else: "Show project names"}
-          title={if @open, do: "Collapse projects", else: "Show project names"}
-          data-kb-key="b"
-          data-kb-label={if @open, do: "Collapse projects", else: "Show project names"}
-          data-kb-group="Projects"
+          class="icon-btn dshow"
+          phx-click="toggle_drawer"
+          aria-label="Show chats"
+          aria-expanded="false"
+          title="Show chats (⌃B H)"
+          data-kb-key="h"
+          data-kb-label="Hide or show chats"
+          data-kb-group="Chats"
         >
-          <.icon
-            name="hero-chevron-double-right"
-            class={["size-[18px] shrink-0 rchev", @open && "rotate-180"]}
-          /><span class="rt">Collapse</span>
+          <.icon name="hero-chevron-double-right" class="size-4" />
         </button>
       </div>
     </nav>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Drawer">
+      // On phones the drawer covers the page: picking a chat or a project
+      // puts it away. (A patch link stops LiveView's own phx-click.)
+      export default {
+        mounted() {
+          this.el.addEventListener("click", e => {
+            if (e.target.closest("a")) this.js().removeClass(this.el.closest(".ws-root"), "show-drawer")
+          })
+        }
+      }
+    </script>
     """
   end
+
+  attr :tab, :map, required: true
+  attr :url, :string, required: true
+  attr :current, :boolean, required: true
+  attr :title, :string, required: true
+  attr :sub, :string, required: true
+  attr :done, :boolean, default: false
+  attr :confirm, :string, default: nil
+
+  defp chat_row(assigns) do
+    ~H"""
+    <div id={"chat-#{@tab.chat.id}"} class={["crow", @done && "past"]} data-on={to_string(@current)}>
+      <.link
+        patch={@url}
+        class="crb"
+        aria-current={@current && "page"}
+        data-kb="item"
+        title={"#{if number(@tab), do: "##{number(@tab)} · "}#{@title} · #{@sub}"}
+      >
+        <span :if={@done} class="okic" aria-hidden="true">
+          <.icon name="hero-check" class="size-[13px]" />
+        </span>
+        <span :if={!@done} class={["cdot", dot(@tab.phase)]} aria-hidden="true"></span>
+        <span class="cb">
+          <span class="ct">
+            <span :if={number(@tab)} class="n">#{number(@tab)}</span><span class="tt">{@title}</span>
+          </span>
+          <span class={["cs2", !@done && dot(@tab.phase)]}>{@sub}</span>
+        </span>
+      </.link>
+      <button
+        :if={!@done}
+        type="button"
+        class="cx"
+        phx-click="close_chat"
+        phx-value-id={@tab.chat.id}
+        aria-label={"Close #{@title}"}
+        title="Close (⌃B Q)"
+        data-confirm={@confirm}
+        data-kb-key={if @current, do: "q"}
+        data-kb-label="Close this chat"
+        data-kb-group="Chats"
+      >
+        <.icon name="hero-x-mark" class="size-3" />
+      </button>
+    </div>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :state, :string, required: true
+  attr :pct, :integer, required: true
+
+  # A project's initial, its health bar along the bottom.
+  defp tile(assigns) do
+    ~H"""
+    <span class="ri" aria-hidden="true">
+      {initial(@name)}<span class={["rhp", @state]}><i style={"width: #{@pct}%"}></i></span>
+    </span>
+    """
+  end
+
+  defp hide_projects,
+    do:
+      JS.hide(to: "#project-menu")
+      |> JS.set_attribute({"aria-expanded", "false"}, to: "#project-switch")
+
+  @doc "Why New chat is off."
+  def full_text, do: "#{Chats.max()} changes are open. Merge or discard one first."
+
+  @doc """
+  The chats that aren't done, what needs the user first: failed checks, a
+  pull request or staging to look at; then the working ones; empty ones last.
+  """
+  def open_chats(tabs, live_only?),
+    do: tabs |> Enum.reject(&Activity.done?(&1, live_only?)) |> Enum.sort_by(&need(&1.phase))
+
+  defp need(phase) when phase in ~w(failed ready staged), do: 0
+  defp need(phase) when phase in ~w(working landing), do: 1
+  defp need("new"), do: 3
+  defp need(_phase), do: 2
+
+  @days ["Today", "Yesterday", "This week", "Older"]
+
+  # Done chats, newest change first, by the day it went out.
+  defp by_day(tabs) do
+    tabs
+    |> Enum.sort_by(& &1.draft.change, :desc)
+    |> Enum.group_by(&day/1)
+    |> Enum.sort_by(fn {day, _tabs} -> Enum.find_index(@days, &(&1 == day)) end)
+  end
+
+  # When a done chat's change was submitted, in the drawer's words.
+  defp day(tab) do
+    case Date.diff(Date.utc_today(), DateTime.to_date(at(tab))) do
+      n when n <= 0 -> "Today"
+      1 -> "Yesterday"
+      n when n < 7 -> "This week"
+      _ -> "Older"
+    end
+  end
+
+  defp at(%{draft: %{at: at}}) do
+    {:ok, at, _offset} = DateTime.from_iso8601(at)
+    at
+  end
+
+  # The line under a chat's title: where its change stands.
+  defp sub(%{phase: "live"} = t, live_only?),
+    do: "#{if live_only?, do: "live", else: "on prod"} · #{ago(at(t))}"
+
+  defp sub(%{phase: "landing"} = t, true), do: "on main · #{ago(at(t))}"
+  defp sub(%{phase: "working", draft: %{status: "checking"}}, _live_only?), do: "checking"
+  defp sub(%{phase: "staged"}, _live_only?), do: "on staging · ship"
+  defp sub(%{phase: phase}, _live_only?), do: phase_text(phase)
+
+  @doc "A chat's name: its title, or what an empty one is for."
+  def chat_title(%{chat: %{title: "", follows: id}}, _project, _nothing_built?) when id != nil,
+    do: "Follow-up to ##{id}"
+
+  def chat_title(%{chat: %{title: ""}}, project, true),
+    do: "What should #{project && project.name} do?"
+
+  def chat_title(%{chat: %{title: ""}}, _project, _nothing_built?), do: "New chat"
+  def chat_title(%{chat: %{title: title}}, _project, _nothing_built?), do: title
+
+  # A chat's change has a number once it is on main.
+  defp number(%{draft: %{change: id}}) when id != nil, do: id
+  defp number(_tab), do: nil
+
+  defp phase_text("working"), do: "working"
+  defp phase_text("failed"), do: "checks failed"
+  defp phase_text("ready"), do: "pull request open"
+  defp phase_text("drawn"), do: "boards on main"
+  defp phase_text("landing"), do: "on main"
+  defp phase_text("idle"), do: "nothing submitted yet"
+  defp phase_text(_), do: "new chat"
+
+  defp dot(phase) when phase in ~w(working landing), do: "working"
+  defp dot(phase) when phase in ~w(ready staged failed), do: "waiting"
+  defp dot(phase) when phase in ~w(live drawn), do: "done"
+  defp dot(_), do: "new"
+
+  # Closing an empty chat loses nothing; any other asks first. What a chat
+  # merged stays, and so does a repo chat's pull request.
+  defp close_confirm(%{phase: "new"}, _repo?), do: nil
+
+  defp close_confirm(%{phase: phase}, _repo?) when phase in ~w(landing staged drawn),
+    do: "Close this chat? What it merged stays; its agent and preview go."
+
+  defp close_confirm(_tab, true),
+    do:
+      "Close this chat? Its agent, preview and checkout go; a pull request it opened stays open."
+
+  defp close_confirm(%{phase: "failed"}, false),
+    do: "Discard this change? The chat closes with it."
+
+  defp close_confirm(_tab, false),
+    do: "Close this chat? The conversation goes with it."
 
   defp theme_name("light"), do: "Light"
   defp theme_name("dark"), do: "Dark"
@@ -118,8 +396,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp initial(name), do: name |> to_string() |> String.first() |> to_string() |> String.upcase()
 
-  ## Project bar
+  ## Chat bar
 
+  attr :title, :string, required: true, doc: "the open chat's"
+  attr :number, :integer, default: nil, doc: "its change's, once on main"
   attr :project, :map
   attr :meta, :string, required: true
   attr :overview, :boolean, required: true
@@ -134,22 +414,25 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :agent?, :boolean, required: true, doc: "the open chat's agent runs"
 
   @doc """
-  The project's name and versions, \"Deploys and usage\", and the ⋯ menu.
-  On phones the menu also holds what the bars show on a wide screen.
+  The open chat, the project's versions beside it, \"Deploys and usage\",
+  and the project's ⋯ menu. On phones the menu also holds what the bars
+  show on a wide screen.
   """
-  def project_bar(assigns) do
+  def chat_bar(assigns) do
     ~H"""
     <div class="pbar">
       <button
         type="button"
         class="icon-btn pbar-menu"
-        aria-label="Projects"
-        phx-click={JS.add_class("drawer", to: ".ws-root")}
+        aria-label="Chats and projects"
+        phx-click={JS.add_class("show-drawer", to: ".ws-root")}
       >
         <.icon name="hero-bars-3" class="size-5" />
       </button>
       <div class="pbar-title">
-        <h1 class="pbar-name">{@project && @project.name}</h1>
+        <h1 class="pbar-name">
+          <span :if={@number} class="mono pbar-n">#{@number}</span><span class="pbar-t">{@title}</span>
+        </h1>
         <span class="mono pbar-meta">{@meta}</span>
       </div>
       <div class="pbar-acts">
@@ -314,140 +597,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp hide_menu,
     do: JS.hide(to: "#more-menu") |> JS.set_attribute({"aria-expanded", "false"}, to: "#more-btn")
-
-  ## Chat tabs
-
-  attr :tabs, :list, required: true
-  attr :chat, :map
-  attr :project, :map
-  attr :base, :string, required: true, doc: "the workspace's path"
-  attr :nothing_built?, :boolean, required: true
-  attr :repo?, :boolean, required: true
-  attr :live_only?, :boolean, required: true
-
-  @doc """
-  A tab per chat, with where its change stands (a check once it is done);
-  up to `Burrow.Chats.max/0`. Each closes; prefix q closes the open one.
-  """
-  def chat_tabs(assigns) do
-    assigns = assign(assigns, full?: length(assigns.tabs) >= Chats.max(), prefix: "⌃B")
-
-    ~H"""
-    <div class="chead">
-      <div class="ctabs" role="tablist" aria-label="Chats">
-        <div :for={t <- @tabs} class="tabw" id={"tab-#{t.chat.id}"}>
-          <.link
-            patch={"#{@base}/c/#{t.chat.id}"}
-            class="ctab"
-            role="tab"
-            aria-selected={to_string(@chat != nil and @chat.id == t.chat.id)}
-            data-kb="tab"
-            data-kb-current={if(@chat && @chat.id == t.chat.id, do: "1")}
-            title={tab_tip(t, @project, @nothing_built?)}
-          >
-            <span :if={finished?(t, @live_only?)} class="ok" aria-hidden="true">
-              <.icon name="hero-check" class="size-[13px]" />
-            </span>
-            <span :if={!finished?(t, @live_only?)} class={["cdot", dot(t.phase)]} aria-hidden="true"></span>
-            <span :if={number(t)} class="n">#{number(t)}</span>
-            <span class="t">{tab_title(t, @project, @nothing_built?)}</span>
-          </.link>
-          <button
-            type="button"
-            class="cx"
-            phx-click="close_chat"
-            phx-value-id={t.chat.id}
-            aria-label={"Close #{tab_title(t, @project, @nothing_built?)}"}
-            title={"Close (#{@prefix} Q)"}
-            data-confirm={close_confirm(t, @repo?, @live_only?)}
-            data-kb-key={if(@chat && @chat.id == t.chat.id, do: "q")}
-            data-kb-label="Close this chat"
-            data-kb-group="Chats"
-          >
-            <.icon name="hero-x-mark" class="size-3" />
-          </button>
-        </div>
-      </div>
-      <span title={
-        if @full?, do: "Up to #{Chats.max()} chats. Close one first.", else: "New chat (#{@prefix} C)"
-      }>
-        <button
-          id="new-chat"
-          type="button"
-          class="icon-btn sm"
-          aria-label="New chat"
-          phx-click="new_chat"
-          disabled={@full?}
-          data-kb-key="c"
-          data-kb-label="New chat"
-          data-kb-group="Chats"
-          data-kb-focus="#chat-input"
-        >
-          <.icon name="hero-plus" class="size-4" />
-        </button>
-      </span>
-    </div>
-    """
-  end
-
-  defp tab_title(%{chat: %{title: "", follows: id}}, _project, _nothing_built?) when id != nil,
-    do: "Follow-up to ##{id}"
-
-  defp tab_title(%{chat: %{title: ""}}, project, true),
-    do: "What should #{project && project.name} do?"
-
-  defp tab_title(%{chat: %{title: ""}}, _project, _nothing_built?), do: "New chat"
-  defp tab_title(%{chat: %{title: title}}, _project, _nothing_built?), do: title
-
-  defp tab_tip(t, project, nothing_built?) do
-    number = if number(t), do: "##{number(t)} · ", else: ""
-    "#{number}#{tab_title(t, project, nothing_built?)} · #{phase_text(t.phase)}"
-  end
-
-  # A chat's change has a number once it is on main.
-  defp number(%{draft: %{change: id}}) when id != nil, do: id
-  defp number(_tab), do: nil
-
-  defp phase_text("working"), do: "working"
-  defp phase_text("failed"), do: "checks failed"
-  defp phase_text("ready"), do: "pull request open"
-  defp phase_text("drawn"), do: "boards on main"
-  defp phase_text("landing"), do: "on main"
-  defp phase_text("staged"), do: "on staging"
-  defp phase_text("live"), do: "live"
-  defp phase_text("idle"), do: "nothing submitted yet"
-  defp phase_text(_), do: "new"
-
-  defp dot(phase) when phase in ~w(working landing), do: "working"
-  defp dot(phase) when phase in ~w(ready staged failed), do: "waiting"
-  defp dot(phase) when phase in ~w(live drawn), do: "done"
-  defp dot(_), do: "new"
-
-  @doc "A chat whose change is live, or on main where main is what goes live: it is done."
-  def finished?(%{phase: "live"}, _live_only?), do: true
-  def finished?(%{phase: "landing"}, live_only?), do: live_only?
-  def finished?(_tab, _live_only?), do: false
-
-  # Closing a done or empty chat loses nothing; any other asks first. What a
-  # chat merged stays, and so does a repo chat's pull request.
-  defp close_confirm(%{phase: "new"}, _repo?, _live_only?), do: nil
-
-  defp close_confirm(%{phase: phase} = tab, _repo?, live_only?)
-       when phase in ~w(landing staged live drawn),
-       do:
-         if(!finished?(tab, live_only?),
-           do: "Close this chat? What it merged stays; its agent and preview go."
-         )
-
-  defp close_confirm(_tab, true, _live_only?),
-    do:
-      "Close this chat? Its agent, preview and checkout go; a pull request it opened stays open."
-
-  defp close_confirm(%{phase: "failed"}, false, _live_only?),
-    do: "Discard this change? The chat closes with it."
-
-  defp close_confirm(_tab, false, _live_only?),
-    do: "Close this chat? The conversation goes with it."
 
   ## Model and thinking level
 
@@ -948,23 +1097,87 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
-  attr :tab, :map, required: true, doc: "a finished chat's tab (`finished?/2`)"
+  attr :tickets, :list, required: true, doc: "the chat's queue (Burrow.Tickets)"
+  attr :busy?, :boolean, required: true
+
+  @doc """
+  The chat's queue: the agent's tk tickets and those the user added
+  ("Queue" in the box), the one in progress first. Tickets that haven't
+  started can be deleted; the agent takes the rest one by one.
+  """
+  def queue_card(assigns) do
+    {closed, open} = Enum.split_with(assigns.tickets, &(&1.status == "closed"))
+    assigns = assign(assigns, open: open, closed: closed)
+
+    ~H"""
+    <details id="queue" class="framed ws-queue" open={@open != []}>
+      <summary class="qhead">
+        <.icon name="hero-chevron-right" class="size-3.5 chev" />
+        <span class="font-medium">Queue</span>
+        <span class="muted">{queue_count(@open, @closed)}</span>
+        <button
+          :if={!@busy? && @open != []}
+          id="work-queue"
+          type="button"
+          class="btn btn-secondary btn-sm ml-auto"
+          phx-click="work_queue"
+        >
+          Work the queue
+        </button>
+      </summary>
+      <ul class="qlist">
+        <li :for={t <- @open} id={"ticket-#{t.id}"} class={["qrow", t.status]}>
+          <span class="qi">
+            <.icon
+              name={if t.status == "in_progress", do: "hero-arrow-path", else: "hero-stop"}
+              class={["size-3.5", t.status == "in_progress" && "spin"]}
+            />
+          </span>
+          <span class="qt">{t.title}</span>
+          <span class="mono qid">{t.id}</span>
+          <button
+            :if={t.status == "open"}
+            type="button"
+            class="cx"
+            phx-click="delete_ticket"
+            phx-value-id={t.id}
+            aria-label={"Delete \"#{t.title}\" from the queue"}
+          >
+            <.icon name="hero-x-mark" class="size-3" />
+          </button>
+        </li>
+        <li :for={t <- Enum.take(@closed, 3)} id={"ticket-#{t.id}"} class="qrow closed">
+          <span class="qi"><.icon name="hero-check" class="size-3.5" /></span>
+          <span class="qt">{t.title}</span>
+          <span class="mono qid">{t.id}</span>
+        </li>
+      </ul>
+    </details>
+    """
+  end
+
+  defp queue_count([], closed), do: "all #{length(closed)} done"
+  defp queue_count(open, []), do: "#{length(open)} to do"
+  defp queue_count(open, closed), do: "#{length(open)} to do · #{length(closed)} done"
+
+  attr :tab, :map, required: true, doc: "a done chat's tab (`Burrow.Activity.done?/2`)"
   attr :full?, :boolean, required: true, doc: "no room for another chat"
   attr :attach?, :boolean, required: true, doc: "its agent runs, so opencode can attach"
 
   @doc """
-  In place of a finished chat's box: its change is out, so the next one
-  starts in a new chat, maybe following up on this one.
+  In place of a done chat's box: its change is out and the chat sits under
+  Done in the drawer, so the next change starts in a new chat, maybe
+  following up on this one.
   """
   def chat_done(assigns) do
-    assigns = assign(assigns, id: assigns.tab.draft.change, full: "Up to #{Chats.max()} chats.")
+    assigns = assign(assigns, id: assigns.tab.draft.change, day: day(assigns.tab))
 
     ~H"""
-    <section id="chat-done" class="ws-done" aria-label="This chat is finished">
+    <section id="chat-done" class="ws-done" aria-label="This chat is done">
       <div class="h">
         <.icon name="hero-check" class="size-[17px] self-center text-[var(--ok)]" />
         <b>#{@id} {if @tab.phase == "live", do: "is live.", else: "is on main."}</b>
-        <span>This chat is done. The next change starts in a new one.</span>
+        <span>This chat is done and has moved to {@day}.</span>
       </div>
       <div class="a">
         <button
@@ -972,7 +1185,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="btn btn-primary btn-sm"
           phx-click="new_chat"
           disabled={@full?}
-          title={@full? && @full}
+          title={@full? && full_text()}
         >
           New chat <kbd>⌃B C</kbd>
         </button>
@@ -981,17 +1194,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="btn btn-secondary btn-sm"
           phx-click="follow_up"
           disabled={@full?}
-          title={@full? && @full}
+          title={@full? && full_text()}
         >
           Follow up on #{@id}
-        </button>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          phx-click="close_chat"
-          phx-value-id={@tab.chat.id}
-        >
-          Close this chat <kbd>⌃B Q</kbd>
         </button>
         <button :if={@attach?} type="button" class="xlink mono ml-auto" phx-click="toggle_attach">
           Open in opencode
@@ -2022,11 +2227,17 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   ## The thread
 
   attr :block, :any, required: true
+  attr :images, :string, default: nil, doc: "where the chat's images are (ChatImageController)"
 
   def block(%{block: {:user, message}} = assigns) do
     assigns = assign(assigns, :message, message)
 
     ~H"""
+    <div :if={@images && @message[:images] not in [nil, []]} class="bubble-imgs">
+      <a :for={name <- @message.images} href={"#{@images}/#{name}"} target="_blank">
+        <img src={"#{@images}/#{name}"} alt="An image sent with the message" loading="lazy" />
+      </a>
+    </div>
     <div class="bubble-user">{@message.text}</div>
     """
   end
@@ -2090,6 +2301,17 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
+  # Peon kept the agent going: the next ticket, or what the goal still misses.
+  defp message(%{message: %{role: :note}} = assigns) do
+    ~H"""
+    <div class="evt note" role="note">
+      <span class="ln"></span>
+      <span class="mono"><.icon name="hero-arrow-path" class="size-3" /> {note_text(@message)}</span>
+      <span class="ln"></span>
+    </div>
+    """
+  end
+
   defp message(%{message: %{role: :tool}} = assigns) do
     assigns = assign(assigns, tool: split_tool(assigns.message.text))
 
@@ -2105,6 +2327,17 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     <div class="say-error">{@message.text}</div>
     """
   end
+
+  defp note_text(%{kind: "queue", text: text}) do
+    case Regex.run(~r/(\d+) unfinished tickets?/, text) do
+      [_, "1"] -> "on to the last ticket in the queue"
+      [_, n] -> "on to the next ticket, #{n} left in the queue"
+      nil -> "on to the next ticket"
+    end
+  end
+
+  defp note_text(%{text: text}),
+    do: text |> String.split("\n", parts: 2) |> hd() |> String.trim_trailing(":")
 
   @doc "A tool line's name and the rest: `\"edit lib/a.ex\"` -> `{\"edit\", \"lib/a.ex\"}`."
   def split_tool(text) do

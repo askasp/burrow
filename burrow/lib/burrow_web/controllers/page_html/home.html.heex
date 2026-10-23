@@ -4,7 +4,18 @@
     Work work.
   </h1>
   <div class="flex gap-5 items-center flex-wrap justify-center">
-    <.link navigate={~p"/users/register"} class="btn btn-primary btn-lg">Create account</.link>
-    <.link navigate={~p"/users/log-in"} class="btn btn-ghost btn-lg">Log in</.link>
+    <.link
+      :if={Burrow.Accounts.sign_ups?()}
+      navigate={~p"/users/register"}
+      class="btn btn-primary btn-lg"
+    >
+      Create account
+    </.link>
+    <.link
+      navigate={~p"/users/log-in"}
+      class={["btn btn-lg", if(Burrow.Accounts.sign_ups?(), do: "btn-ghost", else: "btn-primary")]}
+    >
+      Log in
+    </.link>
   </div>
 </main>

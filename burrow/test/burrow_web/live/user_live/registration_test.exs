@@ -5,6 +5,18 @@ defmodule BurrowWeb.UserLive.RegistrationTest do
   import Burrow.AccountsFixtures
 
   describe "Registration page" do
+    test "is closed unless sign-ups are open, and log in doesn't offer it", %{conn: conn} do
+      Application.put_env(:burrow, :sign_ups, false)
+      on_exit(fn -> Application.put_env(:burrow, :sign_ups, true) end)
+
+      assert {:error,
+              {:redirect, %{to: "/users/log-in", flash: %{"error" => "Sign-ups are closed."}}}} =
+               live(conn, ~p"/users/register")
+
+      {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+      refute html =~ "Create an account"
+    end
+
     test "renders registration page", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/users/register")
 

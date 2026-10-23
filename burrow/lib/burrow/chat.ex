@@ -14,7 +14,8 @@ defmodule Burrow.Chat do
   topic `"chat:<id>"`:
 
     * `{:messages, messages}` - the whole conversation, normalized
-    * `{:status, status}` - see `info/1`
+    * `{:status, status}` - see `info/1`; `inbox` in it is what the user
+      sent while the agent was busy, until opencode hands it to the agent
 
   Containers stop after `@idle_timeout` without activity, unless the chat is
   kept running (`Burrow.Chats.keep_running/2`) or its change is on main and
@@ -26,14 +27,32 @@ defmodule Burrow.Chat do
   In a repo project (`Burrow.GitRepo`) the workspace is a git checkout
   instead, and the preview is the repo's preview pack run on the host
   (`Burrow.GitRepo.HostPreview`), up once its framed port answers.
+
+  When a turn is over the agent may keep going (`Burrow.Chat.KeepGoing`):
+  while its queue (`Burrow.Tickets`, in `tickets_dir/2`) has unfinished
+  tickets, and until the chat's goal ("/goal <condition>") holds. The
+  queue's changes are broadcast as `{:tickets, tickets}`. A message may
+  carry images, kept in `images_dir/2` for the thread to show.
   """
 
   use GenServer, restart: :temporary
 
   require Logger
 
-  alias Burrow.{BuildCache, Chats, GitRepo, Incidents, Projects, Sandbox, Secrets, Workspace}
+  alias Burrow.{
+    BuildCache,
+    Chats,
+    GitRepo,
+    Incidents,
+    Projects,
+    Sandbox,
+    Secrets,
+    Tickets,
+    Workspace
+  }
+
   alias Burrow.Agent.{MCP, Prompt}
+  alias Burrow.Chat.KeepGoing
   alias Burrow.GitRepo.{HostPreview, PreviewPack}
   alias Burrow.OpenCode.Client
 
@@ -45,6 +64,9 @@ defmodule Burrow.Chat do
   @probe_interval 2_000
   # How long a detached preview (its start command exited 0) gets to answer.
   @detached_timeout :timer.minutes(5)
+  # After each message the user types: the instructions alone don't get the
+  # agent to split its work into the queue. The thread doesn't show it.
+  @queue_hint "\n\n(Peon: if this asks for more than one thing, first put each in your queue with `tk create`, then work them one at a time.)"
 
   ## API
 
@@ -65,17 +87,58 @@ defmodule Burrow.Chat do
     end
   end
 
-  def send_message(project, id, text) do
-    with {:ok, _info} <- ensure_started(project, id), do: call(id, {:prompt, text})
+  @doc """
+  Sends the user's message with `images` (`%{name, mime}`, files in
+  `images_dir/2`). "/goal <condition>" sets the chat's goal and starts on
+  it; "/goal clear" (or just "/goal") drops it and returns
+  `{:ok, :no_turn}`.
+  """
+  def send_message(project, id, text, images \\ []) do
+    with {:ok, _info} <- ensure_started(project, id), do: call(id, {:prompt, text, images})
   end
 
   @doc """
-  `%{preview_url, preview_status, agent_status, busy?, attach, messages}`;
-  `agent_status` is `:starting`, `:ready` or `{:error, reason}`.
+  `%{preview_url, preview_status, agent_status, busy?, attach, messages,
+  inbox, goal, judging?, note}`; `agent_status` is `:starting`, `:ready` or
+  `{:error, reason}`, `note` what ended the last run of turns
+  (`Burrow.Chat.KeepGoing`).
   """
   def info(id), do: call(id, :info)
 
+  @doc "Takes back a message the agent hasn't got yet (`inbox` in `info/1`)."
+  def cancel_inbox(id, inbox_id), do: call(id, {:cancel_inbox, inbox_id})
+
+  @doc "Stops the agent's turn; a goal ends with it."
   def interrupt(id), do: call(id, :interrupt)
+
+  @doc "Drops the chat's goal, whether it runs or not."
+  def clear_goal(id) do
+    case call(id, :clear_goal) do
+      {:error, :not_running} -> Chats.set(%Chats.Chat{id: id}, goal: nil)
+      :ok -> :ok
+    end
+
+    :ok
+  end
+
+  @doc "The chat's queue (`Burrow.Tickets`); the chat needn't run."
+  def tickets(project, id), do: Tickets.list(tickets_dir(project, id))
+
+  @doc "Adds a ticket to the chat's queue for the agent to take."
+  def add_ticket(project, id, title) do
+    with {:ok, _ticket_id} <- Tickets.create(tickets_dir(project, id), title),
+         do: tickets_changed(project, id)
+  end
+
+  @doc "Deletes a ticket the agent hasn't started from the chat's queue."
+  def delete_ticket(project, id, ticket_id) do
+    with :ok <- Tickets.delete(tickets_dir(project, id), ticket_id),
+         do: tickets_changed(project, id)
+  end
+
+  defp tickets_changed(project, id) do
+    Projects.broadcast(project.id, "chat:#{id}", {:tickets, tickets(project, id)})
+  end
 
   @doc """
   What a message can start with: `/name` for one of opencode's commands or
@@ -99,6 +162,12 @@ defmodule Burrow.Chat do
   def unsubscribe(project_id, id), do: Projects.unsubscribe(project_id, "chat:#{id}")
 
   def workspace_dir(project, id), do: Path.join(base_dir(project, id), "workspace")
+
+  @doc "The chat's queue, outside its workspace (`Burrow.Tickets`)."
+  def tickets_dir(project, id), do: Path.join(base_dir(project, id), "tickets")
+
+  @doc "The images sent with the chat's messages, by name."
+  def images_dir(project, id), do: Path.join(base_dir(project, id), "images")
 
   @doc "The agent's container, where the chat's checks run (`Burrow.Ship`)."
   def agent_name(project, id), do: "peon-agent-#{project.slug}-#{id}"
@@ -249,16 +318,28 @@ defmodule Burrow.Chat do
       restart: :temporary
     }
 
-  def start_link(project, id),
-    do:
-      GenServer.start_link(__MODULE__, {project, id},
-        name: {:via, Registry, {@registry, {project.id, id}, %{ports: [], busy?: false}}}
-      )
+  # The key is in the preview's addresses (`Burrow.Ports.url/2`).
+  def start_link(project, id) do
+    key = new_key()
+
+    GenServer.start_link(__MODULE__, {project, id, key},
+      name: {:via, Registry, {@registry, {project.id, id}, %{ports: [], busy?: false, key: key}}}
+    )
+  end
+
+  @doc "A running chat's preview has `port`, and `key` is in its addresses."
+  def preview_key?(port, key) when is_integer(port) and is_binary(key) and key != "" do
+    @registry
+    |> Registry.select([{{:_, :_, %{ports: :"$1", key: key}}, [], [:"$1"]}])
+    |> Enum.any?(&(port in &1))
+  end
+
+  def preview_key?(_port, _key), do: false
 
   ## Server
 
   @impl true
-  def init({project, id}) do
+  def init({project, id, key}) do
     Process.flag(:trap_exit, true)
     Secrets.subscribe(project.id)
     repo? = Projects.Project.repo?(project)
@@ -267,6 +348,7 @@ defmodule Burrow.Chat do
     with {:ok, preview_port} <- if(repo?, do: {:ok, nil}, else: claim_preview_ports(project, 1)) do
       slug = project.slug
       base = base_dir(project, id)
+      chat = Chats.get(id)
 
       state = %{
         id: id,
@@ -278,6 +360,7 @@ defmodule Burrow.Chat do
         preview: %{
           name: "peon-preview-#{slug}-#{id}",
           port: preview_port && hd(preview_port),
+          key: key,
           container: nil,
           status: :starting,
           secrets: nil,
@@ -299,7 +382,15 @@ defmodule Burrow.Chat do
         logs: :queue.new(),
         log_count: 0,
         session_id: nil,
-        pr_url: if(chat = Chats.get(id), do: chat.pr_url),
+        pr_url: chat && chat.pr_url,
+        # "/goal <condition>", the run of turns since the user's message, the
+        # judge's task while it reads the session, and what ended the last
+        # run (`Burrow.Chat.KeepGoing`)
+        goal: chat && chat.goal,
+        run: KeepGoing.new_run(),
+        judging: nil,
+        note: nil,
+        tickets: Tickets.list(tickets_dir(project, id)),
         busy_since: nil,
         busy?: false,
         # What `{:chat_busy, id, busy?}` on "chats" last said
@@ -310,6 +401,10 @@ defmodule Burrow.Chat do
         label: nil,
         labels: %{},
         messages: [],
+        # What the user sent while the agent was busy, not delivered yet
+        inbox: [],
+        # The agent has `tk` (start_agent/1 mounts it); a chat older than that hasn't
+        tk?: true,
         waiting: [],
         booted_at: System.monotonic_time(:millisecond),
         idle_ref: nil,
@@ -354,74 +449,116 @@ defmodule Burrow.Chat do
     {:noreply, state}
   end
 
+  # A chat that started before this code (reloaded under it) lacks the fields
+  # added since; it gets them on its next call or message. A busy one polls
+  # again: a poll in between may have found no clause for its old state.
   @impl true
-  def handle_call(:await_ready, from, %{agent: %{status: :starting}} = state),
+  def handle_call(msg, from, state), do: on_call(msg, from, upgrade(state))
+
+  @impl true
+  def handle_info(msg, state), do: on_info(msg, upgrade(state))
+
+  defp upgrade(state) when is_map_key(state, :tk?), do: state
+
+  defp upgrade(state) do
+    if state.busy? and not is_map_key(state, :run), do: send(self(), :poll)
+
+    Map.merge(
+      %{
+        goal: nil,
+        run: KeepGoing.new_run(),
+        judging: nil,
+        note: nil,
+        tickets: [],
+        inbox: [],
+        tk?: false
+      },
+      state
+    )
+  end
+
+  defp on_call(:await_ready, from, %{agent: %{status: :starting}} = state),
     do: {:noreply, %{state | waiting: [from | state.waiting]}}
 
-  def handle_call(:await_ready, _from, state), do: {:reply, ready_reply(state), touch(state)}
+  defp on_call(:await_ready, _from, state), do: {:reply, ready_reply(state), touch(state)}
 
-  def handle_call({:prompt, text}, _from, state) do
-    prompted_at = System.system_time(:millisecond)
-    {picked, effort} = model(state)
-    model = Burrow.OpenCode.usable(picked, Client.model_ids(conn(state)))
-    effort = if model == picked, do: effort
+  defp on_call({:prompt, text, images}, _from, state) do
+    case Regex.run(~r{\A/goal(?:\s+(.*))?\z}s, text) do
+      [_ | rest] when rest in [[], ["clear"], ["off"], ["stop"]] ->
+        {:reply, {:ok, :no_turn}, state |> set_goal(nil) |> broadcast_status()}
 
-    # The model and thinking level picked last go with this message.
-    with :ok <- Client.set_model(conn(state), state.session_id, model, effort),
-         {:ok, label} <- run_prompt(state, text) do
-      if chat = Chats.get(state.id), do: Chats.started(chat, text)
-      state = %{state | busy?: true, prompted_at: prompted_at, label: label}
-      send(self(), :poll)
-      {:reply, :ok, state |> broadcast_status() |> touch()}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      [_, goal] ->
+        state |> set_goal(String.trim(goal)) |> prompt({:goal, text}, images)
+
+      nil ->
+        prompt(state, text, images)
     end
   end
 
-  def handle_call(:activity, _from, state) do
+  defp on_call({:cancel_inbox, inbox_id}, _from, state) do
+    case Client.cancel_inbox(conn(state), state.session_id, inbox_id) do
+      :ok ->
+        inbox = Enum.reject(state.inbox, &(&1.id == inbox_id))
+        {:reply, :ok, broadcast_status(%{state | inbox: inbox})}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp on_call(:clear_goal, _from, state),
+    do: {:reply, :ok, state |> set_goal(nil) |> broadcast_status()}
+
+  defp on_call(:activity, _from, state) do
     stoppable? = not state.busy? and not kept?(state)
 
     {:reply, %{used_at: state.used_at, stoppable?: stoppable?, busy?: state.busy?}, state}
   end
 
-  def handle_call(:delete, _from, state) do
+  defp on_call(:delete, _from, state) do
     if state.session_id && state.agent.status == :ready,
       do: Client.delete_session(conn(state), state.session_id)
 
     {:stop, :normal, :ok, %{state | stopped: :deleted}}
   end
 
-  def handle_call(:slash_commands, _from, state),
+  defp on_call(:slash_commands, _from, state),
     do: {:reply, {:ok, slash_commands_of(state)}, state}
 
-  def handle_call(:info, _from, state), do: {:reply, {:ok, info_map(state)}, state}
+  defp on_call(:info, _from, state), do: {:reply, {:ok, info_map(state)}, state}
 
-  def handle_call(:interrupt, _from, state) do
-    Client.interrupt(conn(state), state.session_id)
-    {:reply, :ok, state}
+  # Stop ends the goal too; while the judge reads, there is no turn to stop.
+  defp on_call(:interrupt, _from, %{judging: ref} = state) when ref != nil do
+    Process.demonitor(ref, [:flush])
+    {:reply, :ok, %{state | judging: nil} |> set_goal(nil) |> hand_back(nil)}
   end
 
-  def handle_call(:restart_preview, _from, %{repo: true} = state),
+  defp on_call(:interrupt, _from, state) do
+    Client.interrupt(conn(state), state.session_id)
+    take_back_inbox(state)
+    {:reply, :ok, %{state | inbox: []} |> set_goal(nil) |> broadcast_status()}
+  end
+
+  defp on_call(:restart_preview, _from, %{repo: true} = state),
     do: {:reply, :ok, state |> restart_repo_preview() |> broadcast_status()}
 
-  def handle_call(:restart_preview, _from, state) do
+  defp on_call(:restart_preview, _from, state) do
     Sandbox.stop(state.preview.name)
     {:reply, :ok, state |> start_preview() |> broadcast_status()}
   end
 
-  def handle_call(:preview_pack, _from, state),
+  defp on_call(:preview_pack, _from, state),
     do: {:reply, {:ok, state.preview.pack, state.preview.env}, state}
 
-  def handle_call({:pr_opened, url}, _from, state) do
+  defp on_call({:pr_opened, url}, _from, state) do
     Chats.set(%Chats.Chat{id: state.id}, pr_url: url)
     {:reply, :ok, broadcast_status(%{state | pr_url: url})}
   end
 
-  def handle_call(:logs, _from, state),
+  defp on_call(:logs, _from, state),
     do: {:reply, {:ok, state.logs |> :queue.to_list() |> Enum.join("\n")}, state}
 
-  @impl true
-  def handle_info(:wait_agent, state) do
+  defp on_info(:wait_agent, state) do
     cond do
       Client.ready?(conn(state)) ->
         case ensure_session(state) do
@@ -444,43 +581,80 @@ defmodule Burrow.Chat do
     end
   end
 
-  def handle_info(:poll, %{agent: %{status: :ready}} = state) do
+  # While the judge reads the session there is nothing to poll.
+  defp on_info(:poll, %{agent: %{status: :ready}, judging: nil} = state) do
+    # The inbox first: a message delivered in between is then in both, not
+    # in neither.
+    inbox = inbox(state)
+
     state =
       case Client.messages(conn(state), state.session_id) do
         {:ok, raw} ->
           state = claim_label(state, raw)
           messages = raw |> Enum.flat_map(&normalize/1) |> relabel(state.labels)
-          busy? = state.busy? and not finished?(raw, state.prompted_at)
 
           state =
             if messages != state.messages,
               do: broadcast(%{state | messages: messages}, {:messages, messages}),
               else: state
 
-          if busy? != state.busy?, do: turn_over(state, messages)
-          if busy? != state.busy?, do: broadcast_status(%{state | busy?: busy?}), else: state
+          state = state |> refresh_tickets() |> put_inbox(inbox, messages)
+
+          if state.busy? and finished?(raw, state.prompted_at),
+            do: turn_over(state, raw, messages),
+            else: state
 
         {:error, reason} ->
           Logger.warning("polling chat #{state.id} failed: #{inspect(reason)}")
           state
       end
 
-    if state.busy?, do: Process.send_after(self(), :poll, @poll_interval)
+    if state.busy? and state.judging == nil,
+      do: Process.send_after(self(), :poll, @poll_interval)
+
     {:noreply, state}
   end
 
-  def handle_info(:poll, state), do: {:noreply, state}
+  defp on_info(:poll, state), do: {:noreply, state}
 
-  def handle_info({port, {:data, data}}, %{repo: true, preview: %{container: port}} = state) do
+  defp on_info({ref, result}, %{judging: ref} = state) when is_reference(ref) do
+    Process.demonitor(ref, [:flush])
+    state = %{state | judging: nil}
+
+    case result do
+      {:ok, text} ->
+        case KeepGoing.after_verdict(KeepGoing.verdict(text), state.goal, state.run) do
+          {:continue, text, run} ->
+            send(self(), :poll)
+            {:noreply, keep_going(%{state | run: run}, text, "goal")}
+
+          {:met, note} ->
+            {:noreply, state |> set_goal(nil) |> hand_back({:ok, note})}
+        end
+
+      {:error, reason} ->
+        Logger.warning("judging chat #{state.id}'s goal failed: #{inspect(reason)}")
+        {:noreply, hand_back(state, {:warn, "Peon couldn't check the goal, so it stopped."})}
+    end
+  end
+
+  defp on_info({:DOWN, ref, :process, _pid, reason}, %{judging: ref} = state) do
+    Logger.warning("judging chat #{state.id}'s goal crashed: #{inspect(reason)}")
+
+    {:noreply,
+     hand_back(%{state | judging: nil}, {:warn, "Peon couldn't check the goal, so it stopped."})}
+  end
+
+  defp on_info({port, {:data, data}}, %{repo: true, preview: %{container: port}} = state) do
     File.write(preview_log(state), data, [:append])
     {:noreply, append_logs(state, data)}
   end
 
   # A start command that exits 0 has detached (e.g. `docker compose up -d`).
-  def handle_info(
-        {port, {:exit_status, code}},
-        %{repo: true, preview: %{container: port}} = state
-      ) do
+  defp on_info(
+         {port, {:exit_status, code}},
+         %{repo: true, preview: %{container: port}} = state
+       ) do
     preview = %{
       state.preview
       | container: nil,
@@ -491,7 +665,7 @@ defmodule Burrow.Chat do
     {:noreply, broadcast_status(%{state | preview: preview})}
   end
 
-  def handle_info({:probe, ref}, %{preview: %{probe: ref, status: :starting} = preview} = state) do
+  defp on_info({:probe, ref}, %{preview: %{probe: ref, status: :starting} = preview} = state) do
     cond do
       HostPreview.up?(preview.port, preview.pack.ready) ->
         {:noreply, broadcast_status(put_in(state.preview.status, :running))}
@@ -506,9 +680,9 @@ defmodule Burrow.Chat do
     end
   end
 
-  def handle_info({:probe, _ref}, state), do: {:noreply, state}
+  defp on_info({:probe, _ref}, state), do: {:noreply, state}
 
-  def handle_info({container, {:data, data}}, %{preview: %{container: container}} = state) do
+  defp on_info({container, {:data, data}}, %{preview: %{container: container}} = state) do
     state = append_logs(state, data)
 
     if state.preview.status == :starting and data =~ "Access " and data =~ "Endpoint at",
@@ -516,38 +690,38 @@ defmodule Burrow.Chat do
       else: {:noreply, state}
   end
 
-  def handle_info({container, {:exit_status, code}}, %{preview: %{container: container}} = state) do
+  defp on_info({container, {:exit_status, code}}, %{preview: %{container: container}} = state) do
     preview = %{state.preview | container: nil, status: {:crashed, code}}
     {:noreply, broadcast_status(%{state | preview: preview})}
   end
 
-  def handle_info({container, {:data, data}}, %{agent: %{container: container}} = state) do
+  defp on_info({container, {:data, data}}, %{agent: %{container: container}} = state) do
     Logger.debug("agent #{state.id}: #{String.trim(data)}")
     {:noreply, state}
   end
 
-  def handle_info({container, {:exit_status, code}}, %{agent: %{container: container}} = state) do
+  defp on_info({container, {:exit_status, code}}, %{agent: %{container: container}} = state) do
     Logger.warning("agent for chat #{state.id} exited with #{code}")
     {:stop, :normal, put_in(state.agent.container, nil)}
   end
 
   # The preview gets secrets as env vars when it starts, so new values restart it.
-  def handle_info({:secrets, _list}, %{repo: true, preview: %{pack: %PreviewPack{}}} = state) do
+  defp on_info({:secrets, _list}, %{repo: true, preview: %{pack: %PreviewPack{}}} = state) do
     if state.preview.secrets == Secrets.fingerprint(Secrets.env(state.project.id)),
       do: {:noreply, state},
       else: {:noreply, state |> restart_repo_preview() |> broadcast_status()}
   end
 
-  def handle_info({ref, output}, %{preview: %{restart: ref}} = state) do
+  defp on_info({ref, output}, %{preview: %{restart: ref}} = state) do
     Process.demonitor(ref, [:flush])
     {:noreply, restarted(state, output)}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{preview: %{restart: ref}} = state),
+  defp on_info({:DOWN, ref, :process, _pid, reason}, %{preview: %{restart: ref}} = state),
     do: {:noreply, restarted(state, "stop failed: #{inspect(reason)}")}
 
-  def handle_info({:secrets, _list}, %{preview: %{container: container} = preview} = state)
-      when container != nil do
+  defp on_info({:secrets, _list}, %{preview: %{container: container} = preview} = state)
+       when container != nil do
     if preview.secrets == Secrets.fingerprint(Secrets.env(state.project.id)) do
       {:noreply, state}
     else
@@ -556,19 +730,19 @@ defmodule Burrow.Chat do
     end
   end
 
-  def handle_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
+  defp on_info(:idle, %{busy?: true} = state), do: {:noreply, touch(state)}
 
-  def handle_info(:idle, state) do
+  defp on_info(:idle, state) do
     if kept?(state),
       do: {:noreply, touch(state)},
       else: {:stop, :normal, %{state | stopped: :idle}}
   end
 
   # Another chat is starting and this one was used longest ago (make_room/1).
-  def handle_info(:make_room, %{busy?: true} = state), do: {:noreply, state}
-  def handle_info(:make_room, state), do: {:stop, :normal, %{state | stopped: :room}}
+  defp on_info(:make_room, %{busy?: true} = state), do: {:noreply, state}
+  defp on_info(:make_room, state), do: {:stop, :normal, %{state | stopped: :room}}
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  defp on_info(_msg, state), do: {:noreply, state}
 
   defp kept?(state),
     do:
@@ -598,7 +772,7 @@ defmodule Burrow.Chat do
     env =
       Map.merge(
         Secrets.env(state.project.id),
-        PreviewPack.env(pack, state.preview.ports, &Burrow.Ports.url/1, state.preview.name)
+        PreviewPack.env(pack, state.preview.ports, &url(state, &1), state.preview.name)
       )
 
     File.write(preview_log(state), "\n[peon] $ #{pack.start}\n", [:append])
@@ -666,6 +840,9 @@ defmodule Burrow.Chat do
 
     data_dir = Burrow.OpenCode.data_dir(state.project.user_id)
     File.mkdir_p!(data_dir)
+    tickets = tickets_dir(state.project, state.id)
+    File.mkdir_p!(tickets)
+    tk = Application.app_dir(:burrow, "priv/tk")
 
     bin =
       System.find_executable(Application.get_env(:burrow, :opencode_bin) || "opencode") ||
@@ -680,7 +857,8 @@ defmodule Burrow.Chat do
           "MIX_ENV" => "test",
           "XDG_CONFIG_HOME" => "/opencode/config",
           "XDG_DATA_HOME" => "/opencode/data",
-          "OPENCODE_SERVER_PASSWORD" => state.agent.password
+          "OPENCODE_SERVER_PASSWORD" => state.agent.password,
+          "TICKETS_DIR" => "/peon/tickets"
         },
         mounts:
           [
@@ -688,7 +866,11 @@ defmodule Burrow.Chat do
             {config_dir, "/opencode/config", :ro},
             {data_dir, "/opencode/data", :rw},
             {MCP.socket_path(), "/peon/mcp.sock", :rw},
-            {Application.app_dir(:burrow, "priv/mcp_bridge.exs"), "/peon/mcp_bridge.exs", :ro}
+            {Application.app_dir(:burrow, "priv/mcp_bridge.exs"), "/peon/mcp_bridge.exs", :ro},
+            # The queue (Burrow.Tickets) and tk to work it, `tk ls` its plugin
+            {tickets, "/peon/tickets", :rw},
+            {Path.join(tk, "tk"), "/usr/local/bin/tk", :ro},
+            {Path.join(tk, "ticket-ls"), "/usr/local/bin/ticket-ls", :ro}
           ] ++ repo_mounts(state),
         hosts: if(state.repo, do: [{"host.docker.internal", "host-gateway"}], else: []),
         ports: [{state.agent.port, 4096}]
@@ -764,7 +946,7 @@ defmodule Burrow.Chat do
       branch: "peon/#{state.id}",
       pack: state.preview.pack,
       ports: state.preview.ports,
-      url: &Burrow.Ports.url/1
+      url: &url(state, &1)
     }
   end
 
@@ -782,6 +964,8 @@ defmodule Burrow.Chat do
   # Loads the checkout's preview pack and claims the ports it names: its
   # tunneled `ports` from the project's range, `local_ports` anywhere.
   defp load_pack(state) do
+    state = with_key(state)
+
     case PreviewPack.load(state.dir) do
       {:ok, pack} ->
         with {:ok, claimed} <- claim_preview_ports(state.project, PreviewPack.port_count(pack)) do
@@ -866,9 +1050,11 @@ defmodule Burrow.Chat do
     end
   end
 
-  # A turn that ended in an error hands any incident this chat was fixing
-  # back to the user (`Burrow.Incidents.chat_failed/3`).
-  defp turn_over(state, messages) do
+  # The turn is over: the agent keeps going (Burrow.Chat.KeepGoing) or the
+  # chat is the user's again. A turn that ended in an error hands any
+  # incident this chat was fixing back to the user
+  # (`Burrow.Incidents.chat_failed/3`).
+  defp turn_over(state, raw, messages) do
     case List.last(messages) do
       %{role: :error} ->
         errors = messages |> Enum.take(-3) |> Enum.filter(&(&1.role == :error))
@@ -876,6 +1062,106 @@ defmodule Burrow.Chat do
 
       _ ->
         :ok
+    end
+
+    outcome = outcome(raw, state.prompted_at)
+
+    case KeepGoing.after_turn(outcome, state.tickets, state.goal, state.run) do
+      {:continue, text, run} -> keep_going(%{state | run: run}, text, "queue")
+      :judge -> judge(state)
+      {:stop, note} -> state |> set_goal(nil) |> hand_back({:warn, note})
+      :done -> hand_back(state, nil)
+    end
+  end
+
+  # How the turn ended: opencode's last idle says, or the error it ended on.
+  defp outcome(raw, prompted_at) do
+    idle =
+      raw
+      |> Enum.filter(&(&1["type"] == "idle" and get_in(&1, ["time", "created"]) >= prompted_at))
+      |> List.last()
+
+    last = raw |> Enum.reject(&(&1["type"] == "idle")) |> List.last()
+
+    cond do
+      idle["outcome"] == "interrupted" -> :interrupted
+      idle["outcome"] != "succeeded" -> :error
+      last && last["error"] -> :error
+      true -> :ok
+    end
+  end
+
+  # Another turn, on Burrow's word: synthetic input, so the thread shows it
+  # as Peon's own note (`kind`), not the user's.
+  defp keep_going(state, text, kind) do
+    state = %{state | prompted_at: System.system_time(:millisecond), note: nil}
+
+    case Client.synthetic(conn(state), state.session_id, text, kind) do
+      {:ok, _} ->
+        broadcast_status(state)
+
+      {:error, reason} ->
+        Logger.warning("chat #{state.id} could not keep going: #{inspect(reason)}")
+        hand_back(state, {:warn, "Peon couldn't go on, so it stopped."})
+    end
+  end
+
+  # The judge reads the whole session (opencode's generate) in a task; the
+  # chat stays busy meanwhile.
+  defp judge(state) do
+    %{session_id: session_id, goal: goal} = state
+    conn = conn(state)
+
+    task =
+      Task.Supervisor.async_nolink(Burrow.TaskSupervisor, fn ->
+        Client.generate(conn, session_id, KeepGoing.judge_prompt(goal))
+      end)
+
+    broadcast_status(%{state | judging: task.ref})
+  end
+
+  # `note` is `{tone, text}`: what ended the run, for the thread.
+  defp hand_back(state, note),
+    do: broadcast_status(%{state | busy?: false, note: note, inbox: []})
+
+  # Stop stops it all: what still waits in opencode's inbox would otherwise
+  # go to the agent with the user's next message.
+  defp take_back_inbox(state) do
+    with {:ok, items} <- Client.inbox(conn(state), state.session_id) do
+      for %{"type" => type, "id" => id} <- items,
+          type in ["user", "synthetic"],
+          do: Client.cancel_inbox(conn(state), state.session_id, id)
+    end
+  end
+
+  # opencode keeps what the user sends while the agent is busy in the
+  # session's inbox until the agent's next step; it shows meanwhile.
+  defp inbox(%{busy?: false}), do: []
+
+  defp inbox(state) do
+    case Client.inbox(conn(state), state.session_id) do
+      {:ok, items} -> for %{"type" => "user"} = item <- items, m <- normalize(item), do: m
+      {:error, _} -> state.inbox
+    end
+  end
+
+  defp put_inbox(state, inbox, messages) do
+    delivered = MapSet.new(messages, & &1.id)
+    inbox = Enum.reject(inbox, &MapSet.member?(delivered, &1.id))
+    if inbox == state.inbox, do: state, else: broadcast_status(%{state | inbox: inbox})
+  end
+
+  defp set_goal(%{goal: goal} = state, goal), do: state
+
+  defp set_goal(state, goal) do
+    Chats.set(%Chats.Chat{id: state.id}, goal: goal)
+    %{state | goal: goal}
+  end
+
+  defp refresh_tickets(state) do
+    case Tickets.list(tickets_dir(state.project, state.id)) do
+      tickets when tickets == state.tickets -> state
+      tickets -> broadcast(%{state | tickets: tickets}, {:tickets, tickets})
     end
   end
 
@@ -903,24 +1189,42 @@ defmodule Burrow.Chat do
 
   defp info_map(state) do
     %{
-      preview_url: state.preview.port && Burrow.Ports.url(state.preview.port),
+      preview_url: state.preview.port && url(state, state.preview.port),
       preview_links: preview_links(state),
       preview_status: state.preview.status,
       pr_url: state.pr_url,
       agent_status: state.agent.status,
       busy?: state.busy?,
+      goal: state.goal,
+      judging?: state.judging != nil,
+      note: state.note,
       attach:
         "OPENCODE_SERVER_PASSWORD=#{state.agent.password} opencode --server http://127.0.0.1:#{state.agent.port} --session #{state.session_id}",
-      messages: state.messages
+      messages: state.messages,
+      inbox: state.inbox
     }
   end
 
   # A repo preview's other public ports, by name, for links next to the frame.
-  defp preview_links(%{preview: %{pack: %PreviewPack{} = pack, ports: ports}}) do
-    for name <- pack.ports, name != pack.frame, do: {name, Burrow.Ports.url(ports[name])}
+  defp preview_links(%{preview: %{pack: %PreviewPack{} = pack, ports: ports}} = state) do
+    for name <- pack.ports, name != pack.frame, do: {name, url(state, ports[name])}
   end
 
   defp preview_links(_state), do: []
+
+  defp url(state, port), do: Burrow.Ports.url(port, state.preview[:key])
+
+  defp new_key, do: :crypto.strong_rand_bytes(10) |> Base.encode16(case: :lower)
+
+  # A chat that started before preview keys (its code reloaded under it) gets
+  # one as its preview restarts.
+  defp with_key(%{preview: %{key: _}} = state), do: state
+
+  defp with_key(state) do
+    key = new_key()
+    Registry.update_value(@registry, {state.project.id, state.id}, &Map.put(&1, :key, key))
+    put_in(state, [:preview, :key], key)
+  end
 
   defp broadcast(state, message) do
     Projects.broadcast(state.project.id, "chat:#{state.id}", message)
@@ -950,10 +1254,64 @@ defmodule Burrow.Chat do
     }
   end
 
-  # "/name args" runs an opencode command or loads a skill with the message;
-  # anything else, or an unknown name, is sent as written. Returns the label
-  # for a command's message.
-  defp run_prompt(state, text) do
+  # Starts a turn with the user's message, with the model and thinking level
+  # picked last: a new run of turns (Burrow.Chat.KeepGoing), so a judge
+  # still reading is left behind.
+  defp prompt(state, text, images) do
+    prompted_at = System.system_time(:millisecond)
+    {picked, effort} = model(state)
+    model = Burrow.OpenCode.usable(picked, Client.model_ids(conn(state)))
+    effort = if model == picked, do: effort
+
+    with :ok <- Client.set_model(conn(state), state.session_id, model, effort),
+         {:ok, label} <- run_prompt(state, text, attachments(state, images)) do
+      typed = with {:goal, typed} <- text, do: typed
+      if chat = Chats.get(state.id), do: Chats.started(chat, typed)
+      if state.judging, do: Process.demonitor(state.judging, [:flush])
+
+      state = %{
+        state
+        | busy?: true,
+          prompted_at: prompted_at,
+          label: label,
+          run: KeepGoing.new_run(),
+          judging: nil,
+          note: nil
+      }
+
+      send(self(), :poll)
+      {:reply, :ok, state |> broadcast_status() |> touch()}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  # The message's images as data: URIs, named as images_dir/2 keeps them.
+  defp attachments(state, images) do
+    dir = images_dir(state.project, state.id)
+
+    for %{name: name, mime: mime} <- images,
+        {:ok, data} <- [File.read(Path.join(dir, name))],
+        do: %{uri: "data:#{mime};base64,#{Base.encode64(data)}", name: name}
+  end
+
+  # "/goal <condition>" starts on the goal; "/name args" runs an opencode
+  # command or loads a skill with the message; anything else, or an unknown
+  # name, is sent as written. Returns the label for a message the chat shows
+  # as typed. A command takes no images.
+  defp run_prompt(state, {:goal, typed}, files) do
+    with {:ok, _} <-
+           Client.prompt(
+             conn(state),
+             state.session_id,
+             KeepGoing.goal_text(state.goal),
+             [],
+             files
+           ),
+         do: {:ok, typed}
+  end
+
+  defp run_prompt(state, text, files) do
     {name, args} =
       case Regex.run(~r{\A/(\S+)\s*(.*)\z}s, text) do
         [_, name, args] -> {name, args}
@@ -967,21 +1325,34 @@ defmodule Burrow.Chat do
       %{kind: :skill} ->
         text = if args == "", do: text, else: args
 
-        with {:ok, _} <- Client.prompt(conn(state), state.session_id, text, [name]),
+        with {:ok, _} <- Client.prompt(conn(state), state.session_id, text, [name], files),
              do: {:ok, nil}
 
-      nil ->
-        with {:ok, _} <- Client.prompt(conn(state), state.session_id, text), do: {:ok, nil}
+      _ ->
+        with {:ok, _} <-
+               Client.prompt(conn(state), state.session_id, text <> queue_hint(state), [], files),
+             do: {:ok, nil}
     end
   end
 
-  # Commands win over skills of the same name, as in opencode's own UI.
+  defp queue_hint(%{tk?: true}), do: @queue_hint
+  defp queue_hint(_state), do: ""
+
+  # Peon's own "/goal" first; commands win over skills of the same name, as
+  # in opencode's own UI.
   defp slash_commands_of(state) do
     commands = with({:ok, list} <- Client.commands(conn(state)), do: list, else: (_ -> []))
     skills = with({:ok, list} <- Client.skills(conn(state)), do: list, else: (_ -> []))
     taken = MapSet.new(commands, & &1.name)
 
-    Enum.map(commands, &Map.put(&1, :kind, :command)) ++
+    [
+      %{
+        name: "goal",
+        description: "Keep working until this holds (/goal clear stops)",
+        kind: :peon
+      }
+    ] ++
+      Enum.map(commands, &Map.put(&1, :kind, :command)) ++
       for skill <- skills,
           not MapSet.member?(taken, skill.name),
           do: Map.put(skill, :kind, :skill)
@@ -1015,10 +1386,22 @@ defmodule Burrow.Chat do
 
   @doc false
   # opencode session messages -> what the chat UI shows.
+  # A user message's images go by the names images_dir/2 keeps them under.
   def normalize(%{"type" => "user"} = m) do
-    text = m["text"] || get_in(m, ["payload", "text"]) || ""
+    text =
+      String.replace_suffix(m["text"] || get_in(m, ["payload", "text"]) || "", @queue_hint, "")
+
     skills = m["skills"] || get_in(m, ["payload", "skills"]) || []
-    [%{id: m["id"], role: :user, text: with_skills(text, skills)}]
+    files = m["files"] || get_in(m, ["payload", "files"]) || []
+    images = for %{"mime" => "image/" <> _, "name" => name} <- files, do: name
+    [%{id: m["id"], role: :user, text: with_skills(text, skills), images: images}]
+  end
+
+  # Burrow's own "keep going" (keep_going/3): a note of its `kind`.
+  def normalize(%{"type" => "synthetic"} = m) do
+    text = m["text"] || get_in(m, ["payload", "text"]) || ""
+    kind = m["description"] || get_in(m, ["payload", "description"])
+    [%{id: m["id"], role: :note, text: text, kind: kind}]
   end
 
   def normalize(%{"type" => "assistant", "content" => content} = m) when is_list(content) do

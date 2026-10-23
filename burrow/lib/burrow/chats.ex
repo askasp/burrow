@@ -1,13 +1,15 @@
 defmodule Burrow.Chats do
   @moduledoc """
-  Chats with the agent, a project's tabs. The conversation lives in the
+  Chats with the agent, a project's drawer. The conversation lives in the
   chat's opencode session (`Burrow.Chat`); Burrow keeps the chat's title,
   session, model and thinking level and keep-running time, or for a repo
   chat its pull request. A chat's change is its draft in the project's
   history, under the chat's id.
 
-  A project has at most four chats (`max/0`). A chat starts empty (title
-  `""`) and its first message titles it (`started/2`).
+  A project has at most four chats that aren't done (`max/0`,
+  `Burrow.Activity.room?/1`); done ones stay, to read and follow up on. A
+  chat starts empty (title `""`) and its first message titles it
+  (`started/2`).
 
   Broadcasts `{:chat_created, chat}`, `{:chat_started, id}` and
   `{:chat_deleted, id}` on the project's `"chats"` topic; `Burrow.Chat`
@@ -25,14 +27,8 @@ defmodule Burrow.Chats do
 
   def subscribe(project_id), do: Projects.subscribe(project_id, "chats")
 
-  def room?(project_id),
-    do: Repo.aggregate(from(c in Chat, where: c.project_id == ^project_id), :count) < @max
-
-  def create_empty(project_id, created_by, opts \\ []) do
-    if room?(project_id),
-      do: {:ok, create(project_id, "", created_by, [started: false] ++ opts)},
-      else: {:error, :full}
-  end
+  def create_empty(project_id, created_by, opts \\ []),
+    do: create(project_id, "", created_by, [started: false] ++ opts)
 
   @doc """
   Creates a chat. Options: `:model` and `:effort` (see `pick_model/3`),
@@ -68,7 +64,7 @@ defmodule Burrow.Chats do
     Projects.broadcast(chat.project_id, "chats", {:chat_started, chat.id})
   end
 
-  @doc "A project's chats, oldest first: the order of the tabs."
+  @doc "A project's chats, oldest first."
   def list(project_id),
     do:
       Repo.all(

@@ -37,7 +37,7 @@ defmodule Burrow.Activity do
     :ok
   end
 
-  @doc "`[%{chat, draft, phase}]` in tab order; `busy` holds the chats whose agent works."
+  @doc "`[%{chat, draft, phase}]`, oldest first; `busy` holds the chats whose agent works."
   def chats(project, busy) do
     repo = if !Projects.Project.repo?(project), do: Projects.repo_dir(project)
     refs = repo && Repo.refs(repo)
@@ -65,6 +65,17 @@ defmodule Burrow.Activity do
   end
 
   defp phase(_chat, _draft, false, _refs), do: "idle"
+
+  @doc "A chat whose change is live, or on main where main is what goes live: it is done."
+  def done?(%{phase: "live"}, _live_only?), do: true
+  def done?(%{phase: "landing"}, live_only?), do: live_only?
+  def done?(_chat, _live_only?), do: false
+
+  @doc "Whether the project can open another chat: up to `Burrow.Chats.max/0` that aren't done."
+  def room?(project) do
+    live_only? = not Ship.staging?(project)
+    Enum.count(chats(project, MapSet.new()), &(not done?(&1, live_only?))) < Chats.max()
+  end
 
   @doc "Whether the chat's change is on main or staging and not live yet."
   def unshipped?(project, chat_id) do

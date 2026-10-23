@@ -40,7 +40,7 @@ defmodule Burrow.DesignTest do
     do: Enum.find(Activity.chats(project, MapSet.new()), &(&1.chat.id == chat.id)).phase
 
   test "a chat sees main's boards with its own changes", %{project: project, repo: repo} do
-    fresh = Chats.create_empty(project.id, "ada") |> elem(1)
+    fresh = Chats.create_empty(project.id, "ada")
 
     assert [%{path: "design/settings/a.html", folder: "settings/", title: "tabs", here?: false}] =
              Design.boards(project, fresh.id)

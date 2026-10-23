@@ -32,9 +32,9 @@ defmodule Burrow.Accounts do
     :ok
   end
 
-  @doc "Whether the workspace's project rail shows project names, for this user."
-  def put_rail_open(%User{id: id}, open?) when is_boolean(open?) do
-    Repo.update_all(from(u in User, where: u.id == ^id), set: [rail_open: open?])
+  @doc "Whether the workspace's chat drawer is collapsed to a strip, for this user."
+  def put_chats_collapsed(%User{id: id}, collapsed?) when is_boolean(collapsed?) do
+    Repo.update_all(from(u in User, where: u.id == ^id), set: [chats_collapsed: collapsed?])
     :ok
   end
 
@@ -87,6 +87,9 @@ defmodule Burrow.Accounts do
   def get_user!(id), do: Repo.get!(User, id)
 
   ## User registration
+
+  @doc "Anyone may create an account (`:sign_ups`, BURROW_SIGN_UPS=open)."
+  def sign_ups?, do: Application.get_env(:burrow, :sign_ups, false)
 
   @doc """
   Registers a user.

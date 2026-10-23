@@ -77,6 +77,49 @@ defmodule Burrow.ChatTest do
     assert [%{role: :user, text: "/deploy"}] = Chat.normalize(user.("/deploy"))
   end
 
+  test "a message's images show by the names Burrow keeps them under, not their data" do
+    message = %{
+      "type" => "user",
+      "id" => "u1",
+      "text" => "Like this",
+      "files" => [
+        %{"data" => "iVBORw0K", "mime" => "image/png", "name" => "k2j4.png"},
+        %{"data" => "JVBERi0", "mime" => "application/pdf", "name" => "spec.pdf"}
+      ]
+    }
+
+    assert [%{role: :user, text: "Like this", images: ["k2j4.png"]} = m] = Chat.normalize(message)
+    refute inspect(m) =~ "iVBORw0K"
+  end
+
+  test "a message still in opencode's inbox shows as typed, without Peon's queue hint" do
+    hint =
+      "\n\n(Peon: if this asks for more than one thing, first put each in your queue " <>
+        "with `tk create`, then work them one at a time.)"
+
+    waiting = %{
+      "type" => "user",
+      "id" => "msg_1",
+      "delivery" => "steer",
+      "payload" => %{"text" => "Also add a footer" <> hint}
+    }
+
+    assert [%{id: "msg_1", role: :user, text: "Also add a footer", images: []}] =
+             Chat.normalize(waiting)
+  end
+
+  test "Burrow's own keep-going input is a note of its kind" do
+    synthetic = %{
+      "type" => "synthetic",
+      "id" => "s1",
+      "text" => "The goal isn't met yet: 2 tests fail",
+      "description" => "goal"
+    }
+
+    assert [%{role: :note, kind: "goal", text: "The goal isn't met yet: 2 tests fail"}] =
+             Chat.normalize(synthetic)
+  end
+
   test "a model without a login falls back to the agent's first model" do
     ids = ["opencode/minimax-free", "opencode/big-pickle"]
     assert Burrow.OpenCode.usable("openai/gpt-6-sol", ids) == "opencode/minimax-free"

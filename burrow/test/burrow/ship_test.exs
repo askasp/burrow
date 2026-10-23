@@ -138,7 +138,7 @@ defmodule Burrow.ShipTest do
   end
 
   test "a new chat is new; one that talked is idle", %{project: project} do
-    {:ok, empty} = Chats.create_empty(project.id, "ada")
+    empty = Chats.create_empty(project.id, "ada")
     assert phase(project, empty) == "new"
     talked = Chats.create(project.id, "hi", "ada")
     assert phase(project, talked) == "idle"

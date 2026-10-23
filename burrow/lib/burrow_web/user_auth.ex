@@ -57,6 +57,7 @@ defmodule BurrowWeb.UserAuth do
     conn
     |> renew_session(nil)
     |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
+    |> BurrowWeb.PreviewPass.delete_pass()
     |> redirect(to: ~p"/")
   end
 

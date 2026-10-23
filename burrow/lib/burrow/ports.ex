@@ -23,5 +23,21 @@ defmodule Burrow.Ports do
         to_string(port)
       )
 
+  @doc """
+  A chat's preview port's address, with the chat's `key` in its host when
+  ports have hosts of their own (`https://peon-<port>-<key>.example.com`): it
+  opens without a login while the chat runs (`BurrowWeb.PreviewPass`), so the
+  preview's own ports can call each other, which browsers do without cookies.
+  """
+  def url(port, nil), do: url(port)
+
+  def url(port, key) do
+    template = Application.get_env(:burrow, :port_url, "http://localhost:{port}")
+
+    if Regex.match?(~r"^\w+://[^/:]*\{port\}", template),
+      do: String.replace(template, "{port}", "#{port}-#{key}"),
+      else: url(port)
+  end
+
   def host(port), do: URI.parse(url(port)).host
 end

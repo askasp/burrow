@@ -63,9 +63,17 @@ defmodule BurrowWeb.UserLive.Registration do
   end
 
   def mount(_params, _session, socket) do
+    if Accounts.sign_ups?(),
+      do: {:ok, new(socket)},
+      else:
+        {:ok,
+         socket |> put_flash(:error, "Sign-ups are closed.") |> redirect(to: ~p"/users/log-in")}
+  end
+
+  defp new(socket) do
     changeset = Accounts.change_user_registration(%User{})
 
-    {:ok, socket |> assign(trigger_submit: false) |> assign_form(changeset)}
+    socket |> assign(trigger_submit: false) |> assign_form(changeset)
   end
 
   @impl true

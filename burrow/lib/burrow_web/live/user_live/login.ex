@@ -54,7 +54,7 @@ defmodule BurrowWeb.UserLive.Login do
       </.form>
 
       <div
-        :if={!@current_scope}
+        :if={!@current_scope and Burrow.Accounts.sign_ups?()}
         class="pt-5 border-t border-[var(--border)] text-sm leading-5 text-[var(--text-2)]"
       >
         New to Peon? <.link navigate={~p"/users/register"}>Create an account</.link>

@@ -19,6 +19,8 @@ defmodule Burrow.Chats.Chat do
     field :started_at, :utc_datetime
     # The change it follows up on ("Follow up on #N"); its agent starts from it
     field :follows, :integer
+    # "/goal <condition>": the agent keeps going until it holds (`Burrow.Chat.KeepGoing`)
+    field :goal, :string
     timestamps(type: :utc_datetime)
   end
 end

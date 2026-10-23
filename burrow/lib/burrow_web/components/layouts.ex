@@ -90,7 +90,11 @@ defmodule BurrowWeb.Layouts do
           <% else %>
             <span class="mr-auto"></span>
             <.link navigate={~p"/users/log-in"} class="btn btn-ghost btn-sm">Log in</.link>
-            <.link navigate={~p"/users/register"} class="btn btn-secondary btn-sm">
+            <.link
+              :if={Burrow.Accounts.sign_ups?()}
+              navigate={~p"/users/register"}
+              class="btn btn-secondary btn-sm"
+            >
               Create account
             </.link>
           <% end %>

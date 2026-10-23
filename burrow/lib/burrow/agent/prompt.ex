@@ -23,6 +23,8 @@ defmodule Burrow.Agent.Prompt do
 
     #{talk()}
 
+    #{queue()}
+
     ## Your environment
     - /app is your checkout of the app. Edit files with your normal tools.
     - The app runs in dev mode at http://preview:4000 and reloads code on each request.
@@ -142,6 +144,8 @@ defmodule Burrow.Agent.Prompt do
 
     #{talk()}
 
+    #{queue()}
+
     ## Your environment
     - /app is your checkout. Edit files with your normal tools; git works for looking
       at history and diffs. Don't commit, push or switch branches: Peon does that when
@@ -174,11 +178,12 @@ defmodule Burrow.Agent.Prompt do
   defp preview_lines(%{pack: %Burrow.GitRepo.PreviewPack{} = pack, ports: ports, url: url}) do
     ports =
       Enum.map_join(pack.ports, "\n", fn name ->
-        "  - #{name}: #{url.(ports[name])} (or http://host.docker.internal:#{ports[name]})"
+        "  - #{name}: http://host.docker.internal:#{ports[name]} (the user's browser: #{url.(ports[name])})"
       end)
 
     """
-    - The preview's ports (the pane shows #{pack.frame}):
+    - The preview's ports (the pane shows #{pack.frame}). Test them yourself from here
+      with `curl` at these addresses: localhost is your own container, not the preview.
     #{ports}
     - Its log is /peon/preview.log. It runs `#{pack.start}`; the first start can take
       minutes, so if a port doesn't answer yet, wait and check the log.\
@@ -242,6 +247,26 @@ defmodule Burrow.Agent.Prompt do
           Enum.map_join(secrets, ", ", &if(&1.set?, do: &1.name, else: "#{&1.name} (asked for)")) <>
           "."
     end
+  end
+
+  # The agent's queue, tk (Burrow.Tickets), in every kind of project.
+  defp queue do
+    """
+    ## Your queue: tk
+    Your work queue is `tk`, a ticket tool in your shell. The user sees the queue next to
+    the chat, adds tickets to it and deletes ones you haven't started.
+    - When a request asks for two or more things, or one thing in several steps, put each
+      in the queue before you change any file, in order: `tk create "Add the schedule
+      page" -d "what done looks like"`. The queue is how the user follows your work and
+      changes the plan, so split even small requests that list several things. When one
+      needs another first: `tk dep <id> <needed-id>`. Only a single small change needs no
+      ticket.
+    - Work them one at a time: `tk ready` lists what is open, `tk start <id>`, do it,
+      `tk close <id>`.
+    - Before you finish, run `tk ready`: the user may have added tickets while you
+      worked. If anything is open, take the next one. Finish only when it lists nothing.
+    """
+    |> String.trim_trailing()
   end
 
   # How the agent talks, in every kind of project.

@@ -2,6 +2,7 @@ defmodule BurrowWeb.Router do
   use BurrowWeb, :router
 
   import BurrowWeb.UserAuth
+  import BurrowWeb.PreviewPass, only: [put_pass: 2]
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -11,6 +12,7 @@ defmodule BurrowWeb.Router do
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug :fetch_current_scope_for_user
+    plug :put_pass
   end
 
   pipeline :api do
@@ -63,6 +65,7 @@ defmodule BurrowWeb.Router do
 
     post "/users/update-password", UserSessionController, :update_password
     post "/users/theme", ThemeController, :update
+    get "/projects/:id/c/:chat/images/:name", ChatImageController, :show
   end
 
   scope "/", BurrowWeb do

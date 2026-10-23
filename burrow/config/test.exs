@@ -44,6 +44,7 @@ config :burrow, start_cells: false
 
 config :burrow,
   fix_retries: 0,
+  sign_ups: true,
   port_url: "http://localhost:{port}",
   data_dir: Path.expand("../tmp/test-data", __DIR__),
   template_dir: Path.expand("../../template", __DIR__)

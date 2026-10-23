@@ -90,7 +90,7 @@ defmodule Burrow.Incidents do
 
   @doc "Opens a chat asked to fix the incident, when there is room for one."
   def fix(%__MODULE__{} = incident, project, created_by \\ "peon") do
-    if Chats.room?(project.id) do
+    if Burrow.Activity.room?(project) do
       chat = Chats.create(project.id, "Fix: " <> incident.title, created_by)
 
       incident =

@@ -11,7 +11,7 @@ defmodule BurrowWeb.DesignControllerTest do
 
     history!(project, %{"design/a.html" => "<!DOCTYPE html>\n<title>a</title>", "lib/x.ex" => "x"})
 
-    {:ok, chat} = Chats.create_empty(project.id, "ada")
+    chat = Chats.create_empty(project.id, "ada")
     %{base: DesignController.path(project.id, chat.id)}
   end
 

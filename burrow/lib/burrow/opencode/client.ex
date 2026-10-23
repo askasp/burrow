@@ -16,12 +16,44 @@ defmodule Burrow.OpenCode.Client do
     match?({:ok, %{status: 200}}, Req.get(req(conn), url: "/api/session/#{session_id}"))
   end
 
-  @doc "Sends a user message; `skills` are skill ids loaded with it."
-  def prompt(conn, session_id, text, skills \\ []) do
+  @doc """
+  Sends a user message; `skills` are skill ids loaded with it, `files`
+  attachments (`%{uri, name}`, e.g. an image as a data: URI).
+  """
+  def prompt(conn, session_id, text, skills \\ [], files \\ []) do
     body = %{text: text, skills: Enum.map(skills, &%{id: &1})}
+    body = if files == [], do: body, else: Map.put(body, :files, files)
 
     case Req.post(req(conn), url: "/api/session/#{session_id}/prompt", json: body) do
       {:ok, %{status: 200, body: %{"data" => data}}} -> {:ok, data}
+      other -> {:error, other}
+    end
+  end
+
+  @doc """
+  Input that isn't the user's (Burrow's own "keep going"), with a short
+  `description`; it starts a turn like a user message.
+  """
+  def synthetic(conn, session_id, text, description) do
+    body = %{text: text, description: description}
+
+    case Req.post(req(conn), url: "/api/session/#{session_id}/synthetic", json: body) do
+      {:ok, %{status: 200, body: %{"data" => data}}} -> {:ok, data}
+      other -> {:error, other}
+    end
+  end
+
+  @doc """
+  Asks the session's model about the session, with all of it as context,
+  without adding to it. Returns `{:ok, text}`.
+  """
+  def generate(conn, session_id, prompt) do
+    case Req.post(req(conn),
+           url: "/api/session/#{session_id}/generate",
+           json: %{prompt: prompt},
+           receive_timeout: :timer.minutes(3)
+         ) do
+      {:ok, %{status: 200, body: %{"data" => %{"text" => text}}}} -> {:ok, text}
       other -> {:error, other}
     end
   end
@@ -96,6 +128,25 @@ defmodule Burrow.OpenCode.Client do
 
       other ->
         {:error, other}
+    end
+  end
+
+  @doc """
+  What the session got while it was busy and hasn't taken in yet, oldest
+  first: opencode delivers it at the agent's next step.
+  """
+  def inbox(conn, session_id) do
+    case Req.get(req(conn), url: "/api/session/#{session_id}/inbox") do
+      {:ok, %{status: 200, body: %{"data" => items}}} -> {:ok, items}
+      other -> {:error, other}
+    end
+  end
+
+  @doc "Takes back an inbox item before the agent gets it; a delivered one stays."
+  def cancel_inbox(conn, session_id, inbox_id) do
+    case Req.delete(req(conn), url: "/api/session/#{session_id}/inbox/#{inbox_id}") do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> {:error, other}
     end
   end
 

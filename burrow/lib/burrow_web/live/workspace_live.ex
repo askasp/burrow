@@ -1,17 +1,18 @@
 defmodule BurrowWeb.WorkspaceLive do
   @moduledoc """
   A project's workspace, Burrow's home screen, laid out as the Peon UI kit's
-  "4 · Peon: home" board: the project rail (every project the user can
-  open), then the project bar, the chat tabs with the open chat and its
-  changeset, and the preview. The preview switches between the chat's dev
-  preview and what is live (staging and prod in a pipeline project), or
-  gives way to "Deploys and usage".
+  "4 · Peon: chats in a drawer" board: the chat drawer (the project
+  switcher on top, then the project's chats), the bar with the open chat,
+  the chat and its changeset, and the preview. The preview switches between
+  the chat's dev preview and what is live (staging and prod in a pipeline
+  project), or gives way to "Deploys and usage".
 
   The project runs in a `Burrow.Cell`; until that is up it says it is
-  starting. A project has up to four chats (`Burrow.Chats.max/0`), each with
-  one change (its draft in the project's history); `Burrow.Activity` says
-  where each stands. An empty chat starts its agent and preview with its
-  first message.
+  starting. A project has up to four open chats (`Burrow.Activity.room?/1`),
+  each with one change (its draft in the project's history);
+  `Burrow.Activity` says where each stands. A chat whose change is out is
+  done and stays in the drawer. An empty chat starts its agent and preview
+  with its first message.
 
   The preview's "design" view shows the chat's boards (`Burrow.Design`,
   `BurrowWeb.WorkspaceLive.Design`): what the agent draws in `design/`, as
@@ -51,7 +52,7 @@ defmodule BurrowWeb.WorkspaceLive do
         base: ~p"/projects/#{project.id}",
         user: scope.user.email,
         theme: scope.user.theme,
-        rail_open: scope.user.rail_open
+        chats_collapsed: scope.user.chats_collapsed
       )
 
     if connected?(socket) do
@@ -96,6 +97,14 @@ defmodule BurrowWeb.WorkspaceLive do
     |> assign(stopped: nil)
     |> assign(show_logs: false, logs: "", show_attach: false, step: nil)
     |> assign(draft: nil, form: to_form(%{"text" => ""}))
+    # The open chat's queue (Burrow.Tickets), where its images are, and the
+    # images going with the message that starts it
+    |> assign(tickets: [], images_url: nil, pending_images: [])
+    |> allow_upload(:images,
+      accept: ~w(.png .jpg .jpeg .gif .webp),
+      max_entries: 4,
+      max_file_size: 10_000_000
+    )
     # The owner's models and their thinking levels, for the chat box
     |> assign(models: %{}, default_model: Burrow.OpenCode.model(project.user_id))
     |> then(fn socket ->
@@ -135,6 +144,8 @@ defmodule BurrowWeb.WorkspaceLive do
           |> assign(slash_items: [], slash: [], stopped: nil, starting: false, step: nil)
           |> assign(board: nil, side: false, board_errors: %{}, design_pending: :none)
           |> assign(design_url: BurrowWeb.DesignController.path(project.id, chat.id))
+          |> assign(images_url: BurrowWeb.ChatImageController.path(project.id, chat.id))
+          |> assign(tickets: Chat.tickets(project, chat.id), pending_images: [])
           |> assign(followed: followed(project, chat))
           |> select_tab()
           |> load_draft()
@@ -148,21 +159,15 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # The workspace opens on the first chat, or a new empty one.
+  # The workspace opens on the first open chat, or a new empty one.
   def handle_params(_params, _uri, socket) do
-    case socket.assigns.tabs do
-      [first | _] ->
-        {:noreply, push_patch(socket, to: chat_path(socket, first.chat.id), replace: true)}
+    id =
+      case open_tabs(socket) do
+        [first | _] -> first.chat.id
+        [] -> Chats.create_empty(socket.assigns.project.id, socket.assigns.user).id
+      end
 
-      [] ->
-        case Chats.create_empty(socket.assigns.project.id, socket.assigns.user) do
-          {:ok, chat} ->
-            {:noreply, push_patch(socket, to: chat_path(socket, chat.id), replace: true)}
-
-          {:error, :full} ->
-            {:noreply, socket}
-        end
-    end
+    {:noreply, push_patch(socket, to: chat_path(socket, id), replace: true)}
   end
 
   defp start_chat(socket) do
@@ -178,8 +183,12 @@ defmodule BurrowWeb.WorkspaceLive do
     socket = socket |> assign(info: info, starting: false) |> default_view()
 
     case socket.assigns.pending do
-      nil -> {:noreply, socket}
-      text -> {:noreply, socket |> assign(pending: nil) |> prompt(text)}
+      nil ->
+        {:noreply, socket}
+
+      text ->
+        images = socket.assigns.pending_images
+        {:noreply, socket |> assign(pending: nil, pending_images: []) |> prompt(text, images)}
     end
   end
 
@@ -207,25 +216,57 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_async(:design_pending, _result, socket), do: {:noreply, socket}
 
   @impl true
-  # A disabled chat box sends no text.
+  # A disabled chat box sends no text. "Queue" puts the text in the chat's
+  # queue instead, for the agent to take when it gets to it.
   def handle_event("send", params, socket) do
     text = String.trim(params["text"] || "")
     %{chat: chat, tab: tab} = socket.assigns
 
     cond do
-      text == "" or chat == nil or closed?(tab) ->
+      chat == nil or closed?(tab) ->
         {:noreply, socket}
 
-      socket.assigns.info && !socket.assigns.stopped ->
-        {:noreply, socket |> assign(form: to_form(%{"text" => ""}), slash: []) |> prompt(text)}
+      params["to"] == "queue" ->
+        {:noreply, queue_it(socket, text)}
 
-      socket.assigns.starting ->
-        {:noreply, assign(socket, pending: text, form: to_form(%{"text" => ""}))}
+      text == "" and socket.assigns.uploads.images.entries == [] ->
+        {:noreply, socket}
 
       true ->
-        {:noreply,
-         socket |> assign(pending: text, form: to_form(%{"text" => ""})) |> start_chat()}
+        images = take_images(socket)
+        text = if text == "", do: look_text(images), else: text
+
+        {:noreply, socket |> empty_box() |> say(text, images)}
     end
+  end
+
+  def handle_event("cancel_inbox", %{"id" => id}, socket) do
+    case Chat.cancel_inbox(socket.assigns.chat.id, id) do
+      :ok -> {:noreply, socket}
+      {:error, _} -> {:noreply, put_flash(socket, :error, "Peon already has that message.")}
+    end
+  end
+
+  def handle_event("cancel_image", %{"ref" => ref}, socket),
+    do: {:noreply, cancel_upload(socket, :images, ref)}
+
+  def handle_event("work_queue", _params, socket),
+    do: {:noreply, say(socket, "Work through your tk queue.", [])}
+
+  def handle_event("delete_ticket", %{"id" => id}, socket) do
+    %{project: project, chat: chat} = socket.assigns
+
+    case Chat.delete_ticket(project, chat.id, id) do
+      :ok -> {:noreply, socket}
+      {:error, :started} -> {:noreply, put_flash(socket, :error, "Peon has started on that one.")}
+      {:error, _} -> {:noreply, assign(socket, tickets: Chat.tickets(project, chat.id))}
+    end
+  end
+
+  def handle_event("clear_goal", _params, socket) do
+    %{chat: chat} = socket.assigns
+    Chat.clear_goal(chat.id)
+    {:noreply, socket |> assign(chat: Chats.get(chat.id) || chat) |> update_info(goal: nil)}
   end
 
   def handle_event("typing", params, socket),
@@ -277,10 +318,10 @@ defmodule BurrowWeb.WorkspaceLive do
       else: {:noreply, socket}
   end
 
-  def handle_event("toggle_rail", _params, socket) do
-    open? = !socket.assigns.rail_open
-    Accounts.put_rail_open(socket.assigns.current_scope.user, open?)
-    {:noreply, assign(socket, rail_open: open?)}
+  def handle_event("toggle_drawer", _params, socket) do
+    collapsed? = !socket.assigns.chats_collapsed
+    Accounts.put_chats_collapsed(socket.assigns.current_scope.user, collapsed?)
+    {:noreply, assign(socket, chats_collapsed: collapsed?)}
   end
 
   # System, light, dark, round again; the user's, everywhere in Burrow.
@@ -586,6 +627,8 @@ defmodule BurrowWeb.WorkspaceLive do
     do: {:noreply, update(socket, :show_attach, &(!&1))}
 
   @impl true
+  def handle_info({:tickets, tickets}, socket), do: {:noreply, assign(socket, tickets: tickets)}
+
   def handle_info({:messages, messages}, socket),
     do: {:noreply, socket |> update_info(messages: messages) |> load_boards()}
 
@@ -699,31 +742,33 @@ defmodule BurrowWeb.WorkspaceLive do
     put_flash(socket, :info, text)
   end
 
-  defp full_text, do: "Up to #{Chats.max()} chats. Close one first."
-
   # A new empty chat with the open chat's model, its box ready to type in.
   defp new_chat(socket, opts) do
     %{project: project, user: user, chat: chat} = socket.assigns
     picked = if chat, do: [model: chat.model, effort: chat.effort], else: []
 
-    case Chats.create_empty(project.id, user, picked ++ opts) do
-      {:ok, chat} ->
-        socket |> push_patch(to: chat_path(socket, chat.id)) |> push_event("composer:focus", %{})
-
-      {:error, :full} ->
-        put_flash(socket, :error, full_text())
+    if Activity.room?(project) do
+      chat = Chats.create_empty(project.id, user, picked ++ opts)
+      socket |> push_patch(to: chat_path(socket, chat.id)) |> push_event("composer:focus", %{})
+    else
+      put_flash(socket, :error, full_text())
     end
   end
 
-  defp leave_chat(socket, id) do
-    tabs = Enum.map(socket.assigns.tabs, & &1.chat.id)
+  # The open chats as the drawer lists them.
+  defp open_tabs(socket), do: open_chats(socket.assigns.tabs, socket.assigns.live_only?)
 
-    case Enum.find_index(tabs, &(&1 == id)) do
+  # Closing the open chat opens the one above it in the drawer, else the
+  # one below, else a new one.
+  defp leave_chat(socket, id) do
+    ids = Enum.map(open_tabs(socket), & &1.chat.id)
+
+    case Enum.find_index(ids, &(&1 == id)) do
       nil ->
         socket
 
       i ->
-        case Enum.at(tabs, if(i > 0, do: i - 1, else: 1)) do
+        case Enum.at(ids, if(i > 0, do: i - 1, else: 1)) do
           nil -> new_chat(socket, [])
           other -> push_patch(socket, to: chat_path(socket, other))
         end
@@ -808,11 +853,62 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  defp prompt(socket, text) do
-    case Chat.send_message(socket.assigns.project, socket.assigns.chat.id, text) do
+  # The user's message: sent if the agent runs, else it starts the agent.
+  defp say(socket, text, images) do
+    cond do
+      socket.assigns.info && !socket.assigns.stopped ->
+        prompt(socket, text, images)
+
+      socket.assigns.starting ->
+        %{pending: pending, pending_images: pending_images} = socket.assigns
+        text = if pending, do: pending <> "\n\n" <> text, else: text
+        assign(socket, pending: text, pending_images: pending_images ++ images)
+
+      true ->
+        socket |> assign(pending: text, pending_images: images) |> start_chat()
+    end
+  end
+
+  defp prompt(socket, text, images) do
+    case Chat.send_message(socket.assigns.project, socket.assigns.chat.id, text, images) do
       :ok -> update_info(socket, busy?: true)
+      {:ok, :no_turn} -> socket
       {:error, reason} -> put_flash(socket, :error, "Could not send: #{inspect(reason)}")
     end
+  end
+
+  # The box's images, kept with the chat (`Burrow.Chat.images_dir/2`) under
+  # names of their own: `[%{name, mime}]`.
+  defp take_images(socket) do
+    %{project: project, chat: chat} = socket.assigns
+    dir = Chat.images_dir(project, chat.id)
+    File.mkdir_p!(dir)
+
+    consume_uploaded_entries(socket, :images, fn %{path: path}, entry ->
+      ext = entry.client_type |> MIME.extensions() |> List.first("png")
+      name = Base.encode32(:crypto.strong_rand_bytes(5), case: :lower, padding: false)
+      File.cp!(path, Path.join(dir, "#{name}.#{ext}"))
+      {:ok, %{name: "#{name}.#{ext}", mime: entry.client_type}}
+    end)
+  end
+
+  defp look_text([_]), do: "Look at this image."
+  defp look_text(_images), do: "Look at these images."
+
+  defp queue_it(socket, ""), do: socket
+
+  defp queue_it(socket, text) do
+    %{project: project, chat: chat} = socket.assigns
+    Chat.add_ticket(project, chat.id, text)
+    empty_box(socket)
+  end
+
+  # The box empties once its message is here: with images, the browser sends
+  # the text only after they are up.
+  defp empty_box(socket) do
+    socket
+    |> assign(form: to_form(%{"text" => ""}), slash: [])
+    |> push_event("composer:put", %{text: ""})
   end
 
   defp update_info(%{assigns: %{info: nil}} = socket, _changes), do: socket
@@ -1061,7 +1157,9 @@ defmodule BurrowWeb.WorkspaceLive do
         design: design_switch(assigns, drawing),
         board_card: board_card(assigns, drawing),
         preview_dev: preview_dev(assigns),
-        follows: assigns.chat && assigns.chat.started_at == nil && assigns.followed
+        follows: assigns.chat && assigns.chat.started_at == nil && assigns.followed,
+        goal: goal(assigns),
+        done?: assigns.tab != nil and Activity.done?(assigns.tab, assigns.live_only?)
       )
 
     ~H"""
@@ -1070,14 +1168,28 @@ defmodule BurrowWeb.WorkspaceLive do
       <div
         class="ws-scrim"
         aria-hidden="true"
-        phx-click={JS.remove_class("drawer", to: ".ws-root")}
+        phx-click={JS.remove_class("show-drawer", to: ".ws-root")}
       >
       </div>
-      <.rail rail={@rail} open={@rail_open} theme={@theme} />
+      <.drawer
+        rail={@rail}
+        status={status_line(assigns)}
+        tabs={@tabs}
+        chat={@chat}
+        project={@project}
+        base={@base}
+        collapsed={@chats_collapsed}
+        theme={@theme}
+        nothing_built?={@nothing_built?}
+        repo?={@repo?}
+        live_only?={@live_only?}
+      />
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
 
       <div class="ws-main">
-        <.project_bar
+        <.chat_bar
+          title={if @tab, do: chat_title(@tab, @project, @nothing_built?), else: ""}
+          number={@draft && @draft.change}
           project={@project}
           meta={meta(assigns)}
           overview={@overview}
@@ -1098,16 +1210,6 @@ defmodule BurrowWeb.WorkspaceLive do
             aria-label={"#{@project && @project.name} chats"}
             data-kb-zoom-hide
           >
-            <.chat_tabs
-              tabs={@tabs}
-              chat={@chat}
-              project={@project}
-              base={@base}
-              nothing_built?={@nothing_built?}
-              repo?={@repo?}
-              live_only?={@live_only?}
-            />
-
             <div class="ws-scroll" id="messages" phx-hook=".ScrollBottom">
               <div class="ws-thread">
                 <div :if={(@chat && @chat.started_at == nil) and @pending == nil} class="ws-hello">
@@ -1126,7 +1228,7 @@ defmodule BurrowWeb.WorkspaceLive do
                 </div>
                 <div :if={@start_error} class="say-error">{@start_error}</div>
                 <%= for block <- blocks((@info && @info.messages) || []) do %>
-                  <.block block={block} />
+                  <.block block={block} images={@images_url} />
                 <% end %>
                 <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
                 <.peon_at_work
@@ -1136,7 +1238,9 @@ defmodule BurrowWeb.WorkspaceLive do
                 />
                 <div :if={@info && @info.busy?} class="ws-working" role="status">
                   <span class="font-medium shrink-0">{peon_says(@info.messages)}</span>
-                  <span class="mono muted text-[12.5px] truncate">{doing(@info.messages)}</span>
+                  <span class="mono muted text-[12.5px] truncate">
+                    {if @info[:judging?], do: "Checking the goal…", else: doing(@info.messages)}
+                  </span>
                   <button
                     phx-click="interrupt"
                     data-kb-key="x"
@@ -1147,6 +1251,33 @@ defmodule BurrowWeb.WorkspaceLive do
                   >
                     Stop
                   </button>
+                </div>
+                <div
+                  :for={m <- (@info && @info[:inbox]) || []}
+                  id={"inbox-#{m.id}"}
+                  class="ws-inbox"
+                >
+                  <.block block={{:user, m}} images={@images_url} />
+                  <div class="meta">
+                    Peon reads this after its current step
+                    <button
+                      type="button"
+                      phx-click="cancel_inbox"
+                      phx-value-id={m.id}
+                      class="xlink"
+                      aria-label="Take this message back"
+                    >
+                      Take back
+                    </button>
+                  </div>
+                </div>
+                <div
+                  :if={@info && !@info.busy? && @info[:note]}
+                  id="run-note"
+                  class={["evt", elem(@info.note, 0)]}
+                  role="note"
+                >
+                  <span class="ln"></span><span class="mono">{elem(@info.note, 1)}</span><span class="ln"></span>
                 </div>
                 <div
                   :if={event = event_line(@tab, @live_only?)}
@@ -1177,19 +1308,25 @@ defmodule BurrowWeb.WorkspaceLive do
                 promote={@promote}
                 main_check={@main_check}
               />
+              <.queue_card
+                :if={@chat && @tickets != [] && !@done?}
+                tickets={@tickets}
+                busy?={@info != nil && @info.busy?}
+              />
               <.chat_done
-                :if={finished?(@tab, @live_only?)}
+                :if={@done?}
                 tab={@tab}
-                full?={length(@tabs) >= Chats.max()}
+                full?={length(open_chats(@tabs, @live_only?)) >= Chats.max()}
                 attach?={@info != nil}
               />
-              <pre :if={finished?(@tab, @live_only?) && @info && @show_attach} class="out mono">{@info.attach}</pre>
+              <pre :if={@done? && @info && @show_attach} class="out mono">{@info.attach}</pre>
               <.form
-                :if={!finished?(@tab, @live_only?)}
+                :if={!@done?}
                 for={@form}
                 id="composer"
                 phx-submit="send"
                 phx-change="typing"
+                phx-drop-target={@uploads.images.ref}
                 class="composer"
               >
                 <span :if={@follows} class="ctx">
@@ -1203,6 +1340,38 @@ defmodule BurrowWeb.WorkspaceLive do
                     <.icon name="hero-x-mark" class="size-3" />
                   </button>
                 </span>
+                <span :if={@goal} id="goal-chip" class="ctx">
+                  <.icon name="hero-flag" class="size-3.5 shrink-0" />
+                  <span>Goal: {@goal}</span>
+                  <button
+                    type="button"
+                    class="cx"
+                    phx-click="clear_goal"
+                    aria-label="Drop the goal"
+                  >
+                    <.icon name="hero-x-mark" class="size-3" />
+                  </button>
+                </span>
+                <div :if={@uploads.images.entries != []} id="composer-images" class="shots">
+                  <div :for={entry <- @uploads.images.entries} class="shot">
+                    <.live_img_preview entry={entry} />
+                    <button
+                      type="button"
+                      class="cx"
+                      phx-click="cancel_image"
+                      phx-value-ref={entry.ref}
+                      aria-label={"Remove #{entry.client_name}"}
+                    >
+                      <.icon name="hero-x-mark" class="size-3" />
+                    </button>
+                    <span :for={err <- upload_errors(@uploads.images, entry)} class="err">
+                      {image_error(err)}
+                    </span>
+                  </div>
+                </div>
+                <p :for={err <- upload_errors(@uploads.images)} class="say-error">
+                  {image_error(err)}
+                </p>
                 <div
                   :if={@slash != []}
                   id="slash-menu"
@@ -1250,6 +1419,25 @@ defmodule BurrowWeb.WorkspaceLive do
                     class="xlink"
                   >
                     Open in opencode
+                  </button>
+                  <label
+                    :if={!closed?(@tab)}
+                    class="icon-btn sm ml-auto"
+                    title="Add images (or paste them)"
+                  >
+                    <span class="sr-only">Add images</span>
+                    <.icon name="hero-photo" class="size-4" />
+                    <.live_file_input upload={@uploads.images} class="sr-only" />
+                  </label>
+                  <button
+                    id="queue-btn"
+                    name="to"
+                    value="queue"
+                    class="btn btn-ghost btn-sm"
+                    title="Put it in Peon's queue instead (Alt+Enter)"
+                    disabled={closed?(@tab)}
+                  >
+                    Queue
                   </button>
                   <button class="icon-btn ws-send" aria-label="Send" disabled={closed?(@tab)}>
                     <.icon name="hero-arrow-up" class="size-4" />
@@ -1338,6 +1526,11 @@ defmodule BurrowWeb.WorkspaceLive do
             this.el.focus()
             this.el.setSelectionRange(text.length, text.length)
           })
+          // Pasted images go with the message
+          this.el.addEventListener("paste", e => {
+            const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith("image/"))
+            if (files.length) { e.preventDefault(); this.upload("images", files) }
+          })
           this.el.addEventListener("keydown", e => {
             // The "/" menu: arrows move, Tab or Enter picks
             const items = [...document.querySelectorAll("#slash-menu [role=option]")]
@@ -1353,10 +1546,20 @@ defmodule BurrowWeb.WorkspaceLive do
               items[Math.max(at, 0)].click()
               return
             }
+            // Alt+Enter puts it in the queue instead
+            // With images the text goes once they are up, so the box keeps
+            // it until the server empties it ("composer:put")
+            const images = document.querySelector("#composer-images .shot")
+            if (e.key === "Enter" && e.altKey) {
+              e.preventDefault()
+              this.el.form.requestSubmit(document.getElementById("queue-btn"))
+              if (!images) this.el.value = ""
+              return
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               this.el.form.requestSubmit()
-              this.el.value = ""
+              if (!images) this.el.value = ""
             }
           })
         }
@@ -1365,11 +1568,21 @@ defmodule BurrowWeb.WorkspaceLive do
     """
   end
 
+  # The open chat's goal: what its agent says while it runs, else its row's.
+  defp goal(%{info: %{goal: goal}}), do: goal
+  defp goal(%{chat: %{goal: goal}}), do: goal
+  defp goal(_assigns), do: nil
+
+  defp image_error(:too_large), do: "Images can be at most 10 MB."
+  defp image_error(:too_many_files), do: "At most 4 images at once."
+  defp image_error(:not_accepted), do: "Only PNG, JPEG, GIF and WebP images."
+  defp image_error(error), do: "That image didn't upload: #{error}"
+
   # The board the agent draws right now: what its latest tool call writes.
   defp drawing(%{info: %{busy?: true, messages: messages}}) do
     messages
     |> Enum.reverse()
-    |> Enum.take_while(&(&1.role != :user))
+    |> Enum.take_while(&(&1.role not in [:user, :note]))
     |> Enum.find(&(&1.role == :tool))
     |> case do
       %{text: text} -> text |> Design.drawn() |> List.last()
@@ -1432,6 +1645,19 @@ defmodule BurrowWeb.WorkspaceLive do
     do: if("staging" in names, do: "staging", else: "prod")
 
   defp effective_view(%{view: view}), do: view
+
+  # "working · live #8": what the project does, and what is out.
+  defp status_line(assigns) do
+    label = Enum.find_value(assigns.rail, "", &(&1.current && &1.label))
+    prod = if id = assigns.envs["prod"][:deployed], do: "##{id}", else: "—"
+
+    cond do
+      assigns.repo? -> label
+      assigns.nothing_built? -> "#{label} · not built"
+      assigns.live_only? -> "#{label} · live #{prod}"
+      true -> "#{label} · prod #{prod}"
+    end
+  end
 
   # "watchtower · live #8 · no staging · shared with Ops"
   defp meta(%{project: nil}), do: ""
@@ -1573,12 +1799,14 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   # The agent's text before more tool calls is a preamble or progress note; the
-  # user only reads its answer, the last text of the turn. Tool lines stay.
+  # user only reads its answer, the last text of the turn. Tool lines stay, and
+  # Peon's notes, after which it kept going: the turn before keeps its answer.
   defp drop_preambles(messages) do
     {kept, _tool_after?} =
       messages
       |> Enum.reverse()
       |> Enum.reduce({[], false}, fn
+        %{role: :note} = m, {kept, _} -> {[m | kept], false}
         %{role: :assistant}, {kept, true} -> {kept, true}
         %{role: :tool} = m, {kept, _} -> {[m | kept], true}
         m, {kept, tool_after?} -> {[m | kept], tool_after?}
@@ -1591,7 +1819,7 @@ defmodule BurrowWeb.WorkspaceLive do
   defp turn_tools(messages) do
     messages
     |> Enum.reverse()
-    |> Enum.take_while(&(&1.role != :user))
+    |> Enum.take_while(&(&1.role not in [:user, :note]))
     |> Enum.filter(&(&1.role == :tool))
     |> Enum.map(&split_tool(&1.text))
   end

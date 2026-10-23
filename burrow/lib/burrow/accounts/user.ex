@@ -6,9 +6,9 @@ defmodule Burrow.Accounts.User do
     field :email, :string
     field :ai_model, :string
     # The project opened last (`Burrow.Accounts.opened_project/2`), and
-    # whether the workspace's project rail shows names
+    # whether the workspace's chat drawer is collapsed to a strip
     field :last_project_id, :integer
-    field :rail_open, :boolean, default: false
+    field :chats_collapsed, :boolean, default: false
     # "system", "light" or "dark", in Burrow and every Peon
     field :theme, :string, default: "system"
     field :password, :string, virtual: true, redact: true
