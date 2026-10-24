@@ -55,6 +55,9 @@ defmodule BurrowWeb.Layouts do
               >
                 Projects
               </.link>
+              <.link navigate={~p"/chats"} class="navlink" data-kb="tab" data-kb-go="c">
+                Chats
+              </.link>
               <.link
                 navigate={~p"/teams"}
                 class="navlink"

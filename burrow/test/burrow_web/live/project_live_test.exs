@@ -16,6 +16,7 @@ defmodule BurrowWeb.ProjectLiveTest do
 
   test "creates a project and shows the slug it gets", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
+    assert has_element?(lv, "nav a.navlink[href='/chats'][data-kb-go=c]", "Chats")
     # With no projects yet the dialog is open.
     assert has_element?(lv, "#new-project-dialog #project_form")
 
