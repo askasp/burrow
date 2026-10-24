@@ -18,6 +18,21 @@ defmodule Burrow.OpenCode do
   def data_dir(user_id),
     do: Path.join([Application.fetch_env!(:burrow, :data_dir), "users", "#{user_id}", "opencode"])
 
+  @doc """
+  This computer's own model servers (e.g. a local OpenAI-compatible one), as
+  opencode `provider` entries: `opencode-providers.json` in the data
+  directory, else none. Every opencode Burrow runs gets them, so they are
+  offered like any provider: a user connects their key on the AI page.
+  """
+  def custom_providers do
+    case File.read(
+           Path.join(Application.fetch_env!(:burrow, :data_dir), "opencode-providers.json")
+         ) do
+      {:ok, json} -> Jason.decode!(json)
+      {:error, :enoent} -> %{}
+    end
+  end
+
   @doc "The model the user's agents use, as provider/model."
   def model(user_id) do
     case Repo.get(User, user_id) do
@@ -36,7 +51,7 @@ defmodule Burrow.OpenCode do
       by_id = Map.new(integrations, &{&1["id"], &1})
 
       providers =
-        for id <- @providers, integration = by_id[id] do
+        for id <- @providers ++ Map.keys(custom_providers()), integration = by_id[id] do
           methods = integration["methods"]
 
           %{

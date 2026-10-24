@@ -303,6 +303,7 @@ defmodule Burrow.GeneralChat do
     config = %{
       "$schema" => "https://opencode.ai/config.json",
       "model" => model,
+      "provider" => Burrow.OpenCode.custom_providers(),
       "autoupdate" => false,
       "share" => "disabled",
       "instructions" => ["/opencode/config/opencode/peon.md"],

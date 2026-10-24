@@ -58,7 +58,8 @@ defmodule Burrow.OpenCode.Server do
       Jason.encode!(%{
         "$schema" => "https://opencode.ai/config.json",
         "autoupdate" => false,
-        "share" => "disabled"
+        "share" => "disabled",
+        "provider" => Burrow.OpenCode.custom_providers()
       })
     )
 
