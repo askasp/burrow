@@ -57,6 +57,8 @@ defmodule BurrowWeb.Router do
       live "/projects", ProjectLive.Index, :index
       live "/projects/:id", WorkspaceLive, :index
       live "/projects/:id/c/:chat", WorkspaceLive, :chat
+      live "/chats", ChatsLive, :index
+      live "/chats/:id", ChatsLive, :chat
       live "/teams", TeamLive.Index, :index
       live "/ai", AILive, :index
       live "/users/settings", UserLive.Settings, :edit
@@ -66,6 +68,7 @@ defmodule BurrowWeb.Router do
     post "/users/update-password", UserSessionController, :update_password
     post "/users/theme", ThemeController, :update
     get "/projects/:id/c/:chat/images/:name", ChatImageController, :show
+    get "/chats/:id/files/:name", GeneralChatFileController, :show
   end
 
   scope "/", BurrowWeb do

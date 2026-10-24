@@ -933,9 +933,11 @@ defmodule Burrow.Chat do
   defp write_instructions(state, _config_dir) do
     File.mkdir_p!(Path.join(state.dir, ".peon"))
 
+    chat = Chats.get(state.id)
+
     File.write!(
       Path.join([state.dir, ".peon", "instructions.md"]),
-      Prompt.instructions(state.project, with(%{follows: id} <- Chats.get(state.id), do: id))
+      Prompt.instructions(state.project, chat && chat.follows, from_chat(chat))
     )
 
     ".peon/instructions.md"
@@ -943,12 +945,23 @@ defmodule Burrow.Chat do
 
   defp prompt_facts(state) do
     %{
+      from: from_chat(Chats.get(state.id)),
       branch: "peon/#{state.id}",
       pack: state.preview.pack,
       ports: state.preview.ports,
       url: &url(state, &1)
     }
   end
+
+  # The general chat this one starts from, for the agent's instructions.
+  defp from_chat(%Chats.Chat{from_chat: id}) when is_binary(id) do
+    case Burrow.GeneralChats.get(id) do
+      nil -> nil
+      general -> %{title: general.title, transcript: Burrow.GeneralChats.transcript(general)}
+    end
+  end
+
+  defp from_chat(_chat), do: nil
 
   # The repo's preview log, readable by the agent at /peon/preview.log.
   defp repo_mounts(%{repo: true} = state) do

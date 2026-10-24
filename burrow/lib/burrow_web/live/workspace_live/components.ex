@@ -25,7 +25,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   @doc """
   The project switcher on top: the project's tile with its health bar
-  (`Burrow.Activity`), opening every project the user can open. Then New
+  (`Burrow.Activity`), opening Chats (`BurrowWeb.ChatsLive`) and every
+  project the user can open. Then New
   chat, the chats still open (what needs the user first) and the done ones
   by day. Collapses to a strip of the tile, New chat and a dot per open
   chat; on phones it slides in from the left.
@@ -81,6 +82,22 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             style="display: none"
             phx-click-away={hide_projects()}
           >
+            <.link
+              navigate={~p"/chats"}
+              class="pmrow"
+              role="menuitem"
+              data-kb-key="0"
+              data-kb-label="Chats"
+              data-kb-group="Projects"
+            >
+              <span class="ri gc-tile" aria-hidden="true">
+                <.icon name="hero-chat-bubble-bottom-center" class="size-4" />
+              </span>
+              <span class="pn">
+                <span class="nm">Chats</span><span class="lbl">general · no project</span>
+              </span>
+              <span class="gc-k">⌃B 0</span>
+            </.link>
             <div class="msec">Projects</div>
             <.link
               :for={p <- @rail}
@@ -275,8 +292,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :state, :string, required: true
   attr :pct, :integer, required: true
 
-  # A project's initial, its health bar along the bottom.
-  defp tile(assigns) do
+  @doc "A project's initial, its health bar along the bottom."
+  def tile(assigns) do
     ~H"""
     <span class="ri" aria-hidden="true">
       {initial(@name)}<span class={["rhp", @state]}><i style={"width: #{@pct}%"}></i></span>

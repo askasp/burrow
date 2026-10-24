@@ -613,6 +613,88 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .hist .w { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; color: var(--text-3) }
 .ws-root .hist .d { font-size: 12.5px; color: var(--text-3); text-align: right }
 
+/* Chats (BurrowWeb.ChatsLive): general chats outside projects, the Peon UI kit's
+   "4f · Chats" board. The drawer and thread are the workspace's; these are its own parts. */
+.ws-root .gc-tile { color: var(--text-2) }
+.ws-root .gc-k { margin-left: auto; font-size: 12px; color: var(--text-3) }
+.ws-root .gc-search { display: flex; flex-direction: column; gap: 6px; margin: 2px 8px 8px }
+.ws-root .gc-sbox { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-3) }
+.ws-root .gc-sbox:focus-within { border-color: var(--text-2) }
+.ws-root .gc-sbox input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font-family: inherit; font-size: 13.5px }
+.ws-root .gc-sbox input:focus { outline: none }
+.ws-root .gc-scope { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px }
+.ws-root .gc-scope button { height: 24px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap }
+.ws-root .gc-scope button:hover { color: var(--text) }
+.ws-root .gc-scope button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: inset 0 0 0 1px var(--border) }
+.ws-root .gc-narrow { display: none }
+.ws-root .gc-srcbtn[aria-pressed="true"] { border-color: var(--border-strong); color: var(--text) }
+.ws-root .gc-chat { border-right: 0 }
+.ws-root .gc-thread { max-width: 720px }
+.ws-root .gc-bottom { max-width: 760px }
+.ws-root .gc-looking { display: flex; flex-direction: column; gap: 6px }
+.ws-root .gc-look { display: block; width: 144px; height: 34px; image-rendering: pixelated; image-rendering: crisp-edges }
+.ws-root .gc-searched { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-3) }
+.ws-root .gc-tg { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text-2); font-family: inherit; font-size: 12.5px; cursor: pointer }
+.ws-root .gc-tg:hover { border-color: var(--border-strong); color: var(--text) }
+.ws-root .gc-tg[aria-pressed="true"] { border-color: var(--accent-text); color: var(--text); background: var(--accent-soft) }
+.ws-root .gc-file { display: flex; align-items: center; width: 120px; height: 72px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 11.5px; color: var(--text-2); overflow: hidden; overflow-wrap: anywhere }
+.ws-root .gc-file + .cx { left: 99px }
+.ws-root .gc-notice { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--raised); font-size: 14px }
+.ws-root .gc-notice > span { flex: 1; min-width: 0; text-align: left }
+/* The sources pane */
+.ws-root .gc-src { flex: none; width: 340px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--surface) }
+.ws-root .gc-srchead { flex: none; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 8px 12px 8px 18px; border-bottom: 1px solid var(--border) }
+.ws-root .gc-count { font-size: 12px; color: var(--text-3) }
+.ws-root .gc-srclist { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px }
+.ws-root .gc-card { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); text-decoration: none }
+.ws-root .gc-card:hover { border-color: var(--border-strong) }
+.ws-root .gc-card[data-on="true"] { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text) }
+.ws-root .gc-card .n { font-size: 12px; color: var(--text-3); padding-top: 1px }
+.ws-root .gc-card .t { font-size: 13.5px; font-weight: 500; line-height: 19px; overflow-wrap: anywhere }
+.ws-root .gc-card .d { grid-column: 2; font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.ws-root .gc-card .q { grid-column: 2; font-size: 12.5px; line-height: 18px; color: var(--text-2) }
+.ws-root .gc-card.ghost { border-style: dashed; color: var(--text-3) }
+.ws-root .gc-none { margin: 0; padding: 4px; font-size: 13px; color: var(--text-3) }
+.ws-root :is(.gc-scope button, .gc-tg, .gc-card, .cite, .gc-prj):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+/* "Send to a project…" and "Start a project from this" */
+.gc-prjs { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto }
+.gc-prj { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); font-family: inherit; font-size: 14px; text-align: left; cursor: pointer }
+.gc-prj:hover { border-color: var(--border-strong) }
+.gc-prj[aria-checked="true"] { border-color: var(--text) }
+.gc-prj .rd { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--border-strong) }
+.gc-prj[aria-checked="true"] .rd { border: 4px solid var(--text) }
+.gc-prj .lbl { font-size: 12px; font-weight: 500; color: var(--text-3) }
+.gc-prj .lbl.working { color: var(--text-2) } .gc-prj .lbl.waiting { color: var(--warn) } .gc-prj .lbl.done { color: var(--ok) } .gc-prj .lbl.stopped { color: var(--err) }
+.gc-ctx { align-self: flex-start; display: inline-flex; align-items: center; max-width: 100%; height: 26px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 999px; font-size: 12.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* Peon's answers, read as Markdown (BurrowWeb.Markdown) */
+.ws-root .md { font-size: 15.5px; line-height: 26px; overflow-wrap: anywhere }
+.ws-root .md > * { margin: 0 0 12px }
+.ws-root .md > :last-child { margin-bottom: 0 }
+.ws-root .md ol, .ws-root .md ul { padding-left: 22px }
+.ws-root .md ol { list-style: decimal } .ws-root .md ul { list-style: disc }
+.ws-root .md li { margin-bottom: 4px }
+.ws-root .md li > ul { margin: 4px 0 0; list-style: circle }
+.ws-root .md .mdh { font-weight: 600 }
+.ws-root .md .mdh.big { font-size: 17px }
+.ws-root .md code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; padding: 1px 5px; border-radius: 4px; background: var(--sunken) }
+.ws-root .md .mdcode { padding: 12px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); overflow-x: auto; font-size: 13px; line-height: 20px }
+.ws-root .md .mdcode code { padding: 0; background: none; white-space: pre }
+.ws-root .md blockquote { padding-left: 12px; border-left: 2px solid var(--border-strong); color: var(--text-2) }
+.ws-root .md hr { border: 0; border-top: 1px solid var(--border) }
+.ws-root .md a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px }
+.ws-root .md a:hover { text-decoration-color: var(--text-2) }
+.ws-root .md .mdtable { overflow-x: auto }
+.ws-root .md table { border-collapse: collapse; font-size: 14px; line-height: 20px }
+.ws-root .md th, .ws-root .md td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top }
+.ws-root .md th { font-weight: 600; border-bottom-color: var(--border-strong) }
+.ws-root .cite { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin: 0 1px; padding: 0 4px; border: 0; border-radius: 4px; background: var(--sunken); color: var(--text-2); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; line-height: 1; vertical-align: 2px; cursor: pointer }
+.ws-root .cite:hover, .ws-root .cite[aria-pressed="true"] { background: var(--text); color: var(--bg) }
+@media (max-width: 1100px) { .ws-root .gc-src { display: none } .ws-root .gc-srcbtn { display: none } }
+@media (max-width: 960px) {
+  .ws-root .gc-wide { display: none }
+  .ws-root .gc-narrow { display: inline }
+}
+
 /* Dialogs: hairline, raised, a dark scrim, no shadow */
 .ovl { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: 14vh 16px 16px; background: rgba(10, 8, 6, .6) }
 .modal { width: min(420px, 100%); max-height: 80vh; overflow-y: auto; padding: 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--raised); display: flex; flex-direction: column; gap: 16px }

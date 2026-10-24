@@ -6,8 +6,11 @@ defmodule Burrow.Agent.Prompt do
 
   alias Burrow.{Projects, Secrets}
 
-  @doc "The instructions for a template app; `follows` is the change the chat follows up on."
-  def instructions(project, follows \\ nil) do
+  @doc """
+  The instructions for a template app; `follows` is the change the chat
+  follows up on, `from` the general chat it starts from (`from_chat/1`).
+  """
+  def instructions(project, follows \\ nil, from \\ nil) do
     repo = Projects.repo_dir(project)
     otp_app = Burrow.Template.otp_app(project.slug)
     module = Macro.camelize(otp_app)
@@ -103,6 +106,7 @@ defmodule Burrow.Agent.Prompt do
     ## Recent changes on main
     #{recent}
     #{follows(repo, follows)}
+    #{from_chat(from)}
     """
   end
 
@@ -125,6 +129,26 @@ defmodule Burrow.Agent.Prompt do
         #{files}
         """
     end
+  end
+
+  @doc """
+  The general chat a project chat starts from (`Burrow.GeneralChats`), for
+  its instructions: `%{title, transcript}`, or nil.
+  """
+  def from_chat(nil), do: ""
+
+  def from_chat(%{title: title, transcript: transcript}) do
+    """
+
+    ## This chat starts from a conversation in Chats
+    Before this chat, the user talked it over with you in Chats (no project there),
+    under the title "#{title}". It is your context: what they asked, what you found and
+    the sources you cited. Their first message here says what to do with it.
+
+    <conversation>
+    #{transcript}
+    </conversation>
+    """
   end
 
   @doc """
@@ -172,6 +196,7 @@ defmodule Burrow.Agent.Prompt do
     - Each set secret is an environment variable for the preview's commands.
     - Need one? Call `peon_request_secret` with its name and a short why; the user gets a
       box to paste it into and you get a message when it is set. Don't ask in your text.
+    #{from_chat(facts[:from])}
     """
   end
 

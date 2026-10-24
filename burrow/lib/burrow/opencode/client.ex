@@ -150,6 +150,24 @@ defmodule Burrow.OpenCode.Client do
     end
   end
 
+  @doc "The forms the session waits on someone to answer (e.g. which web search to use)."
+  def forms(conn, session_id) do
+    case Req.get(req(conn), url: "/api/session/#{session_id}/form") do
+      {:ok, %{status: 200, body: %{"data" => forms}}} -> {:ok, forms}
+      other -> {:error, other}
+    end
+  end
+
+  def reply_form(conn, session_id, form_id, answer) do
+    case Req.post(req(conn),
+           url: "/api/session/#{session_id}/form/#{form_id}/reply",
+           json: %{answer: answer}
+         ) do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> {:error, other}
+    end
+  end
+
   def delete_session(conn, session_id) do
     Req.delete(req(conn), url: "/api/session/#{session_id}")
   end

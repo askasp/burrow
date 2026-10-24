@@ -85,8 +85,9 @@ defmodule BurrowWeb.WorkspaceLive do
     |> load_rail()
     |> assign(busy: if(connected?(socket), do: Chat.busy_ids(project.id), else: MapSet.new()))
     |> assign(chat: nil, tab: nil, info: nil, view: "dev")
-    # The change the open chat follows up on (`followed/2`)
-    |> assign(followed: nil)
+    # The change the open chat follows up on (`followed/2`), the general
+    # chat it starts from (`from_chat/1`)
+    |> assign(followed: nil, from: nil)
     # The design view: the chat's boards, the one open full size (maybe next
     # to the dev preview), boards whose scripts failed ({hash, error} by
     # path), and what the chat changed (Burrow.Design.pending/2)
@@ -146,7 +147,7 @@ defmodule BurrowWeb.WorkspaceLive do
           |> assign(design_url: BurrowWeb.DesignController.path(project.id, chat.id))
           |> assign(images_url: BurrowWeb.ChatImageController.path(project.id, chat.id))
           |> assign(tickets: Chat.tickets(project, chat.id), pending_images: [])
-          |> assign(followed: followed(project, chat))
+          |> assign(followed: followed(project, chat), from: from_chat(chat))
           |> select_tab()
           |> load_draft()
           |> load_boards()
@@ -293,6 +294,13 @@ defmodule BurrowWeb.WorkspaceLive do
       %{change: id} when id != nil -> {:noreply, new_chat(socket, follows: id)}
       _ -> {:noreply, socket}
     end
+  end
+
+  # The chip on a chat that starts from a general chat: it starts from scratch instead.
+  def handle_event("unfrom", _params, socket) do
+    %{chat: chat} = socket.assigns
+    Chats.set(chat, from_chat: nil)
+    {:noreply, assign(socket, chat: Map.put(chat, :from_chat, nil), from: nil)}
   end
 
   # The chip on a follow-up's chat box: it starts from scratch instead.
@@ -775,6 +783,14 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
+  # The general chat (Burrow.GeneralChats) an empty chat starts from.
+  defp from_chat(%{started_at: nil} = chat) do
+    with id when is_binary(id) <- Map.get(chat, :from_chat),
+         do: Burrow.GeneralChats.get(id)
+  end
+
+  defp from_chat(_chat), do: nil
+
   # "Follow up on #N": change N, while the chat is empty.
   defp followed(_project, %{follows: nil}), do: nil
   defp followed(_project, %{started_at: started}) when started != nil, do: nil
@@ -1158,6 +1174,7 @@ defmodule BurrowWeb.WorkspaceLive do
         board_card: board_card(assigns, drawing),
         preview_dev: preview_dev(assigns),
         follows: assigns.chat && assigns.chat.started_at == nil && assigns.followed,
+        from: assigns.chat && assigns.chat.started_at == nil && assigns[:from],
         goal: goal(assigns),
         done?: assigns.tab != nil and Activity.done?(assigns.tab, assigns.live_only?)
       )
@@ -1221,6 +1238,9 @@ defmodule BurrowWeb.WorkspaceLive do
                   </h2>
                   <p :if={@follows} class="muted">
                     Peon starts from #{@follows.id}: its summary and the files it touched.
+                  </p>
+                  <p :if={@from} class="muted">
+                    Peon starts from your chat “{@from.title}” in Chats: what you asked and what it found.
                   </p>
                 </div>
                 <div :if={@starting} class="ws-working" role="status">
@@ -1336,6 +1356,17 @@ defmodule BurrowWeb.WorkspaceLive do
                     class="cx"
                     phx-click="unfollow"
                     aria-label={"Don't follow up on ##{@follows.id}"}
+                  >
+                    <.icon name="hero-x-mark" class="size-3" />
+                  </button>
+                </span>
+                <span :if={@from} id="from-chip" class="ctx">
+                  <span>↳ from Chats: {@from.title}</span>
+                  <button
+                    type="button"
+                    class="cx"
+                    phx-click="unfrom"
+                    aria-label="Don't start from the chat in Chats"
                   >
                     <.icon name="hero-x-mark" class="size-3" />
                   </button>

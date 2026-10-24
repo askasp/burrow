@@ -27,10 +27,14 @@ defmodule Burrow.Application do
       Burrow.Activity,
       # Deps built once, for new checkouts to copy.
       Burrow.BuildCache,
-      # Desired state is the projects table: start every project.
+      # Desired state is the projects table: start every project (after
+      # removing the general chats' agents a previous run left behind).
       {Task,
        fn ->
-         if start_cells?(), do: Enum.each(Burrow.Projects.all(), &Burrow.Cell.ensure_started/1)
+         if start_cells?() do
+           Burrow.GeneralChat.remove_left_behind()
+           Enum.each(Burrow.Projects.all(), &Burrow.Cell.ensure_started/1)
+         end
        end},
       # Start to serve requests, typically the last entry
       BurrowWeb.Endpoint

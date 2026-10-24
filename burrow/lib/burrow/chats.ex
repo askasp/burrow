@@ -32,7 +32,8 @@ defmodule Burrow.Chats do
 
   @doc """
   Creates a chat. Options: `:model` and `:effort` (see `pick_model/3`),
-  `:follows` (the change it follows up on), `started: false`.
+  `:follows` (the change it follows up on), `:from_chat` (the general chat
+  it starts from, `Burrow.GeneralChats`), `started: false`.
   """
   def create(project_id, title, created_by, opts \\ []) do
     chat =
@@ -44,6 +45,7 @@ defmodule Burrow.Chats do
         model: model(opts[:model]),
         effort: effort(opts[:effort]),
         follows: opts[:follows],
+        from_chat: opts[:from_chat],
         started_at: if(opts[:started] != false, do: DateTime.utc_now(:second))
       })
 
