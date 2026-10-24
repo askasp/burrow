@@ -120,6 +120,25 @@ defmodule Burrow.Accounts do
     |> Repo.insert()
   end
 
+  @doc "Everyone's accounts, oldest first, for admins."
+  def list_users, do: Repo.all(from(u in User, order_by: u.id))
+
+  @doc """
+  An admin makes a login for someone, while sign-ups are closed: a confirmed
+  account with a new password, which the admin passes on. Returns the user and
+  the password; only its hash is kept.
+  """
+  def create_login(%User{admin: true}, email) do
+    password = :crypto.strong_rand_bytes(10) |> Base.encode32(case: :lower)
+
+    case register_user_with_password(%{email: String.trim(email), password: password}) do
+      {:ok, user} -> {:ok, user, password}
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  def create_login(_user, _email), do: {:error, :not_admin}
+
   @doc """
   Returns a changeset for the registration form (email and password).
   """

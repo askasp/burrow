@@ -11,6 +11,8 @@ defmodule Burrow.Accounts.User do
     field :chats_collapsed, :boolean, default: false
     # "system", "light" or "dark", in Burrow and every Peon
     field :theme, :string, default: "system"
+    # Admins make the logins while sign-ups are closed
+    field :admin, :boolean, default: false
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
