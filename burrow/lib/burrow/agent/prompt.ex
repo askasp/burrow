@@ -311,10 +311,11 @@ defmodule Burrow.Agent.Prompt do
       changes the plan, so split even small requests that list several things. When one
       needs another first: `tk dep <id> <needed-id>`. Only a single small change needs no
       ticket.
-    - Work them one at a time: `tk ready` lists what is open, `tk start <id>`, do it,
-      `tk close <id>`.
+    - Work them one at a time, in the queue's order: `tk ready` lists what is open, the
+      next one first. `tk start <id>` on that first one, do it, `tk close <id>`.
     - Before you finish, run `tk ready`: the user may have added tickets while you
-      worked. If anything is open, take the next one. Finish only when it lists nothing.
+      worked. If anything is open, take the first one it lists. Finish only when it
+      lists nothing.
     """
     |> String.trim_trailing()
   end

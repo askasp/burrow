@@ -113,7 +113,7 @@ defmodule Burrow.Chat.KeepGoing do
     Your queue still has #{count(unfinished)}:
     #{lines}
 
-    Take the next one: `tk ready`, `tk start <id>`, do it, then `tk close <id>`. \
+    Take the next one, the first `tk ready` lists: `tk start <id>`, do it, then `tk close <id>`. \
     Go on until `tk ready` lists nothing.\
     """
   end

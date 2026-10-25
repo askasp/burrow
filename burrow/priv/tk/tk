@@ -69,6 +69,18 @@ _iso_date() {
     date -u +%Y-%m-%dT%H:%M:%SZ
 }
 
+# Burrow: a ticket's created time, finer than seconds where date allows, so
+# tickets made in a row keep their order in the queue.
+_created_date() {
+    local d
+    d=$(date -u +%Y-%m-%dT%H:%M:%S.%N 2>/dev/null)
+    if [[ "$d" =~ ^(.*\.[0-9]{6})[0-9]*$ ]]; then
+        echo "${BASH_REMATCH[1]}Z"
+    else
+        _iso_date
+    fi
+}
+
 # Portable sed -i (BSD requires -i '', GNU uses -i)
 _sed_i() {
     local file="$1"
@@ -192,7 +204,7 @@ cmd_create() {
     id=$(generate_id)
     local file="$TICKETS_DIR/${id}.md"
     local now
-    now=$(_iso_date)
+    now=$(_created_date)
 
     {
         echo "---"
@@ -669,13 +681,14 @@ cmd_ready() {
     BEGIN { FS=": "; in_front=0 }
     FNR==1 {
         if (prev_file) store()
-        id=""; status=""; title=""; deps=""; priority=""; assignee=""; tags=""; in_front=0
+        id=""; status=""; title=""; deps=""; priority=""; created=""; assignee=""; tags=""; in_front=0
         prev_file=FILENAME
     }
     /^---$/ { in_front = !in_front; next }
     in_front && /^id:/ { id = $2 }
     in_front && /^status:/ { status = $2 }
     in_front && /^priority:/ { priority = $2 }
+    in_front && /^created:/ { created = $2 }
     in_front && /^assignee:/ { assignee = $2 }
     in_front && /^tags:/ { tags = $2; gsub(/[\[\] ]/, "", tags) }
     in_front && /^deps:/ {
@@ -694,9 +707,19 @@ cmd_ready() {
             titles[id] = title
             deps_raw[id] = deps
             priorities[id] = (priority != "") ? priority : 2
+            createds[id] = created
             assignees[id] = assignee
             all_tags[id] = tags
         }
+    }
+    # Burrow: the queue order the user sees (Burrow.Tickets.list/1): in progress
+    # first, then by priority, then oldest first.
+    function before(a, b) {
+        if ((statuses[a] == "in_progress") != (statuses[b] == "in_progress"))
+            return statuses[a] == "in_progress"
+        if (priorities[a] != priorities[b]) return priorities[a] + 0 < priorities[b] + 0
+        if (createds[a] != createds[b]) return createds[a] < createds[b]
+        return a < b
     }
     END {
         if (prev_file) store()
@@ -720,24 +743,21 @@ cmd_ready() {
                 }
             }
             if (ready) {
-                output[++count] = sprintf("%s|%s|%s|%s", priorities[id], id, status, titles[id])
+                ready_ids[++count] = id
             }
         }
 
-        # Sort by priority, then by id
         for (i = 1; i <= count; i++) {
             for (j = i + 1; j <= count; j++) {
-                split(output[i], a, "|")
-                split(output[j], b, "|")
-                if (a[1] > b[1] || (a[1] == b[1] && a[2] > b[2])) {
-                    tmp = output[i]; output[i] = output[j]; output[j] = tmp
+                if (before(ready_ids[j], ready_ids[i])) {
+                    tmp = ready_ids[i]; ready_ids[i] = ready_ids[j]; ready_ids[j] = tmp
                 }
             }
         }
 
         for (i = 1; i <= count; i++) {
-            split(output[i], f, "|")
-            printf "%-8s [P%s][%s] - %s\n", f[2], f[1], f[3], f[4]
+            id = ready_ids[i]
+            printf "%-8s [P%s][%s] - %s\n", id, priorities[id], statuses[id], titles[id]
         }
     }
     ' "$TICKETS_DIR"/*.md 2>/dev/null

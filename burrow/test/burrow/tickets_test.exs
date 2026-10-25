@@ -49,6 +49,18 @@ defmodule Burrow.TicketsTest do
     assert Enum.map(Tickets.list(dir), & &1.title) == titles
   end
 
+  test "tk ready lists the queue in the order the user sees, the next one first", %{dir: dir} do
+    agents = for title <- ["Logo", "Header"], do: tk(dir, ["create", title])
+    {:ok, users} = Tickets.create(dir, "Footer")
+    urgent = tk(dir, ["create", "Fix login", "-p", "1"])
+    tk(dir, ["start", List.last(agents)])
+
+    ready = for line <- String.split(tk(dir, ["ready"]), "\n"), do: hd(String.split(line))
+
+    assert ready == Enum.map(Tickets.list(dir), & &1.id)
+    assert ready == [List.last(agents), urgent, hd(agents), users]
+  end
+
   test "only tickets that haven't started can be deleted", %{dir: dir} do
     {:ok, open} = Tickets.create(dir, "Later")
     {:ok, started} = Tickets.create(dir, "Now")
