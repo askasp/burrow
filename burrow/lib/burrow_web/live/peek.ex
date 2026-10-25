@@ -70,7 +70,7 @@ defmodule BurrowWeb.Peek do
          true <- Projects.visible?(scope, id) do
       project = Projects.get!(scope, id)
       tabs = Activity.chats(project, scope.user.id, Chat.busy_ids(project.id))
-      tile = Enum.find(rail, &(&1.id == id)) || Activity.of(project) |> tile()
+      tile = Enum.find(rail, &(&1.id == id)) || Activity.of(project, scope.user.id) |> tile()
 
       %{
         id: id,

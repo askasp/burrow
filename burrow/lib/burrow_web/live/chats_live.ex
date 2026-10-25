@@ -341,7 +341,7 @@ defmodule BurrowWeb.ChatsLive do
   defp load_rail(socket) do
     rail =
       for p <- Projects.list(socket.assigns.current_scope) do
-        tile = Activity.of(p)
+        tile = Activity.of(p, socket.assigns.current_scope.user.id)
 
         %{
           id: p.id,

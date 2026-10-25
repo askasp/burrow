@@ -1027,7 +1027,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
     rail =
       for p <- Projects.list(scope) do
-        tile = Activity.of(p)
+        tile = Activity.of(p, scope.user.id)
 
         %{
           id: p.id,

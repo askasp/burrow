@@ -569,9 +569,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .peon-scene { display: block; width: 240px; max-width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges }
 /* Over the box while Peon works: its camp, what it is on, and the queue, one quiet line */
 .ws-root .ws-now { position: relative; display: flex; align-items: flex-end; gap: 12px; padding: 0 8px }
-.ws-root .ws-scene { flex: none; display: flex }
-.ws-root .qlink { flex: 1; min-width: 0; min-height: 44px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: 1px; padding: 0 0 1px; border: 0; background: transparent; color: var(--text); font-family: inherit; text-align: left; cursor: pointer }
-.ws-root .qlink .now { max-width: 100%; font-size: 13px; font-weight: 600; line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+/* The camp gives way on a narrow screen so the queue line stays whole; the line
+   claims its own width, while what Peon is on fills only what is left (width 0) */
+.ws-root .ws-scene { flex: 0 1 auto; min-width: 0; display: flex }
+.ws-root .qlink { flex: 1 0 auto; min-height: 44px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: 1px; padding: 0 0 1px; border: 0; background: transparent; color: var(--text); font-family: inherit; text-align: left; cursor: pointer }
+.ws-root .qlink .now { width: 0; min-width: 100%; font-size: 13px; font-weight: 600; line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ws-root .qlink .sub { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--text-3); white-space: nowrap }
 .ws-root .qlink:hover .sub { color: var(--text) }
 .ws-root .qlink:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: 6px }

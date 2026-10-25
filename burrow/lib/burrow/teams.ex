@@ -6,7 +6,8 @@ defmodule Burrow.Teams do
 
   Whoever creates a team owns it. Owners add people by the email they
   registered with and remove them; anyone can leave, except a team's last
-  owner. Leaving a team takes your projects out of it.
+  owner. Leaving a team takes your projects out of it, and the AI keys you
+  share with it (`Burrow.TeamKeys`).
   """
 
   import Ecto.Query
@@ -90,6 +91,7 @@ defmodule Burrow.Teams do
            Accounts.get_user_by_email(String.trim(email)) || {:error, :no_user},
          nil <- role(user.id, team.id) do
       member = Repo.insert!(%Member{team_id: team.id, user_id: user.id, role: "member"})
+      Burrow.TeamKeys.joined(team.id, user.id)
       broadcast({:ok, team})
       {:ok, member}
     else
@@ -116,6 +118,7 @@ defmodule Burrow.Teams do
         Repo.delete!(member)
       end)
 
+      Burrow.TeamKeys.left(team.id, user_id)
       broadcast({:ok, team})
       :ok
     end

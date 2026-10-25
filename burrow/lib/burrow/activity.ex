@@ -15,10 +15,12 @@ defmodule Burrow.Activity do
     * `"staged"` - on staging, not on prod yet
     * `"live"` - on prod
 
-  A project's tile in the rails (`of/1`): `%{"state" => "working" |
-  "waiting" | "done" | "stopped", "label", "pct"}`. Any event in a project
-  (`Burrow.Projects.broadcast/3`) redraws the rails: `:rail_changed` on
-  topic `"rail"`, changes within `@debounce` ms as one.
+  A project's tile in the rails (`of/2`), as one person sees it:
+  `%{"state" => "working" | "waiting" | "done" | "stopped", "label",
+  "pct"}`. Their own chats say whether it works or waits on them; someone
+  else's counts only once its change is on main, which is everyone's. Any
+  event in a project (`Burrow.Projects.broadcast/3`) redraws the rails:
+  `:rail_changed` on topic `"rail"`, changes within `@debounce` ms as one.
   """
 
   use GenServer
@@ -145,23 +147,25 @@ defmodule Burrow.Activity do
        do: candidate
   end
 
-  @doc "The project's tile in the rails."
-  def of(project) do
+  @doc "The project's tile in the rails, as user `user_id` sees it."
+  def of(project, user_id) do
     case Cell.status(project.id) do
       :starting -> tile("working", "starting", 40)
-      :running -> running(project)
+      :running -> running(project, user_id)
       _ -> tile("stopped", "stopped", 8)
     end
   end
 
-  defp running(project) do
-    phases = MapSet.new(chats(project, Chat.busy_ids(project.id)), & &1.phase)
+  defp running(project, user_id) do
+    all = chats(project, Chat.busy_ids(project.id))
+    mine = MapSet.new(Chats.list(project, user_id), & &1.id)
+    phases = for c <- all, MapSet.member?(mine, c.chat.id), into: MapSet.new(), do: c.phase
     any? = &MapSet.member?(phases, &1)
     repo? = Projects.Project.repo?(project)
     prod = !repo? && Env.info(project, "prod")
 
     cond do
-      any?.("working") or any?.("landing") ->
+      any?.("working") or Enum.any?(all, &(&1.phase == "landing")) ->
         tile("working", "working", 60)
 
       match?(%{status: {:crashed, _}}, prod) ->

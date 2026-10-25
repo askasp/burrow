@@ -1,41 +1,69 @@
 defmodule BurrowWeb.AILive do
-  @moduledoc "Connect the AI providers your Peons use, and pick the model."
+  @moduledoc """
+  Connect the AI providers your Peons use, and pick the model. An API key you
+  connected can be shared with your teams (`Burrow.TeamKeys`); keys your
+  teams share with you show under their provider.
+  """
 
   use BurrowWeb, :live_view
 
-  alias Burrow.{Cell, OpenCode, Projects}
+  alias Burrow.{Cell, OpenCode, Projects, TeamKeys, Teams}
 
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
 
+    if connected?(socket) do
+      TeamKeys.subscribe(user.id)
+      Teams.subscribe()
+    end
+
     {:ok,
      socket
-     |> assign(providers: nil, models: %{}, model: OpenCode.model(user.id), error: nil)
-     |> assign(attempt: nil, importing: false)
+     |> assign(providers: nil, logins: [], models: %{}, model: OpenCode.model(user.id))
+     |> assign(error: nil, attempt: nil, importing: false)
      |> assign(local_import?: Application.get_env(:burrow, :local_login_import, false))
+     |> assign_sharing()
      |> load()}
   end
 
+  # Brings the team keys up to date first: a key the user shared and then
+  # replaced or removed is no longer shared.
   defp load(socket) do
     user_id = socket.assigns.current_scope.user.id
 
     start_async(socket, :load, fn ->
+      TeamKeys.sync(user_id)
+
       with {:ok, providers} <- OpenCode.providers(user_id),
+           {:ok, logins} <- OpenCode.logins(user_id),
            {:ok, models} <- OpenCode.models(user_id),
-           do: {providers, models}
+           do: {providers, logins, models}
     end)
+  end
+
+  defp assign_sharing(socket) do
+    %{current_scope: scope} = socket.assigns
+
+    assign(socket,
+      teams: Teams.list(scope),
+      shared: TeamKeys.shared(scope.user.id),
+      team_keys: TeamKeys.available(scope.user.id)
+    )
   end
 
   @impl true
   def handle_async(:load, {:ok, {:error, reason}}, socket),
     do: {:noreply, assign(socket, error: "Could not reach opencode: #{inspect(reason)}")}
 
-  def handle_async(:load, {:ok, {providers, models}}, socket) do
+  def handle_async(:load, {:ok, {providers, logins, models}}, socket) do
     model = OpenCode.usable(socket.assigns.model, Enum.map(models, &elem(&1, 0)))
 
     {:noreply,
-     assign(socket, providers: providers, models: Map.new(models), model: model, error: nil)}
+     socket
+     |> assign(providers: providers, logins: logins, models: Map.new(models), model: model)
+     |> assign(error: nil)
+     |> assign_sharing()}
   end
 
   def handle_async(:load, {:exit, reason}, socket),
@@ -45,7 +73,12 @@ defmodule BurrowWeb.AILive do
   def handle_event("connect_key", %{"provider" => provider, "key" => key}, socket) do
     case OpenCode.connect_key(user_id(socket), provider, String.trim(key)) do
       :ok ->
-        {:noreply, socket |> put_flash(:info, "Connected.") |> load()}
+        message =
+          if Map.has_key?(socket.assigns.shared, provider),
+            do: "Connected. Your teams no longer get the key it replaced.",
+            else: "Connected."
+
+        {:noreply, socket |> put_flash(:info, message) |> load()}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Could not connect: #{describe(reason)}")}
@@ -77,6 +110,58 @@ defmodule BurrowWeb.AILive do
 
   def handle_event("cancel_oauth", _params, socket), do: {:noreply, assign(socket, attempt: nil)}
 
+  # Your own logins for the provider, not the keys teams share with you.
+  def handle_event("remove_login", %{"provider" => provider}, socket) do
+    user_id = user_id(socket)
+
+    result =
+      socket.assigns.logins
+      |> Enum.filter(&(&1.provider == provider and not TeamKeys.team_login?(&1)))
+      |> Enum.reduce_while(:ok, fn login, :ok ->
+        case OpenCode.remove_login(user_id, login.id) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+
+    case result do
+      :ok ->
+        {:noreply, socket |> put_flash(:info, "Removed.") |> load()}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Could not remove it: #{describe(reason)}")}
+    end
+  end
+
+  # The checkbox for one of the user's teams: shares the key with it, or stops.
+  def handle_event("share", %{"provider" => provider, "team" => team_id}, socket) do
+    %{current_scope: scope, teams: teams, shared: shared} = socket.assigns
+    team = Enum.find(teams, &(to_string(&1.id) == team_id))
+
+    result =
+      cond do
+        team == nil -> {:error, :not_member}
+        team.id in Map.get(shared, provider, []) -> TeamKeys.unshare(scope, provider, team.id)
+        true -> TeamKeys.share(scope, provider, team.id)
+      end
+
+    socket =
+      case result do
+        :ok ->
+          if team.id in Map.get(shared, provider, []),
+            do: put_flash(socket, :info, "#{team.name} no longer gets this key."),
+            else: put_flash(socket, :info, "Everyone in #{team.name} can use this key now.")
+
+        {:error, :not_a_key} ->
+          put_flash(socket, :error, "Only an API key you connected yourself can be shared.")
+
+        {:error, reason} ->
+          put_flash(socket, :error, "Could not share it: #{describe(reason)}")
+      end
+
+    {:noreply, assign_sharing(socket)}
+  end
+
   def handle_event("import_local", _params, socket) do
     case OpenCode.import_local_logins(user_id(socket)) do
       {:ok, []} ->
@@ -101,6 +186,9 @@ defmodule BurrowWeb.AILive do
   end
 
   @impl true
+  def handle_info({:team_keys, _user_id}, socket), do: {:noreply, load(socket)}
+  def handle_info({:team_changed, _team_id}, socket), do: {:noreply, assign_sharing(socket)}
+
   def handle_info(:poll_oauth, %{assigns: %{attempt: nil}} = socket), do: {:noreply, socket}
 
   def handle_info(:poll_oauth, socket) do
@@ -125,6 +213,12 @@ defmodule BurrowWeb.AILive do
 
   defp user_id(socket), do: socket.assigns.current_scope.user.id
 
+  # The user's own login the provider uses, else their latest.
+  defp own_login(logins, provider) do
+    own = Enum.filter(logins, &(&1.provider == provider and not TeamKeys.team_login?(&1)))
+    Enum.find(own, & &1.active?) || List.last(own)
+  end
+
   defp describe({status, %{"message" => message}}), do: "#{message} (#{status})"
   defp describe(reason), do: inspect(reason)
 
@@ -135,7 +229,7 @@ defmodule BurrowWeb.AILive do
       <.header>
         AI login
         <:subtitle>
-          Your Peons run on opencode with your own subscriptions or API keys. Connect at least one provider.
+          Your Peons run on opencode with your own subscriptions or API keys, and the keys your teams share with you. Connect at least one provider.
         </:subtitle>
       </.header>
 
@@ -230,6 +324,16 @@ defmodule BurrowWeb.AILive do
                   <button class="btn btn-secondary btn-sm">Connect key</button>
                 </.form>
               </div>
+              <.logins
+                provider={p}
+                own={own_login(@logins, p.id)}
+                teams={@teams}
+                shared={Map.get(@shared, p.id, [])}
+                team_keys={Map.get(@team_keys, p.id, [])}
+                go_key?={
+                  p.id == "opencode" and Enum.any?(@providers, &(&1.id == "opencode-go" and &1.key?))
+                }
+              />
             </li>
           </ul>
         </section>
@@ -258,6 +362,89 @@ defmodule BurrowWeb.AILive do
         </section>
       </div>
     </Layouts.app>
+    """
+  end
+
+  attr :provider, :map, required: true
+  attr :own, :map, doc: "the user's own login, nil for none"
+  attr :teams, :list, required: true
+  attr :shared, :list, required: true, doc: "ids of the teams the user's key is shared with"
+  attr :team_keys, :list, required: true, doc: "keys others share with the user's teams"
+
+  attr :go_key?, :boolean,
+    default: false,
+    doc: "an OpenCode Console sign-in, while OpenCode Go takes an API key"
+
+  # Under a provider: the user's own login, the teams they share it with, and
+  # the keys their teams share with them.
+  defp logins(assigns) do
+    ~H"""
+    <div
+      :if={@own || @team_keys != []}
+      class="basis-full sm:pl-[192px] flex flex-col gap-2 text-[13px] text-[var(--text-2)]"
+    >
+      <div :if={@own} class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>{if @own.type == "key", do: "Your API key", else: "Your sign-in"}</span>
+        <button
+          type="button"
+          phx-click="remove_login"
+          phx-value-provider={@provider.id}
+          class="btn btn-ghost btn-sm"
+          aria-label={"Remove your #{@provider.name} login"}
+          data-confirm={
+            if @shared != [],
+              do: "Remove your #{@provider.name} key? Your teams lose it too.",
+              else: "Remove your #{@provider.name} login?"
+          }
+        >
+          Remove
+        </button>
+      </div>
+      <div
+        :if={@own && @own.type == "key" && @teams != []}
+        id={"share-#{@provider.id}"}
+        class="flex flex-col gap-1"
+      >
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span class="text-[var(--text-3)]">Share with</span>
+          <label :for={t <- @teams} class="check !text-[13px]">
+            <input
+              type="checkbox"
+              id={"share-#{@provider.id}-#{t.id}"}
+              phx-click="share"
+              phx-value-provider={@provider.id}
+              phx-value-team={t.id}
+              checked={t.id in @shared}
+            />
+            {t.name}
+          </label>
+        </div>
+        <p class="hint m-0">
+          Everyone in these teams can use the key in their Peons. They never see it.
+        </p>
+      </div>
+      <p
+        :if={@own && @own.type != "key" && @teams != []}
+        id={"sign-in-hint-#{@provider.id}"}
+        class="hint m-0"
+      >
+        Sign-ins can't be shared with a team, only API keys.
+        <span :if={@go_key?}>
+          To share your OpenCode Go subscription, copy its API key from the <a
+            href="https://opencode.ai/console"
+            target="_blank"
+            rel="noopener"
+          >OpenCode Console</a>,
+          connect it under OpenCode Go, and share it there.
+        </span>
+      </p>
+      <p :for={k <- @team_keys} id={"team-key-#{k.id}"} class="m-0">
+        Team key from <b>{Enum.join(k.teams, ", ")}</b>, shared by {k.shared_by}.
+        <span class="text-[var(--text-3)]">
+          {if @own, do: "Your own login wins.", else: "Your Peons can use it."}
+        </span>
+      </p>
+    </div>
     """
   end
 end

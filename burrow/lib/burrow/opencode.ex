@@ -5,7 +5,9 @@ defmodule Burrow.OpenCode do
   uses these logins and the user's subscriptions.
 
   Logins are managed through opencode's own API (`Burrow.OpenCode.Server`):
-  an API key, or OAuth (e.g. "Sign in with ChatGPT").
+  an API key, or OAuth (e.g. "Sign in with ChatGPT"). opencode uses one
+  login per provider at a time, the active one. Keys a team shares with the
+  user (`Burrow.TeamKeys`) are logins of the user's too.
   """
 
   alias Burrow.Accounts.User
@@ -78,6 +80,62 @@ defmodule Burrow.OpenCode do
     with {:ok, _} <-
            Server.request(user_id, :post, "/integration/#{provider}/connect/key", %{key: key}),
          do: :ok
+  end
+
+  @doc """
+  The user's logins, without their values: `%{id, provider, label, type,
+  active?}`; type is "key" or "oauth".
+  """
+  def logins(user_id) do
+    with {:ok, %{"data" => credentials}} <- Server.request(user_id, :get, "/credential") do
+      {:ok,
+       for(
+         c <- credentials,
+         do: %{
+           id: c["id"],
+           provider: c["integrationID"],
+           label: c["label"],
+           type: c["value"]["type"],
+           active?: c["active"] == true
+         }
+       )}
+    end
+  end
+
+  @doc "The API key of the user's login `id`: `{:ok, key}`, or `{:error, :not_a_key}`."
+  def key(user_id, id) do
+    with {:ok, %{"data" => credentials}} <- Server.request(user_id, :get, "/credential") do
+      case Enum.find(credentials, &(&1["id"] == id)) do
+        %{"value" => %{"type" => "key", "key" => key}} -> {:ok, key}
+        _ -> {:error, :not_a_key}
+      end
+    end
+  end
+
+  @doc """
+  Adds an API key as login `id`. opencode uses it only when `active?`;
+  otherwise it waits until the provider's login in use goes.
+  """
+  def add_key(user_id, id, provider, label, key, active?) do
+    with {:ok, _} <-
+           Server.request(user_id, :post, "/credential", %{
+             id: id,
+             integrationID: provider,
+             label: label,
+             value: %{type: "key", key: key},
+             activate: active?
+           }),
+         do: :ok
+  end
+
+  @doc "Makes login `id` the one its provider uses."
+  def use_login(user_id, id) do
+    with {:ok, _} <- Server.request(user_id, :post, "/credential/#{id}/activate"), do: :ok
+  end
+
+  @doc "Removes login `id`; opencode then uses the provider's newest other login, if any."
+  def remove_login(user_id, id) do
+    with {:ok, _} <- Server.request(user_id, :delete, "/credential/#{id}"), do: :ok
   end
 
   @doc "Starts an OAuth login. Returns `%{attempt_id, url, instructions, mode}`; mode is auto or code."

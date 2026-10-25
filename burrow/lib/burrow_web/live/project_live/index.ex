@@ -2,9 +2,9 @@ defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
   The projects screen: a card per project, yours and those shared with your
   teams, with what it is doing (`Burrow.Activity`), its latest change and
-  its chats. A card opens the project's workspace; its ⋯ menu restarts the
-  project and, for its owner, shares, hands over, adds staging and prod or
-  deletes it. New project, by the title, opens the form. + starts a chat:
+  your chats in it (a teammate's chats are theirs). A card opens the
+  project's workspace; its ⋯ menu restarts the project and, for its owner,
+  shares, hands over, adds staging and prod or deletes it. New project, by the title, opens the form. + starts a chat:
   the page has no "here", so it asks where (Chats, a project, or a new
   project), next to the rail on wide screens and from the bottom on phones.
   Under "No project", Chats with the latest general chats.
@@ -48,8 +48,8 @@ defmodule BurrowWeb.ProjectLive.Index do
     socket
     |> assign(
       projects: projects,
-      cards: Map.new(projects, &{&1.id, card(&1)}),
-      rail: Enum.map(projects, &rail_entry/1),
+      cards: Map.new(projects, &{&1.id, card(&1, scope.user.id)}),
+      rail: Enum.map(projects, &rail_entry(&1, scope.user.id)),
       teams: Teams.list(scope),
       recent: GeneralChats.list(scope.user.id) |> Enum.filter(& &1.started_at) |> Enum.take(3)
     )
@@ -67,8 +67,8 @@ defmodule BurrowWeb.ProjectLive.Index do
   end
 
   # A project as the drawer's "Switch to" lists it.
-  defp rail_entry(project) do
-    tile = Activity.of(project)
+  defp rail_entry(project, user_id) do
+    tile = Activity.of(project, user_id)
 
     %{
       id: project.id,
@@ -83,9 +83,9 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   # What a row shows besides the project's own fields: its status, main's
   # latest change and where the refs are (a repo project has neither; its
-  # history is in git), and its chats.
-  defp card(project) do
-    phases = for c <- Activity.chats(project, Chat.busy_ids(project.id)), do: c.phase
+  # history is in git), and the user's chats in it.
+  defp card(project, user_id) do
+    phases = for c <- Activity.chats(project, user_id, Chat.busy_ids(project.id)), do: c.phase
 
     {latest, refs} =
       if Project.repo?(project) do
@@ -96,7 +96,7 @@ defmodule BurrowWeb.ProjectLive.Index do
         {refs["main"] && Totem.Repo.change(dir, refs["main"]), refs}
       end
 
-    {st, job, label, sub} = status(Activity.of(project), phases, refs)
+    {st, job, label, sub} = status(Activity.of(project, user_id), phases, refs)
 
     %{
       st: st,
@@ -300,8 +300,12 @@ defmodule BurrowWeb.ProjectLive.Index do
   @impl true
   def handle_info({:cell, id, _status}, socket) do
     case Enum.find(socket.assigns.projects, &(&1.id == id)) do
-      nil -> {:noreply, socket}
-      project -> {:noreply, update(socket, :cards, &Map.put(&1, id, card(project)))}
+      nil ->
+        {:noreply, socket}
+
+      project ->
+        card = card(project, socket.assigns.current_scope.user.id)
+        {:noreply, update(socket, :cards, &Map.put(&1, id, card))}
     end
   end
 

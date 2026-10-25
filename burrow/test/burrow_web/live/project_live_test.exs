@@ -159,6 +159,14 @@ defmodule BurrowWeb.ProjectLiveTest do
       assert has_element?(lv, "#project-#{project.id} .c6", "0 chats")
     end
 
+    test "its card counts only the user's chats", %{conn: conn, user: user, project: project} do
+      Burrow.Chats.create(project.id, "Add a booking page", user)
+      Burrow.Chats.create(project.id, "Someone else's", user_fixture())
+
+      {:ok, lv, _html} = live(conn, ~p"/projects")
+      assert has_element?(lv, "#project-#{project.id} .c6", "1 chat")
+    end
+
     test "the drawer lists its chats, only the user's", %{
       conn: conn,
       user: user,
