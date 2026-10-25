@@ -10,9 +10,10 @@ defmodule Burrow.GitRepo.PullRequest do
 
   The agent reads the repo's other pull requests through Burrow too
   (`read/4`, `open_list/2`), since it has no GitHub access of its own.
+  `refresh/1` notes which chats' PRs were merged or closed.
   """
 
-  alias Burrow.GitRepo
+  alias Burrow.{Chats, GitRepo, Projects}
   alias Burrow.GitRepo.HostPreview
 
   @check_timeout :timer.minutes(15)
@@ -73,6 +74,33 @@ defmodule Burrow.GitRepo.PullRequest do
       get(project, "/repos/#{owner}/#{repo}/pulls", "list the PRs", state: "open", per_page: 50)
     end
   end
+
+  @doc """
+  Asks GitHub about every chat's PR not known to be merged or closed, and
+  saves the state of those that changed (`Burrow.Chats.Chat`'s
+  `pr_state`). Returns how many changed; 0 when GitHub can't be asked.
+  """
+  def refresh(project) do
+    with {owner, repo} <- github(project),
+         token when token != nil <- GitRepo.token(project) do
+      changed =
+        for %{pr_url: url, pr_state: state} = chat <- Chats.list(project.id),
+            url != nil and state in [nil, "open"],
+            [_, number] <- [Regex.run(~r{/pull/(\d+)\z}, url)],
+            {:ok, pr} <- [get(project, "/repos/#{owner}/#{repo}/pulls/#{number}", "read")],
+            pr_state(pr) != state do
+          Chats.set(chat, pr_state: pr_state(pr))
+        end
+
+      if changed != [], do: Projects.broadcast(project.id, "chats", :prs_changed)
+      length(changed)
+    else
+      _ -> 0
+    end
+  end
+
+  defp pr_state(%{"merged_at" => at}) when at != nil, do: "merged"
+  defp pr_state(%{"state" => state}), do: state
 
   defp on_github(project, chat_id) do
     case github(project) do

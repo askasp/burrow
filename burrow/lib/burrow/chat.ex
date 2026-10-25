@@ -574,7 +574,7 @@ defmodule Burrow.Chat do
     do: {:reply, {:ok, state.preview.pack, state.preview.env}, state}
 
   defp on_call({:pr_opened, url}, _from, state) do
-    Chats.set(%Chats.Chat{id: state.id}, pr_url: url)
+    Chats.set(%Chats.Chat{id: state.id}, pr_url: url, pr_state: "open")
     {:reply, :ok, broadcast_status(%{state | pr_url: url})}
   end
 

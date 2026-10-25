@@ -106,19 +106,31 @@ defmodule BurrowWeb.WorkspaceLiveTest do
   end
 
   describe "chats" do
-    test "up to four open; closing an empty one deletes it", %{conn: conn, project: project} do
+    test "New chat never blocks: one empty chat, and four open ones hold its first message", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
       {:ok, view, _html} = open(conn, project)
+      [empty] = Chats.list(project.id)
 
-      for _ <- 1..3, do: view |> element("#new-chat") |> render_click()
-      assert length(Chats.list(project.id)) == 4
-      assert has_element?(view, "#new-chat[disabled]")
-      assert has_element?(view, "span[title='4 changes are open. Merge or discard one first.']")
-      assert has_element?(view, "#drawer-edit")
+      # The empty chat it opened on is the new chat.
+      for _ <- 1..2, do: view |> element("#new-chat") |> render_click()
+      assert [^empty] = Chats.list(project.id)
 
-      [first | _] = Chats.list(project.id)
-      view |> element("#chat-#{first.id} .cx") |> render_click()
-      assert_eventually(fn -> length(Chats.list(project.id)) == 3 end)
+      for _ <- 1..Chats.max(), do: Chats.create(project.id, "Busy", user)
       refute has_element?(view, "#new-chat[disabled]")
+      view |> element("#new-chat") |> render_click()
+      assert_patched(view, ~p"/projects/#{project.id}/c/#{empty.id}")
+
+      html = view |> element("#composer") |> render_submit(%{"text" => "Add a page"})
+      assert html =~ "You have 4 chats with open changes"
+      refute Chats.get(empty.id).started_at
+
+      # Closing an empty chat deletes it.
+      assert has_element?(view, "#drawer-edit")
+      view |> element("#chat-#{empty.id} .cx") |> render_click()
+      assert_eventually(fn -> length(Chats.list(project.id)) == Chats.max() end)
     end
 
     test "the chat box picks the model; a new chat starts with it", %{
@@ -137,6 +149,11 @@ defmodule BurrowWeb.WorkspaceLiveTest do
                "claude-x"
              )
 
+      # The open chat is still empty, so New chat stays on it.
+      view |> element("#new-chat") |> render_click()
+      assert [chat] = Chats.list(project.id)
+
+      started!(view, chat)
       view |> element("#new-chat") |> render_click()
       assert [_, %{model: "anthropic/claude-x"}] = Chats.list(project.id)
     end
@@ -157,6 +174,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       view |> element("#agent-pick") |> render_change(%{"agent" => "nope"})
       assert [%{agent: "design"}] = Chats.list(project.id)
 
+      started!(view, hd(Chats.list(project.id)))
       view |> element("#new-chat") |> render_click()
       assert project.id |> Chats.list() |> Enum.map(& &1.agent) |> Enum.sort() == [nil, "design"]
     end
@@ -250,11 +268,10 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       refute has_element?(view, "#chat-#{follow.id}", "Follow-up")
       assert Chats.get(follow.id).follows == nil
 
-      # With four open chats there is no room for another; done ones don't count.
-      for _ <- 1..3, do: Chats.create_empty(project.id, "aksel")
+      # Four open chats don't block a new one: its first message waits instead.
+      for _ <- 1..4, do: Chats.create(project.id, "Busy", "aksel")
       render_patch(view, ~p"/projects/#{project.id}/c/#{chat.id}")
-      assert has_element?(view, "#chat-done button[disabled]", "New chat")
-      assert has_element?(view, "#chat-done button[disabled]", "Follow up on ##{change.id}")
+      refute has_element?(view, "#chat-done button[disabled]")
     end
 
     test "closing the open chat opens the one above it, or a new one", %{
@@ -268,6 +285,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       view |> element("#chat-done button", "New chat") |> render_click()
       fresh = Enum.find(Chats.list(project.id), &(&1.id != chat.id))
       assert_patch(view, ~p"/projects/#{project.id}/c/#{fresh.id}")
+      started!(view, fresh)
       view |> element("#new-chat") |> render_click()
       newer = Enum.find(Chats.list(project.id), &(&1.id not in [chat.id, fresh.id]))
       assert_patch(view, ~p"/projects/#{project.id}/c/#{newer.id}")
@@ -736,6 +754,13 @@ defmodule BurrowWeb.WorkspaceLiveTest do
     do:
       Regex.scan(~r/id="chat-([a-z0-9]+)" class="crow/, html, capture: :all_but_first)
       |> List.flatten()
+
+  # The chat had its first message, without starting an agent.
+  defp started!(view, chat) do
+    Chats.set(chat, started_at: DateTime.utc_now(:second))
+    send(view.pid, :chats_changed)
+    render(view)
+  end
 
   defp open(conn, project) do
     {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/projects/#{project.id}")

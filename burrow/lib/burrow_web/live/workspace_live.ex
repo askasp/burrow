@@ -234,6 +234,11 @@ defmodule BurrowWeb.WorkspaceLive do
       text == "" and socket.assigns.uploads.images.entries == [] ->
         {:noreply, socket}
 
+      # The box keeps the text, to send once a chat is merged or discarded.
+      chat.started_at == nil and
+          not Activity.room?(socket.assigns.project, socket.assigns.current_scope.user.id) ->
+        {:noreply, put_flash(socket, :error, full_text())}
+
       true ->
         images = take_images(socket)
         text = if text == "", do: look_text(images), else: text
@@ -779,17 +784,22 @@ defmodule BurrowWeb.WorkspaceLive do
     put_flash(socket, :info, text)
   end
 
-  # A new empty chat with the open chat's model, its box ready to type in.
+  # An empty chat, its box ready to type in: the one the user already has,
+  # else a new one with the open chat's model. Never refused: empty chats
+  # don't count against the limit, which their first message checks.
   defp new_chat(socket, opts) do
-    %{project: project, current_scope: %{user: user}, chat: chat} = socket.assigns
+    %{project: project, current_scope: %{user: user}, chat: chat, tabs: tabs} = socket.assigns
     picked = if chat, do: [model: chat.model, effort: chat.effort], else: []
 
-    if Activity.room?(project, user.id) do
-      chat = Chats.create_empty(project.id, user, picked ++ opts)
-      socket |> push_patch(to: chat_path(socket, chat.id)) |> push_event("composer:focus", %{})
-    else
-      put_flash(socket, :error, full_text())
-    end
+    empty =
+      opts == [] &&
+        Enum.find_value(tabs, fn
+          %{phase: "new", chat: %{follows: nil, from_chat: nil} = empty} -> empty
+          _ -> nil
+        end)
+
+    chat = empty || Chats.create_empty(project.id, user, picked ++ opts)
+    socket |> push_patch(to: chat_path(socket, chat.id)) |> push_event("composer:focus", %{})
   end
 
   # The open chats as the drawer lists them.
@@ -1372,7 +1382,6 @@ defmodule BurrowWeb.WorkspaceLive do
               <.chat_done
                 :if={@done?}
                 tab={@tab}
-                full?={length(open_chats(@tabs, @live_only?)) >= Chats.max()}
                 attach?={@info != nil}
               />
               <pre :if={@done? && @info && @show_attach} class="out mono">{@info.attach}</pre>

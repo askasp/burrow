@@ -15,8 +15,10 @@ defmodule Burrow.Chats.Chat do
     field :effort, :string
     # The agent it talks to: "plan", "design" or nil for build (`Burrow.Chats.agents/0`)
     field :agent, :string
-    # A repo chat's pull request (`Burrow.GitRepo.PullRequest`)
+    # A repo chat's pull request (`Burrow.GitRepo.PullRequest`) and its
+    # state as GitHub last said: "open", "merged" or "closed"
     field :pr_url, :string
+    field :pr_state, :string
     # Runs without use until then (`Burrow.Chat`)
     field :keep_until, :utc_datetime
     # When its first message went in; nil while the chat is empty

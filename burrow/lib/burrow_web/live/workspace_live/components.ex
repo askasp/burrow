@@ -38,8 +38,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       assign(assigns,
         open: length(open),
         days: by_day(assigns.tabs, assigns.live_only?),
-        tile: Enum.find(assigns.rail, & &1.current) || %{state: "stopped", pct: 8},
-        full?: length(open) >= Chats.max()
+        tile: Enum.find(assigns.rail, & &1.current) || %{state: "stopped", pct: 8}
       )
 
     ~H"""
@@ -80,14 +79,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             autocomplete="off"
           />
         </label>
-        <span class="ncw" title={if @full?, do: full_text(), else: "New chat (⌃B C)"}>
+        <span class="ncw" title="New chat (⌃B C)">
           <button
             id="new-chat"
             type="button"
             class="newchat"
             aria-label="New chat"
             phx-click="new_chat"
-            disabled={@full?}
             data-kb-key="c"
             data-kb-label="New chat"
             data-kb-group="Chats"
@@ -455,7 +453,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   @doc "Why New chat is off."
-  def full_text, do: "#{Chats.max()} changes are open. Merge or discard one first."
+  def full_text,
+    do:
+      "You have #{Chats.max()} chats with open changes. Merge or discard one, then send " <>
+        "this again: it stays in the box."
 
   @doc "The chats that aren't done, the one worked on last first."
   def open_chats(tabs, live_only?), do: Enum.reject(tabs, &Activity.done?(&1, live_only?))
@@ -496,6 +497,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   def row_status(%{phase: "staged"}, _live_only?), do: {"On staging · ship", "waiting"}
   def row_status(%{phase: "failed"}, _live_only?), do: {"Checks failed", "err"}
   def row_status(%{phase: "ready"}, _live_only?), do: {"PR open", "waiting"}
+  def row_status(%{phase: "merged"}, _live_only?), do: {"PR merged", "done"}
+  def row_status(%{phase: "closed"}, _live_only?), do: {"PR closed", "done"}
   def row_status(%{phase: "drawn"}, _live_only?), do: {"Boards on main", "done"}
   def row_status(%{phase: "idle"}, _live_only?), do: {"No change yet", "new"}
   def row_status(_tab, _live_only?), do: {"New chat", "new"}
@@ -1353,7 +1356,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp queue_count(open, closed), do: "#{length(open)} to do · #{length(closed)} done"
 
   attr :tab, :map, required: true, doc: "a done chat's tab (`Burrow.Activity.done?/2`)"
-  attr :full?, :boolean, required: true, doc: "no room for another chat"
   attr :attach?, :boolean, required: true, doc: "its agent runs, so opencode can attach"
 
   @doc """
@@ -1376,8 +1378,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           type="button"
           class="btn btn-primary btn-sm"
           phx-click="new_chat"
-          disabled={@full?}
-          title={@full? && full_text()}
         >
           New chat <kbd>⌃B C</kbd>
         </button>
@@ -1385,8 +1385,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           type="button"
           class="btn btn-secondary btn-sm"
           phx-click="follow_up"
-          disabled={@full?}
-          title={@full? && full_text()}
         >
           Follow up on #{@id}
         </button>
@@ -1406,6 +1404,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp badge("working", _), do: "checking"
   defp badge("failed", _), do: "checks failed"
   defp badge("ready", _), do: "pull request open"
+  defp badge("merged", _), do: "pull request merged"
+  defp badge("closed", _), do: "pull request closed"
   defp badge("landing", true), do: "on main"
   defp badge("landing", false), do: "on main"
   defp badge("staged", _), do: "on staging"
@@ -1415,7 +1415,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp badge_tone(phase) when phase in ~w(working landing), do: "warn"
   defp badge_tone("failed"), do: "err"
-  defp badge_tone(phase) when phase in ~w(ready staged live), do: "ok"
+  defp badge_tone(phase) when phase in ~w(ready merged staged live), do: "ok"
   defp badge_tone(_), do: "idle"
 
   attr :status, :string, required: true

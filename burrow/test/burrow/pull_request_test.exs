@@ -195,6 +195,37 @@ defmodule Burrow.GitRepo.PullRequestTest do
              PullRequest.read(project_fixture(%{repo_url: origin}), "a", chat, 3)
   end
 
+  test "a chat whose PR was merged or closed stops counting against the limit" do
+    project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+
+    for n <- 1..Burrow.Chats.max() do
+      chat = Burrow.Chats.create(project.id, "PR #{n}", "ada")
+      Burrow.Chats.set(chat, pr_url: "https://github.com/acme/shop/pull/#{n}", pr_state: "open")
+    end
+
+    Req.Test.stub(PullRequest, fn conn ->
+      case conn.request_path do
+        "/repos/acme/shop/pulls/1" ->
+          Req.Test.json(conn, %{"state" => "closed", "merged_at" => "x"})
+
+        "/repos/acme/shop/pulls/2" ->
+          Req.Test.json(conn, %{"state" => "closed", "merged_at" => nil})
+
+        _ ->
+          Req.Test.json(conn, %{"state" => "open", "merged_at" => nil})
+      end
+    end)
+
+    assert Burrow.Activity.room?(project)
+    states = Burrow.Chats.list(project.id) |> Enum.map(& &1.pr_state) |> Enum.sort()
+    assert states == ~w(closed merged open open)
+
+    phases = Burrow.Activity.chats(project, MapSet.new()) |> Enum.map(& &1.phase) |> Enum.sort()
+    assert phases == ~w(closed merged ready ready)
+    assert PullRequest.refresh(project) == 0
+  end
+
   defp commit!(dir, message) do
     sh!(["add", "-A"], dir)
     sh!(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", message], dir)

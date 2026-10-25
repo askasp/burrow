@@ -9,6 +9,7 @@ defmodule Burrow.Activity do
     * `"working"` - the agent works, or its draft is being checked
     * `"failed"` - its checks failed, or main did not pass with it
     * `"ready"` - a repo chat whose PR is open
+    * `"merged"`, `"closed"` - a repo chat whose PR GitHub merged or closed
     * `"drawn"` - its boards are on main (`Burrow.Design`); it goes on
     * `"landing"` - on main, not shipped yet
     * `"staged"` - on staging, not on prod yet
@@ -23,6 +24,7 @@ defmodule Burrow.Activity do
   use GenServer
 
   alias Burrow.{Cell, Chat, Chats, Design, Env, Projects, Secrets, Ship}
+  alias Burrow.GitRepo.PullRequest
   alias Totem.Repo
 
   @debounce 300
@@ -73,6 +75,11 @@ defmodule Burrow.Activity do
   defp worked_at(chat, _draft), do: chat.updated_at
 
   defp phase(_chat, _draft, true, _refs), do: "working"
+
+  defp phase(%{pr_url: url, pr_state: state}, _draft, false, nil)
+       when url != nil and state in ~w(merged closed),
+       do: state
+
   defp phase(%{pr_url: url}, _draft, false, nil) when url != nil, do: "ready"
   defp phase(%{started_at: nil}, nil, false, _refs), do: "new"
   defp phase(_chat, nil, false, _refs), do: "idle"
@@ -96,15 +103,28 @@ defmodule Burrow.Activity do
   def done?(_chat, _live_only?), do: false
 
   @doc """
-  Whether user `user_id` can open another chat in the project: up to
-  `Burrow.Chats.max/0` of the ones they see that aren't done. Peon's chats
-  (nil) count as the owner's.
+  Whether user `user_id` can start another chat in the project: up to
+  `Burrow.Chats.max/0` of the ones they see that count (`counts?/2`).
+  Peon's chats (nil) count as the owner's. A repo project at the limit
+  asks GitHub first whether some of its PRs were merged or closed since.
   """
   def room?(project, user_id \\ nil) do
-    live_only? = not Ship.staging?(project)
-    chats = chats(project, user_id || project.user_id, MapSet.new())
-    Enum.count(chats, &(not done?(&1, live_only?))) < Chats.max()
+    room? = fn ->
+      live_only? = not Ship.staging?(project)
+      chats = chats(project, user_id || project.user_id, MapSet.new())
+      Enum.count(chats, &counts?(&1, live_only?)) < Chats.max()
+    end
+
+    room?.() or
+      (Projects.Project.repo?(project) and PullRequest.refresh(project) > 0 and room?.())
   end
+
+  @doc """
+  Whether the chat counts against the open-chat limit: not while it is
+  empty (it runs nothing yet), done, or a repo chat whose PR is through.
+  """
+  def counts?(%{phase: phase}, _live_only?) when phase in ~w(new merged closed), do: false
+  def counts?(chat, live_only?), do: not done?(chat, live_only?)
 
   @doc "Whether the chat's change is on main or staging and not live yet."
   def unshipped?(project, chat_id) do

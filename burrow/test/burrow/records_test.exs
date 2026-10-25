@@ -28,8 +28,10 @@ defmodule Burrow.RecordsTest do
       Chats.started(Chats.get(id), "something else")
       assert Chats.get(id).title == "Add a booking page with a calendar"
 
+      # Empty chats don't count, started ones do.
+      for _ <- 1..Chats.max(), do: Chats.create_empty(project.id, "ada")
       assert Burrow.Activity.room?(project)
-      for _ <- 2..Chats.max(), do: Chats.create_empty(project.id, "ada")
+      for _ <- 2..Chats.max(), do: Chats.create(project.id, "t", "ada")
       refute Burrow.Activity.room?(project)
       assert Chats.list(project_fixture().id) == []
     end
@@ -51,7 +53,7 @@ defmodule Burrow.RecordsTest do
       refute Chats.get(project_fixture(), mate.id, mates.id)
 
       # Everyone has their own four.
-      for _ <- 2..Chats.max(), do: Chats.create_empty(project.id, mate)
+      for _ <- 1..Chats.max(), do: Chats.create(project.id, "t", mate)
       refute Burrow.Activity.room?(project, mate.id)
       assert Burrow.Activity.room?(project, owner.id)
     end
