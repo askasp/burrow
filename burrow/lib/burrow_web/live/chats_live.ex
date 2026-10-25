@@ -16,10 +16,12 @@ defmodule BurrowWeb.ChatsLive do
 
   use BurrowWeb, :live_view
 
-  import BurrowWeb.WorkspaceLive.Components, only: [model_pick: 1, tile: 1]
+  import BurrowWeb.WorkspaceLive.Components,
+    only: [model_pick: 1, place_switch: 1, account_menu: 1, rail: 1]
+
   import BurrowWeb.Markdown, only: [markdown: 1]
 
-  alias Burrow.{Accounts, Activity, Chats, GeneralChat, GeneralChats, Projects}
+  alias Burrow.{Activity, Chats, GeneralChat, GeneralChats, Projects}
   alias Burrow.GeneralChats.Sources
 
   @accept ~w(.png .jpg .jpeg .gif .webp .pdf .txt .md .csv .json)
@@ -198,13 +200,6 @@ defmodule BurrowWeb.ChatsLive do
       when scope in ~w(chats project everywhere),
       do: {:noreply, socket |> assign(scope: scope) |> search()}
 
-  # System, light, dark, round again; the user's, everywhere in Burrow.
-  def handle_event("theme", _params, socket) do
-    theme = %{"system" => "light", "light" => "dark"}[socket.assigns.theme] || "system"
-    Accounts.put_theme(socket.assigns.current_scope.user, theme)
-    {:noreply, assign(socket, theme: theme)}
-  end
-
   def handle_event("dialog", %{"dialog" => "send"}, socket) do
     target = socket.assigns.rail |> List.first() |> then(&(&1 && &1.id))
     {:noreply, assign(socket, dialog: :send, target: target, dialog_error: nil)}
@@ -337,6 +332,7 @@ defmodule BurrowWeb.ChatsLive do
           id: p.id,
           name: p.name,
           url: ~p"/projects/#{p.id}",
+          current: false,
           state: tile["state"],
           label: tile["label"],
           pct: tile["pct"]
@@ -641,199 +637,149 @@ defmodule BurrowWeb.ChatsLive do
         phx-click={JS.remove_class("show-drawer", to: ".ws-root")}
       >
       </div>
-      <nav id="drawer" class="drawer" aria-label="Chats" data-kb-zoom-hide>
-        <div class="dtop">
-          <div class="menuw pmw">
+      <nav
+        id="drawer"
+        class="drawer"
+        aria-label="Chats and projects"
+        phx-hook=".Drawer"
+        data-kb-zoom-hide
+      >
+        <div class="dlist">
+          <div class="dtop">
             <button
               id="space-switch"
               type="button"
-              class="pswitch"
-              aria-haspopup="menu"
-              aria-expanded="false"
-              aria-label="Chats, switch space"
-              title="Switch space (⌃B P)"
-              phx-click={
-                JS.toggle(to: "#space-menu")
-                |> JS.toggle_attribute({"aria-expanded", "true", "false"})
-              }
+              class="swt"
+              aria-label="Switch place. Now Chats"
+              title="Switch place (⌃B P)"
+              phx-click={JS.add_class("switching", to: "#drawer")}
               data-kb-key="P"
-              data-kb-label="Switch space"
+              data-kb-label="Switch place"
               data-kb-group="Projects"
             >
-              <span class="ri gc-tile" aria-hidden="true">
-                <.icon name="hero-chat-bubble-bottom-center" class="size-4" />
-              </span>
+              <span class="av"><.icon name="hero-chat-bubble-bottom-center" class="size-[18px]" /></span>
               <span class="pn">
-                <span class="nm">Chats</span><span class="mm">ask, search, think · no project</span>
+                <span class="nm">Chats</span><span class="mm">Ask, search, think · no project</span>
               </span>
-              <.icon name="hero-chevron-down" class="size-[14px] shrink-0 pchev" />
-            </button>
-            <div
-              id="space-menu"
-              class="pmenu"
-              role="menu"
-              aria-label="Spaces"
-              style="display: none"
-              phx-click-away={
-                JS.hide(to: "#space-menu")
-                |> JS.set_attribute({"aria-expanded", "false"}, to: "#space-switch")
-              }
-            >
-              <.link
-                patch={~p"/chats"}
-                class="pmrow"
-                role="menuitem"
-                aria-current="page"
-                data-kb-key="0"
-                data-kb-label="Chats"
-                data-kb-group="Projects"
-              >
-                <span class="ri gc-tile" aria-hidden="true">
-                  <.icon name="hero-chat-bubble-bottom-center" class="size-4" />
-                </span>
-                <span class="pn">
-                  <span class="nm">Chats</span><span class="lbl">general · no project</span>
-                </span>
-                <span class="gc-k">⌃B 0</span>
-              </.link>
-              <div class="msec">Projects</div>
-              <.link :for={p <- @rail} navigate={p.url} class="pmrow" role="menuitem">
-                <.tile name={p.name} state={p.state} pct={p.pct} />
-                <span class="pn">
-                  <span class="nm">{p.name}</span>
-                  <span class={["lbl", p.state]}>{p.label}</span>
-                </span>
-              </.link>
-              <div class="msep" role="separator"></div>
-              <.link class="pmrow" role="menuitem" navigate={~p"/projects"}>
-                <.icon name="hero-squares-2x2" class="size-4 shrink-0" />All projects
-              </.link>
-            </div>
-          </div>
-        </div>
-        <form id="chat-search" class="gc-search" phx-change="search" phx-submit="search" role="search">
-          <label class="gc-sbox">
-            <.icon name="hero-magnifying-glass" class="size-[14px] shrink-0" />
-            <span class="sr-only">Search chats</span>
-            <input
-              type="search"
-              name="q"
-              value={@q}
-              placeholder="Search"
-              autocomplete="off"
-              phx-debounce="200"
-            />
-          </label>
-          <div class="gc-scope" role="group" aria-label="Search in">
-            <button
-              :for={
-                {scope, label} <- [
-                  {"chats", "Chats"},
-                  {"project", "This project"},
-                  {"everywhere", "Everywhere"}
-                ]
-              }
-              type="button"
-              aria-pressed={to_string(@scope == scope)}
-              phx-click="scope"
-              phx-value-scope={scope}
-            >
-              {label}
+              <.icon name="hero-chevron-up-down" class="size-4 shrink-0 pchev" />
             </button>
           </div>
-        </form>
-        <span class="ncw">
-          <button
-            id="new-chat"
-            type="button"
-            class="newchat"
-            phx-click="new_chat"
-            data-kb-key="c"
-            data-kb-label="New chat"
-            data-kb-group="Chats"
-            data-kb-focus="#chat-input"
+          <form
+            id="chat-search"
+            class="gc-search"
+            phx-change="search"
+            phx-submit="search"
+            role="search"
           >
-            <.icon name="hero-plus" class="size-4 shrink-0" /><span class="dt">New chat</span><kbd>⌃B C</kbd>
-          </button>
-        </span>
-        <div class="dscroll">
-          <%= if String.trim(@q) != "" do %>
-            <div class="dsec"><span>Found</span></div>
-            <div
-              :for={f <- @found}
-              class="crow"
-              data-on={to_string(@chat != nil and @chat.id == f.id)}
-            >
-              <.link
-                :if={String.starts_with?(f.url, "/chats/")}
-                patch={f.url}
-                class="crb"
-                data-kb="item"
+            <label class="gc-sbox">
+              <.icon name="hero-magnifying-glass" class="size-[14px] shrink-0" />
+              <span class="sr-only">Search chats</span>
+              <input
+                type="search"
+                name="q"
+                value={@q}
+                placeholder="Search"
+                autocomplete="off"
+                phx-debounce="200"
+              />
+            </label>
+            <div class="gc-scope" role="group" aria-label="Search in">
+              <button
+                :for={
+                  {scope, label} <- [
+                    {"chats", "Chats"},
+                    {"project", "This project"},
+                    {"everywhere", "Everywhere"}
+                  ]
+                }
+                type="button"
+                aria-pressed={to_string(@scope == scope)}
+                phx-click="scope"
+                phx-value-scope={scope}
               >
-                <span class="cb"><span class="ct"><span class="tt">{f.title}</span></span><span class="cs2">{f.sub}</span></span>
-              </.link>
-              <.link
-                :if={!String.starts_with?(f.url, "/chats/")}
-                navigate={f.url}
-                class="crb"
-                data-kb="item"
-              >
-                <span class="cb"><span class="ct"><span class="tt">{f.title}</span></span><span class="cs2">{f.sub}</span></span>
-              </.link>
+                {label}
+              </button>
             </div>
-            <p :if={@found == []} class="dnone">No chats match.</p>
-          <% else %>
-            <div :for={{day, chats} <- @history} class="dday">
-              <div class="dsec"><span>{day}</span></div>
+          </form>
+          <span class="ncw">
+            <button
+              id="new-chat"
+              type="button"
+              class="newchat"
+              phx-click="new_chat"
+              data-kb-key="c"
+              data-kb-label="New chat"
+              data-kb-group="Chats"
+              data-kb-focus="#chat-input"
+            >
+              <.icon name="hero-plus" class="size-4 shrink-0" /><span class="dt">New chat</span><kbd>⌃B C</kbd>
+            </button>
+          </span>
+          <div class="dscroll">
+            <%= if String.trim(@q) != "" do %>
+              <div class="dsec"><span>Found</span></div>
               <div
-                :for={c <- chats}
-                id={"gchat-#{c.id}"}
+                :for={f <- @found}
                 class="crow"
-                data-on={to_string(@chat != nil and @chat.id == c.id)}
+                data-on={to_string(@chat != nil and @chat.id == f.id)}
               >
                 <.link
-                  patch={~p"/chats/#{c.id}"}
+                  :if={String.starts_with?(f.url, "/chats/")}
+                  patch={f.url}
                   class="crb"
-                  aria-current={(@chat != nil and @chat.id == c.id) && "page"}
                   data-kb="item"
-                  title={title(c)}
                 >
-                  <span :if={MapSet.member?(@busy, c.id)} class="cdot working" aria-hidden="true"></span>
-                  <span class="cb">
-                    <span class="ct"><span class="tt">{title(c)}</span></span>
-                    <span class="cs2">{sub(c, MapSet.member?(@busy, c.id))}</span>
-                  </span>
+                  <span class="cb"><span class="ct"><span class="tt">{f.title}</span></span><span class="cs2">{f.sub}</span></span>
+                </.link>
+                <.link
+                  :if={!String.starts_with?(f.url, "/chats/")}
+                  navigate={f.url}
+                  class="crb"
+                  data-kb="item"
+                >
+                  <span class="cb"><span class="ct"><span class="tt">{f.title}</span></span><span class="cs2">{f.sub}</span></span>
                 </.link>
               </div>
-            </div>
-          <% end %>
+              <p :if={@found == []} class="dnone">No chats match.</p>
+            <% else %>
+              <div :for={{day, chats} <- @history} class="dday">
+                <div class="dsec"><span>{day}</span></div>
+                <div
+                  :for={c <- chats}
+                  id={"gchat-#{c.id}"}
+                  class="crow"
+                  data-on={to_string(@chat != nil and @chat.id == c.id)}
+                >
+                  <.link
+                    patch={~p"/chats/#{c.id}"}
+                    class="crb"
+                    aria-current={(@chat != nil and @chat.id == c.id) && "page"}
+                    data-kb="item"
+                    title={title(c)}
+                  >
+                    <span :if={MapSet.member?(@busy, c.id)} class="cdot working" aria-hidden="true"></span>
+                    <span class="cb">
+                      <span class="ct"><span class="tt">{title(c)}</span></span>
+                      <span class="cs2">{sub(c, MapSet.member?(@busy, c.id))}</span>
+                    </span>
+                  </.link>
+                </div>
+              </div>
+            <% end %>
+          </div>
+          <.account_menu user={@current_scope.user} />
         </div>
-        <div class="dbot">
-          <Layouts.mark size={22} />
-          <.link class="dlink" navigate={~p"/projects"} title="Projects, teams and AI login">
-            Account
-          </.link>
-          <button
-            type="button"
-            class="icon-btn dtheme"
-            phx-click="theme"
-            title={"Theme: #{@theme}"}
-            aria-label={"Theme: #{@theme}"}
-          >
-            <.icon
-              name={
-                case @theme do
-                  "light" -> "hero-sun"
-                  "dark" -> "hero-moon"
-                  _ -> "hero-computer-desktop"
-                end
-              }
-              class="size-4"
-            />
-          </button>
+        <div class="dswitch">
+          <.place_switch
+            rail={@rail}
+            chats?={true}
+            back={JS.remove_class("switching", to: "#drawer")}
+            new_project={JS.navigate(~p"/projects?new")}
+          />
         </div>
       </nav>
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
+      <.rail new_chat={JS.push("new_chat")} />
 
       <div class="ws-main">
         <div class="pbar">
@@ -1173,6 +1119,17 @@ defmodule BurrowWeb.ChatsLive do
       </div>
     </div>
 
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Drawer">
+      // Picking a chat or a place puts the drawer away (a patch link stops
+      // LiveView's own phx-click).
+      export default {
+        mounted() {
+          this.el.addEventListener("click", e => {
+            if (e.target.closest("a")) this.js().removeClass(this.el.closest(".ws-root"), "show-drawer")
+          })
+        }
+      }
+    </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".Theme">
       // The user's theme on <html>; Burrow keeps it for the next page load.
       export default {

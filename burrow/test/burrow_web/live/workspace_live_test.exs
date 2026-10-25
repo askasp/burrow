@@ -26,7 +26,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#drawer .crow .tt", "What should App do?")
       assert has_element?(view, ".pbar-name", "What should App do?")
       assert has_element?(view, ".ws-hello", "What should App do?")
-      assert has_element?(view, ".pbar-meta", "app · nothing built yet")
+      assert has_element?(view, ".pbar-meta", "app · New chat")
+      assert has_element?(view, "#more-menu .menu-meta", "app · nothing built yet")
       assert has_element?(view, ".ws-prev-empty", "Nothing here yet")
       # Its agent starts with the first message, not before.
       assert [%{started_at: nil}] = Chats.list(project.id)
@@ -61,7 +62,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert length(Chats.list(project.id)) == 4
       assert has_element?(view, "#new-chat[disabled]")
       assert has_element?(view, "span[title='4 changes are open. Merge or discard one first.']")
-      assert has_element?(view, "#drawer .dsec", "4 of 4")
+      assert has_element?(view, "#drawer-edit")
 
       [first | _] = Chats.list(project.id)
       view |> element("#chat-#{first.id} .cx") |> render_click()
@@ -87,6 +88,26 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       view |> element("#new-chat") |> render_click()
       assert [_, %{model: "anthropic/claude-x"}] = Chats.list(project.id)
+    end
+
+    test "the chat box picks the agent; Design shows the boards, a new chat builds", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} = open(conn, project)
+      assert has_element?(view, "#agent-pick option[selected]", "Build")
+      assert has_element?(view, "#agent-pick option", "Design")
+
+      view |> element("#agent-pick") |> render_change(%{"agent" => "design"})
+      assert [%{agent: "design"}] = Chats.list(project.id)
+      assert has_element?(view, "#agent-pick option[selected]", "Design")
+      assert render(view) =~ "hero-swatch"
+
+      view |> element("#agent-pick") |> render_change(%{"agent" => "nope"})
+      assert [%{agent: "design"}] = Chats.list(project.id)
+
+      view |> element("#new-chat") |> render_click()
+      assert project.id |> Chats.list() |> Enum.map(& &1.agent) |> Enum.sort() == [nil, "design"]
     end
 
     test "the thinking level changes by itself, keeping the model", %{
@@ -118,8 +139,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       Runs.finish(run, status: "passed")
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
-      assert has_element?(view, "#chat-#{chat.id} .n", "##{change.id}")
-      assert has_element?(view, ".pbar-name", "##{change.id}")
+      assert has_element?(view, "#chat-#{chat.id} .cm", "##{change.id}")
+      assert has_element?(view, ".pbar-meta", "##{change.id} on main")
       assert has_element?(view, ".ws-cs h2", "Change ##{change.id}")
       # Without staging, main is what goes live: the chat box gives way, and
       # the chat is done; it stays under Today.
@@ -127,23 +148,23 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#chat-done", "This chat is done.")
       assert has_element?(view, "#drawer .dday:has(#chat-#{chat.id}) .dsec", "Today")
       assert has_element?(view, "#chat-#{chat.id} .okic")
-      assert has_element?(view, "#drawer .dsec", "0 of 4 open")
+      refute has_element?(view, "#drawer-edit")
       refute has_element?(view, "#chat-input")
       # Its dev preview stays, to look into, until it is live.
-      refute has_element?(view, ".vbar .seg button[disabled]", "dev")
+      refute has_element?(view, "#view-menu button[disabled]", "dev")
       assert Burrow.Activity.unshipped?(project, chat.id)
 
       view |> element(".ws-cs button", "Ship") |> render_click()
       assert Totem.Repo.ref(Projects.repo_dir(project), "prod") == change.id
-      assert has_element?(view, ".vbar .seg button[disabled]", "dev")
+      assert has_element?(view, "#view-menu button[disabled]", "dev")
       refute Burrow.Activity.unshipped?(project, chat.id)
 
-      # Live but not deployed yet, or down: the project bar says so.
+      # Live but not deployed yet, or down: the project's line says so.
       send(view.pid, {:env, "prod", down_env("prod")})
-      assert has_element?(view, ".pbar-meta", "live — · no staging")
+      assert has_element?(view, "#more-menu .menu-meta", "live — · no staging")
       assert has_element?(view, "#chat-done", "##{change.id} is live.")
       refute has_element?(view, "#chat-#{chat.id} .cdot")
-      assert has_element?(view, "#chat-#{chat.id} .cs2", "live · ")
+      assert has_element?(view, "#chat-#{chat.id} .cst", "Live")
     end
 
     test "a done chat follows up in a new one, which starts from its change", %{
@@ -237,7 +258,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
           do: view |> element("#composer") |> render_submit(%{"text" => text, "to" => "queue"})
 
       assert has_element?(view, "#queue .qrow", "Make the logo bigger")
-      assert has_element?(view, "#queue summary", "2 to do")
+      assert has_element?(view, "#queue-link", "2 next")
+      assert has_element?(view, "#queue .qtop", "2 to do")
       # The box empties from the server: with images, the browser sends the
       # text only after they are up.
       assert_push_event(view, "composer:put", %{text: ""})
@@ -344,7 +366,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
       render_async(view)
-      assert has_element?(view, "#design-view .dcnt", "1")
+      assert has_element?(view, "#design-view .vd", "1 changed")
       assert has_element?(view, ".ws-cs .ptag", "design only")
 
       view |> element("#submit-design") |> render_click()
@@ -404,7 +426,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       {:ok, view, _html} = open(conn, Projects.get(project.id))
       refute has_element?(view, "#overview")
       view |> element("#overview-btn") |> render_click()
-      assert has_element?(view, "#overview-btn[aria-pressed=true]")
+      assert has_element?(view, "#overview-btn", "Back to preview")
       assert has_element?(view, "#overview .env .eyebrow", "staging")
       refute has_element?(view, ".vbar")
 
@@ -416,7 +438,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert render(view) =~ "Every change that passes ships by itself"
 
       view |> element("#overview button", "Back to preview") |> render_click()
-      assert has_element?(view, ".vbar .seg button", "staging")
+      assert has_element?(view, "#view-menu button", "staging")
     end
 
     test "a project without staging calls prod live, and staging can be added", %{
@@ -426,8 +448,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert Projects.get(project.id).envs == "live"
 
       {:ok, view, _html} = open(conn, project)
-      assert has_element?(view, ".vbar .seg button", "live")
-      refute has_element?(view, ".vbar .seg button", "staging")
+      assert has_element?(view, "#view-menu button", "live")
+      refute has_element?(view, "#view-menu button", "staging")
 
       view |> element("#more-menu button", "Add staging") |> render_click()
       assert Projects.get(project.id).envs == "pipeline"
@@ -445,11 +467,11 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = open(conn, project)
       assert has_element?(view, "#project-switch .nm", "App")
-      assert has_element?(view, "#project-menu .pmrow[aria-current=page]", "App")
+      assert has_element?(view, "#drawer .dswitch .swt[aria-current=page]", "App")
       # Cells don't run in tests, so it shows as stopped.
       assert has_element?(
                view,
-               "#project-menu a.pmrow[href='/projects/#{other.id}'] .rhp.stopped"
+               "#drawer .dswitch a.swt[href='/projects/#{other.id}'] .rhp.stopped"
              )
 
       refute has_element?(view, "#drawer.closed")
@@ -457,7 +479,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       {:ok, third} = Projects.create(Scope.for_user(user), %{"name" => "Stash"})
 
       assert_eventually(fn ->
-        has_element?(view, "#project-menu a.pmrow[href='/projects/#{third.id}']")
+        has_element?(view, "#drawer .dswitch a.swt[href='/projects/#{third.id}']")
       end)
     end
 
@@ -478,7 +500,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       {:ok, view, html} = open(conn, project)
       assert has_element?(view, "#chat-#{last.id}[data-on=true]")
-      assert has_element?(view, "#day-today .dsec", "5 of 4 open")
+      assert has_element?(view, "#day-today .dsec #drawer-edit")
       assert has_element?(view, "#day-today #chat-#{last.id}")
       assert has_element?(view, "#day-yesterday #chat-#{yesterday.id}")
       assert has_element?(view, "#day-this-week #chat-#{week.id}")
@@ -521,22 +543,46 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert Accounts.get_user!(user.id).folded_days == []
     end
 
-    test "collapses, and the user's choice is kept", %{conn: conn, project: project, user: user} do
+    test "opens from the rail; the place on top switches to Chats or a project", %{
+      conn: conn,
+      project: project
+    } do
       {:ok, view, _html} = open(conn, project)
-      view |> element("#drawer .dhide") |> render_click()
-      assert has_element?(view, "#drawer.closed")
-      assert Accounts.get_user!(user.id).chats_collapsed
+      assert has_element?(view, ".rail button[data-kb-key=h]")
+      assert has_element?(view, "#project-switch", "App")
+      assert has_element?(view, "#chat-search[placeholder='Search App']")
+      assert has_element?(view, "#drawer .dswitch a[href='/chats']", "Chats")
+      assert has_element?(view, "#drawer .dswitch a[href='/projects']", "All projects")
+      assert has_element?(view, "#drawer .dswitch #new-project-btn", "New project")
     end
 
-    test "sets the user's theme", %{conn: conn, project: project, user: user} do
+    test "the account menu holds teams, logins, the theme and log out", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
       Accounts.put_theme(user, "dark")
       {:ok, view, _html} = open(conn, project)
       assert has_element?(view, "#theme[data-theme=dark]")
+      assert has_element?(view, "#account-btn", user.email)
 
-      # dark -> system -> light
-      view |> element("button[phx-click=theme]") |> render_click()
-      assert has_element?(view, "#theme[data-theme=system]")
-      assert Accounts.get_user!(user.id).theme == "system"
+      for {href, text} <- [
+            {"/teams", "Teams"},
+            {"/ai", "AI login"},
+            {"/logins", "Logins"},
+            {"/users/settings", "Email and password"},
+            {"/users/log-out", "Log out"}
+          ],
+          do: assert(has_element?(view, "#account-pop a[href='#{href}']", text))
+
+      # The theme posts to /users/theme (BurrowWeb.ThemeController)
+      assert has_element?(
+               view,
+               "#account-pop form[action='/users/theme'] button[aria-pressed=true]",
+               "Dark"
+             )
+
+      assert has_element?(view, "#account-pop button[name=theme][value=system]", "System")
     end
 
     test "makes a new project and opens it", %{conn: conn, project: project, user: user} do

@@ -9,6 +9,8 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   use BurrowWeb, :live_view
 
+  import BurrowWeb.WorkspaceLive.Components, only: [place_switch: 1, account_menu: 1, rail: 1]
+
   alias Burrow.{Activity, Cell, Chat, Chats, Projects, Teams}
   alias Burrow.Projects.Project
 
@@ -40,8 +42,24 @@ defmodule BurrowWeb.ProjectLive.Index do
     assign(socket,
       projects: projects,
       cards: Map.new(projects, &{&1.id, card(&1)}),
+      rail: Enum.map(projects, &rail_entry/1),
       teams: Teams.list(scope)
     )
+  end
+
+  # A project as the drawer's "Switch to" lists it.
+  defp rail_entry(project) do
+    tile = Activity.of(project)
+
+    %{
+      id: project.id,
+      name: project.name,
+      url: ~p"/projects/#{project.id}",
+      current: false,
+      state: tile["state"],
+      label: tile["label"],
+      pct: tile["pct"]
+    }
   end
 
   # What a row shows besides the project's own fields: its status, main's
@@ -141,6 +159,13 @@ defmodule BurrowWeb.ProjectLive.Index do
   defp new_form(attrs \\ %{}), do: to_form(Projects.change(attrs), as: "project")
 
   defp project!(socket, id), do: Projects.get!(socket.assigns.current_scope, id)
+
+  # "New project" from elsewhere (the drawer on Chats) opens the form.
+  @impl true
+  def handle_params(params, _uri, socket),
+    do:
+      {:noreply,
+       if(Map.has_key?(params, "new"), do: assign(socket, creating: true), else: socket)}
 
   @impl true
   def handle_event("new_project", _params, socket), do: {:noreply, assign(socket, creating: true)}
@@ -293,378 +318,451 @@ defmodule BurrowWeb.ProjectLive.Index do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} active={:projects}>
-      <div class="flex items-center justify-between gap-5 flex-wrap">
-        <h1 class="m-0 text-[32px] leading-10 font-semibold tracking-[-0.02em]">Projects</h1>
-        <button
-          id="new-project"
-          type="button"
-          phx-click="new_project"
-          data-kb-key="c"
-          data-kb-label="New project"
-          data-kb-group="Project"
-          class="btn btn-secondary"
-        >
-          <.icon name="hero-plus" class="size-4" /> New project
-        </button>
-      </div>
-
-      <.modal :if={@creating} id="new-project-dialog" title="New project" return_to="new-project">
-        <.form
-          for={@form}
-          id="project_form"
-          phx-change="validate"
-          phx-submit="create"
-          class="flex flex-col gap-3"
-        >
-          <div class="min-w-0">
-            <.input
-              field={@form[:name]}
-              label="Name"
-              class="field"
-              placeholder="Sauna booking"
-              autocomplete="off"
-              phx-mounted={JS.focus()}
-              hint={"slug: #{@slug || "…"}"}
-            />
-          </div>
-          <div class="min-w-0">
-            <.input
-              field={@form[:repo_url]}
-              label="From a git repo (optional)"
-              class="field"
-              placeholder="https://github.com/you/app.git"
-              autocomplete="off"
-              hint="needs .peon/preview.json for a preview"
-            />
-          </div>
-          <div :if={!blank?(@form[:repo_url].value)} class="min-w-0">
-            <.input
-              field={@form[:github_token]}
-              type="password"
-              label="GitHub token (optional for public repos)"
-              class="field"
-              autocomplete="off"
-              hint="fine-grained, for this repo: Contents and Pull requests, read and write"
-            />
-          </div>
-          <div :if={blank?(@form[:repo_url].value)} class="min-w-0">
-            <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
-          </div>
-          <div
-            :if={blank?(@form[:repo_url].value) and @form[:auth].value == "accounts"}
-            class="min-w-0"
-          >
-            <.input field={@form[:signups]} type="checkbox" label="Allow sign-ups" />
-            <p class="hint">Off: the first account is the admin and adds everyone else.</p>
-          </div>
-          <div
-            :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
-            class="flex flex-col gap-3"
-          >
-            <div class="min-w-0">
-              <.input
-                field={@form[:basic_username]}
-                label="Username"
-                class="field"
-                autocomplete="off"
-              />
-            </div>
-            <div class="min-w-0">
-              <.input
-                field={@form[:basic_password]}
-                type="password"
-                label="Password"
-                class="field"
-                autocomplete="new-password"
-                hint="at least 8 characters; kept as the app's secrets, not in Burrow"
-              />
-            </div>
-          </div>
-          <div :if={@teams != []} class="min-w-0">
-            <.input
-              field={@form[:team_id]}
-              type="select"
-              label="Shared with"
-              options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
-            />
-          </div>
-          <div class="flex gap-2 justify-end">
-            <.button variant="primary" class="btn btn-primary" phx-disable-with="Creating…">
-              Create
-            </.button>
-            <button
-              type="button"
-              phx-click="cancel_new"
-              class="btn btn-ghost"
-            >
-              Cancel
-            </button>
-          </div>
-        </.form>
-      </.modal>
-
-      <.modal
-        :if={@dialog}
-        id="project-dialog"
-        title={"#{if @dialog.kind == :share, do: "Share", else: "Hand over"} #{@dialog.project.name}"}
-        return_to={"project-menu-#{@dialog.project.id}"}
+    <Layouts.flash_group flash={@flash} />
+    <div class="ws-root pr-root">
+      <div
+        class="ws-scrim"
+        aria-hidden="true"
+        phx-click={JS.remove_class("show-drawer", to: ".ws-root")}
       >
-        <.form
-          :if={@dialog.kind == :share}
-          for={@dialog.form}
-          id="share-form"
-          phx-change="share"
-          class="flex flex-col gap-3"
-        >
-          <.input
-            field={@dialog.form[:team_id]}
-            type="select"
-            label="Who can see this project"
-            options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
-          />
-          <p :if={@teams == []} class="hint m-0">
-            To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
-          </p>
-          <div class="flex justify-end">
-            <button type="button" class="btn btn-ghost" phx-click="close_dialog">Close</button>
-          </div>
-        </.form>
-        <.form
-          :if={@dialog.kind == :hand_over}
-          for={%{}}
-          as={:hand_over}
-          id="hand-over-form"
-          phx-submit="hand_over"
-          data-confirm="Hand this project over? It will run on their AI login, and only they can share it or hand it on."
-          class="flex flex-col gap-3"
-        >
-          <.input
-            :if={@dialog.teammates != []}
-            name="hand_over[user_id]"
-            value=""
-            type="select"
-            label="Hand it over to"
-            options={Enum.map(@dialog.teammates, &{&1.email, &1.id})}
-          />
-          <p :if={@dialog.teammates == []} class="hint m-0">
-            No one else is in {@dialog.project.team.name} yet.
-          </p>
-          <div class="flex gap-2 justify-end">
-            <.button :if={@dialog.teammates != []} class="btn btn-secondary">Hand over</.button>
-            <button type="button" class="btn btn-ghost" phx-click="close_dialog">Cancel</button>
-          </div>
-        </.form>
-      </.modal>
-
-      <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
-        <span class="st warn"><span class="dot"></span>No AI login</span>
-        <span class="text-[var(--text-2)]">Connect an AI provider so Peon can work.</span>
-        <.link navigate={~p"/ai"} class="btn btn-secondary btn-sm ml-auto">Connect</.link>
       </div>
-
-      <p :if={@projects == []} class="m-0 text-[15px] text-[var(--text-2)]">
-        Name your first project. It starts in a few seconds; then open its workspace and describe what to build.
-      </p>
-
-      <div :if={@projects != []} class="proj head" aria-hidden="true">
-        <span></span><span>Project</span><span class="c3">Current change</span><span>Status</span><span class="c5">Where</span><span class="c6">Chats</span><span></span>
-      </div>
-      <ul :if={@projects != []} id="projects" aria-label="Projects" class="projs">
-        <li :for={p <- @projects} id={"project-#{p.id}"} class="proj">
-          <% c = @cards[p.id] %>
-          <% owner? = Projects.owner?(@current_scope, p) %>
-          <canvas
-            id={"peon-mini-#{p.id}"}
-            class="mini"
-            phx-hook=".PeonMini"
-            phx-update="ignore"
-            data-job={c.job}
-            width="144"
-            height="34"
-            aria-hidden="true"
-          ></canvas>
-          <div class="flex flex-col min-w-0">
-            <.link
-              navigate={~p"/projects/#{p.id}"}
-              data-kb="item"
-              class="nm"
-              aria-label={"#{p.name}, #{c.label}, #{c.sub}"}
-            >
-              {p.name}
-            </.link>
-            <span class="sub">{meta(p, owner?)}</span>
-          </div>
-          <div class={["chg c3", !c.latest && "none"]}>
-            <%= cond do %>
-              <% c.latest -> %>
-                <b>#{c.latest.id}</b>{c.latest.intent}
-              <% Project.repo?(p) -> %>
-                {if c.prs == 0, do: "No pull requests yet", else: count(c.prs, "pull request")}
-              <% true -> %>
-                Nothing built yet
-            <% end %>
-          </div>
-          <div class="flex flex-col min-w-0">
-            <span class={["state", c.st]}>{c.label}</span>
-            <span class="sub">{c.sub}</span>
-          </div>
-          <span class="sub c5">{c.where}</span>
-          <span class="ch c6">{count(c.chats, "chat")}</span>
-          <div class="menuw c7" phx-click-away={@menu == p.id && "close_menu"}>
-            <button
-              id={"project-menu-#{p.id}"}
-              type="button"
-              class="icon-btn sm"
-              aria-label={"More for #{p.name}"}
-              aria-haspopup="menu"
-              aria-expanded={to_string(@menu == p.id)}
-              phx-click="menu"
-              phx-value-id={p.id}
-            >
-              <.icon name="hero-ellipsis-horizontal" class="size-5" />
-            </button>
-            <div
-              :if={@menu == p.id}
-              id={"project-menu-items-#{p.id}"}
-              class="menu"
-              role="menu"
-              aria-label={p.name}
-              phx-window-keydown="close_menu"
-              phx-key="Escape"
-            >
-              <button type="button" role="menuitem" phx-click="restart" phx-value-id={p.id}>
-                Restart <.icon name="hero-arrow-path" class="size-4 text-[var(--text-3)]" />
-              </button>
-              <button
-                :if={owner?}
-                type="button"
-                role="menuitem"
-                phx-click="dialog"
-                phx-value-dialog="share"
-                phx-value-id={p.id}
-              >
-                Share <span class="k">{if p.team, do: p.team.name, else: "Only me"}</span>
-              </button>
-              <button
-                :if={owner? && p.team}
-                type="button"
-                role="menuitem"
-                phx-click="dialog"
-                phx-value-dialog="hand_over"
-                phx-value-id={p.id}
-              >
-                Hand over
-              </button>
-              <div :if={owner? && Project.live_only?(p)} class="msep" role="separator"></div>
-              <button
-                :if={owner? && Project.live_only?(p)}
-                id={"add-envs-#{p.id}"}
-                type="button"
-                role="menuitem"
-                phx-click="add_envs"
-                phx-value-id={p.id}
-                data-confirm={"Add staging and prod to #{p.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
-              >
-                Add staging and prod
-              </button>
-              <div :if={owner?} class="msep" role="separator"></div>
-              <button
-                :if={owner?}
-                id={"delete-project-#{p.id}"}
-                type="button"
-                role="menuitem"
-                class="danger"
-                phx-click="delete_project"
-                phx-value-id={p.id}
-                data-confirm={"Delete #{p.name} for good? Its chats, code history, environments and secrets go with it."}
-              >
-                Delete project
-              </button>
+      <nav id="drawer" class="drawer switching" aria-label="Chats and projects" data-kb-zoom-hide>
+        <div class="dswitch">
+          <.place_switch
+            rail={@rail}
+            chats?={false}
+            new_project={JS.remove_class("show-drawer", to: ".ws-root") |> JS.push("new_project")}
+          />
+          <.account_menu user={@current_scope.user} />
+        </div>
+      </nav>
+      <.rail new_chat={JS.navigate(~p"/chats")} />
+      <main class="pr-main">
+        <header class="pr-bar">
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label="Chats and projects"
+            phx-click={JS.add_class("show-drawer", to: ".ws-root")}
+          >
+            <.icon name="hero-bars-2" class="size-5" />
+          </button>
+          <button type="button" class="icon-btn" aria-label="New project" phx-click="new_project">
+            <.icon name="hero-plus" class="size-5" />
+          </button>
+        </header>
+        <div class="pr-in">
+          <div class="pr-head">
+            <div class="min-w-0 flex-1">
+              <h1>Projects</h1>
+              <p :if={@projects != []}>{summary(@projects, @cards)}</p>
             </div>
+            <button
+              id="new-project"
+              type="button"
+              phx-click="new_project"
+              data-kb-key="c"
+              data-kb-label="New project"
+              data-kb-group="Project"
+              class="chip fill pr-new"
+            >
+              <.icon name="hero-plus" class="size-4" /><span>New project</span>
+            </button>
           </div>
-          <span class={["hp", c.st]} aria-hidden="true"><i></i></span>
-        </li>
-      </ul>
-      <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonMini">
-        export default {
-          mounted() { this.stop = peonMini(this.el) },
-          destroyed() { this.stop() }
-        }
 
-        // One peon and one prop, in pixels, per the UI kit's board 3c. The job
-        // comes in as data-job, which LiveView keeps updating on this ignored
-        // element: build hammers a hut that grows, wave holds up an amber flag
-        // (waiting on you), need a red flag and "!", nap sits with z's.
-        function peonMini(canvas) {
-          const W = 72, H = 17, S = 2, GY = 16;
-          canvas.width = W * S;
-          canvas.height = H * S;
-          const ctx = canvas.getContext("2d");
-          ctx.imageSmoothingEnabled = false;
-          const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-          let col = {};
-          const readCols = () => {
-            const cs = getComputedStyle(canvas);
-            const v = (n) => cs.getPropertyValue(n).trim();
-            col = { rock: v("--border-strong"), rock2: v("--text-3"), warn: v("--warn"), err: v("--err") };
-          };
-          readCols();
-          const G = "#8FBF5A", GD = "#6E9B3D", EYE = "#1C2412", TUSK = "#F7F4EA", BARK = "#7A4E2D",
-            BARK2 = "#9A6A40", MUD = "#A07850", STEEL = "#C9CED6", SPARK = "#FFF4CC", DOOR = "#1C1612";
-          const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
-          let frame = Math.floor(Math.random() * 200), raf = 0;
-          const peon = (x, lift, dir, sit) => {
-            const sx = Math.round(x - 4), sy = GY - 9 - lift + (sit ? 1 : 0);
-            px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
-            const f = dir > 0 ? 1 : 0, a = sx + 1 + f, b = sx + 5 + f;
-            if (sit) { px(a, sy + 3, 2, 1, EYE); px(b - 1, sy + 3, 2, 1, EYE) } else { px(a, sy + 2, 1, 1, EYE); px(b, sy + 2, 1, 1, EYE) }
-            px(a, sy + 5, 1, 2, TUSK); px(b, sy + 5, 1, 2, TUSK);
-            if (!sit) { px(sx + 2, sy + 8, 1, 1, EYE); px(sx + 5, sy + 8, 1, 1, EYE) }
-            return { sx, sy };
-          };
-          const draw = () => {
-            const job = canvas.dataset.job;
-            ctx.setTransform(S, 0, 0, S, 0, 0);
-            ctx.clearRect(0, 0, W, H);
-            px(0, GY, W, 1, col.rock);
-            if (job === "build") {
-              const stage = 1 + Math.floor(frame / 180) % 4, x0 = 34;
-              px(x0, GY - 2, 26, 2, col.rock);
-              if (stage >= 2) px(x0 + 2, GY - 6, 22, 4, MUD);
-              if (stage >= 3) px(x0 + 2, GY - 10, 22, 4, MUD);
-              if (stage >= 4) for (let i = 0; i < 6; i++) { px(x0 + 1 + i * 2, GY - 11 - i, 2, 1, BARK); px(x0 + 23 - i * 2, GY - 11 - i, 2, 1, BARK) }
-              px(x0 - 2, GY - 12, 1, 12, BARK); px(x0 - 2, GY - 9, 4, 1, BARK2);
-              const { sx, sy } = peon(24, 0, 1);
-              if (frame % 16 < 8) { px(sx + 8, sy + 1, 1, 3, BARK); px(sx + 7, sy, 3, 1, STEEL) }
-              else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 2, 1, 3, STEEL); if (frame % 16 < 11) px(sx + 12, sy + 1, 1, 1, SPARK) }
-            } else if (job === "wave" || job === "need") {
-              const c = job === "need" ? col.err : col.warn;
-              const { sx, sy } = peon(30, job === "need" && frame % 40 < 6 ? 1 : 0, 1);
-              px(sx + 8, sy - 6, 1, 11, BARK);
-              const w = (frame >> 4) % 2;
-              px(sx + 9, sy - 6, 5, 3, c); px(sx + 14, sy - 5 + w, 1, 2, c);
-              if (job === "need") { px(sx + 3, sy - 7, 2, 4, c); px(sx + 3, sy - 2, 2, 1, c) }
-              px(48, GY - 8, 14, 8, MUD); px(53, GY - 5, 4, 5, DOOR);
-            } else {
-              px(46, GY - 8, 14, 8, MUD); px(51, GY - 5, 4, 5, DOOR);
-              const { sx, sy } = peon(30, 0, 1, true);
-              const t = frame % 150;
-              if (t < 70) { const zx = sx + 8 + Math.floor(t / 24), zy = sy - 1 - Math.floor(t / 14); px(zx, zy, 3, 1, col.rock2); px(zx + 1, zy + 1, 1, 1, col.rock2); px(zx, zy + 2, 3, 1, col.rock2) }
-            }
-          };
-          const tick = () => {
-            frame += 1;
-            if (frame % 120 === 0) readCols();
-            draw();
-            raf = requestAnimationFrame(tick);
-          };
-          if (reduce) draw(); else raf = requestAnimationFrame(tick);
-          return () => cancelAnimationFrame(raf);
-        }
-      </script>
-    </Layouts.app>
+          <.modal :if={@creating} id="new-project-dialog" title="New project" return_to="new-project">
+            <.form
+              for={@form}
+              id="project_form"
+              phx-change="validate"
+              phx-submit="create"
+              class="flex flex-col gap-3"
+            >
+              <div class="min-w-0">
+                <.input
+                  field={@form[:name]}
+                  label="Name"
+                  class="field"
+                  placeholder="Sauna booking"
+                  autocomplete="off"
+                  phx-mounted={JS.focus()}
+                  hint={"slug: #{@slug || "…"}"}
+                />
+              </div>
+              <div class="min-w-0">
+                <.input
+                  field={@form[:repo_url]}
+                  label="From a git repo (optional)"
+                  class="field"
+                  placeholder="https://github.com/you/app.git"
+                  autocomplete="off"
+                  hint="needs .peon/preview.json for a preview"
+                />
+              </div>
+              <div :if={!blank?(@form[:repo_url].value)} class="min-w-0">
+                <.input
+                  field={@form[:github_token]}
+                  type="password"
+                  label="GitHub token (optional for public repos)"
+                  class="field"
+                  autocomplete="off"
+                  hint="fine-grained, for this repo: Contents and Pull requests, read and write"
+                />
+              </div>
+              <div :if={blank?(@form[:repo_url].value)} class="min-w-0">
+                <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
+              </div>
+              <div
+                :if={blank?(@form[:repo_url].value) and @form[:auth].value == "accounts"}
+                class="min-w-0"
+              >
+                <.input field={@form[:signups]} type="checkbox" label="Allow sign-ups" />
+                <p class="hint">Off: the first account is the admin and adds everyone else.</p>
+              </div>
+              <div
+                :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
+                class="flex flex-col gap-3"
+              >
+                <div class="min-w-0">
+                  <.input
+                    field={@form[:basic_username]}
+                    label="Username"
+                    class="field"
+                    autocomplete="off"
+                  />
+                </div>
+                <div class="min-w-0">
+                  <.input
+                    field={@form[:basic_password]}
+                    type="password"
+                    label="Password"
+                    class="field"
+                    autocomplete="new-password"
+                    hint="at least 8 characters; kept as the app's secrets, not in Burrow"
+                  />
+                </div>
+              </div>
+              <div :if={@teams != []} class="min-w-0">
+                <.input
+                  field={@form[:team_id]}
+                  type="select"
+                  label="Shared with"
+                  options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+                />
+              </div>
+              <div class="flex gap-2 justify-end">
+                <.button variant="primary" class="btn btn-primary" phx-disable-with="Creating…">
+                  Create
+                </.button>
+                <button
+                  type="button"
+                  phx-click="cancel_new"
+                  class="btn btn-ghost"
+                >
+                  Cancel
+                </button>
+              </div>
+            </.form>
+          </.modal>
+
+          <.modal
+            :if={@dialog}
+            id="project-dialog"
+            title={"#{if @dialog.kind == :share, do: "Share", else: "Hand over"} #{@dialog.project.name}"}
+            return_to={"project-menu-#{@dialog.project.id}"}
+          >
+            <.form
+              :if={@dialog.kind == :share}
+              for={@dialog.form}
+              id="share-form"
+              phx-change="share"
+              class="flex flex-col gap-3"
+            >
+              <.input
+                field={@dialog.form[:team_id]}
+                type="select"
+                label="Who can see this project"
+                options={[{"Only me", ""} | Enum.map(@teams, &{&1.name, &1.id})]}
+              />
+              <p :if={@teams == []} class="hint m-0">
+                To share it, <.link navigate={~p"/teams"}>make a team</.link> first.
+              </p>
+              <div class="flex justify-end">
+                <button type="button" class="btn btn-ghost" phx-click="close_dialog">Close</button>
+              </div>
+            </.form>
+            <.form
+              :if={@dialog.kind == :hand_over}
+              for={%{}}
+              as={:hand_over}
+              id="hand-over-form"
+              phx-submit="hand_over"
+              data-confirm="Hand this project over? It will run on their AI login, and only they can share it or hand it on."
+              class="flex flex-col gap-3"
+            >
+              <.input
+                :if={@dialog.teammates != []}
+                name="hand_over[user_id]"
+                value=""
+                type="select"
+                label="Hand it over to"
+                options={Enum.map(@dialog.teammates, &{&1.email, &1.id})}
+              />
+              <p :if={@dialog.teammates == []} class="hint m-0">
+                No one else is in {@dialog.project.team.name} yet.
+              </p>
+              <div class="flex gap-2 justify-end">
+                <.button :if={@dialog.teammates != []} class="btn btn-secondary">Hand over</.button>
+                <button type="button" class="btn btn-ghost" phx-click="close_dialog">Cancel</button>
+              </div>
+            </.form>
+          </.modal>
+
+          <div :if={@ai_connected == false} id="ai-missing" class="notice warn">
+            <span class="st warn"><span class="dot"></span>No AI login</span>
+            <span class="text-[var(--text-2)]">Connect an AI provider so Peon can work.</span>
+            <.link navigate={~p"/ai"} class="btn btn-secondary btn-sm ml-auto">Connect</.link>
+          </div>
+
+          <p :if={@projects == []} class="m-0 text-[15px] text-[var(--text-2)]">
+            Name your first project. It starts in a few seconds; then open its workspace and describe what to build.
+          </p>
+
+          <div :if={@projects != []} class="phead" aria-hidden="true">
+            <span></span><span>Project</span><span class="hide-s">Current change</span><span class="hide-s">Status</span><span class="hide-s">Chats</span><span></span>
+          </div>
+          <ul :if={@projects != []} id="projects" aria-label="Projects" class="projs">
+            <li :for={p <- @projects} id={"project-#{p.id}"} class="drow">
+              <% c = @cards[p.id] %>
+              <% owner? = Projects.owner?(@current_scope, p) %>
+              <canvas
+                id={"peon-mini-#{p.id}"}
+                class="mini"
+                phx-hook=".PeonMini"
+                phx-update="ignore"
+                data-job={c.job}
+                width="144"
+                height="34"
+                aria-hidden="true"
+              ></canvas>
+              <div class="min-w-0 flex flex-col gap-0.5">
+                <.link
+                  navigate={~p"/projects/#{p.id}"}
+                  data-kb="item"
+                  class="nm"
+                  aria-label={"#{p.name}, #{c.label}, #{c.sub}"}
+                >
+                  {p.name}
+                </.link>
+                <span class={["state ps", c.st]}><span class="dot"></span>{c.label}</span>
+                <span class="pline">
+                  <span :if={c.st == "working"} class="lbl working"><span class="dot"></span>{c.sub}</span><span
+                    :if={c.st == "working"}
+                    aria-hidden="true"
+                  >·</span><span class="sub mono">{meta(p, owner?)}</span>
+                </span>
+              </div>
+              <div class="hide-s min-w-0 flex flex-col gap-0.5">
+                <span class={["chg", !c.latest && "none"]}>
+                  <%= cond do %>
+                    <% c.latest -> %>
+                      <b>#{c.latest.id}</b>{c.latest.intent}
+                    <% Project.repo?(p) -> %>
+                      {if c.prs == 0, do: "No pull requests yet", else: count(c.prs, "pull request")}
+                    <% true -> %>
+                      Nothing built yet
+                  <% end %>
+                </span>
+                <span class="sub mono c5">{c.where}</span>
+              </div>
+              <div class="hide-s min-w-0 flex flex-col gap-0.5">
+                <span class={["state", c.st]}><span class="dot"></span>{c.label}</span>
+                <span class="sub mono">{c.sub}</span>
+              </div>
+              <span class="hide-s ch c6">{count(c.chats, "chat")}</span>
+              <div class="menuw" phx-click-away={@menu == p.id && "close_menu"}>
+                <button
+                  id={"project-menu-#{p.id}"}
+                  type="button"
+                  class="icon-btn"
+                  aria-label={"More for #{p.name}"}
+                  aria-haspopup="menu"
+                  aria-expanded={to_string(@menu == p.id)}
+                  phx-click="menu"
+                  phx-value-id={p.id}
+                >
+                  <.icon name="hero-ellipsis-horizontal" class="size-5" />
+                </button>
+                <div
+                  :if={@menu == p.id}
+                  id={"project-menu-items-#{p.id}"}
+                  class="menu"
+                  role="menu"
+                  aria-label={p.name}
+                  phx-window-keydown="close_menu"
+                  phx-key="Escape"
+                >
+                  <button type="button" role="menuitem" phx-click="restart" phx-value-id={p.id}>
+                    Restart <.icon name="hero-arrow-path" class="size-4 text-[var(--text-3)]" />
+                  </button>
+                  <button
+                    :if={owner?}
+                    type="button"
+                    role="menuitem"
+                    phx-click="dialog"
+                    phx-value-dialog="share"
+                    phx-value-id={p.id}
+                  >
+                    Share <span class="k">{if p.team, do: p.team.name, else: "Only me"}</span>
+                  </button>
+                  <button
+                    :if={owner? && p.team}
+                    type="button"
+                    role="menuitem"
+                    phx-click="dialog"
+                    phx-value-dialog="hand_over"
+                    phx-value-id={p.id}
+                  >
+                    Hand over
+                  </button>
+                  <div :if={owner? && Project.live_only?(p)} class="msep" role="separator"></div>
+                  <button
+                    :if={owner? && Project.live_only?(p)}
+                    id={"add-envs-#{p.id}"}
+                    type="button"
+                    role="menuitem"
+                    phx-click="add_envs"
+                    phx-value-id={p.id}
+                    data-confirm={"Add staging and prod to #{p.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
+                  >
+                    Add staging and prod
+                  </button>
+                  <div :if={owner?} class="msep" role="separator"></div>
+                  <button
+                    :if={owner?}
+                    id={"delete-project-#{p.id}"}
+                    type="button"
+                    role="menuitem"
+                    class="danger"
+                    phx-click="delete_project"
+                    phx-value-id={p.id}
+                    data-confirm={"Delete #{p.name} for good? Its chats, code history, environments and secrets go with it."}
+                  >
+                    Delete project
+                  </button>
+                </div>
+              </div>
+            </li>
+          </ul>
+
+          <div class="h pr-sec">No project</div>
+          <.link navigate={~p"/chats"} class="pchat">
+            <span class="pav"><span class="av"><.icon
+              name="hero-chat-bubble-bottom-center"
+              class="size-[18px]"
+            /></span></span>
+            <span class="pn"><span class="nm">Chats</span><span class="mm">Ask, search, think · no project</span></span>
+            <.icon name="hero-chevron-right" class="size-4 muted" />
+          </.link>
+        </div>
+      </main>
+    </div>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonMini">
+      export default {
+        mounted() { this.stop = peonMini(this.el) },
+        destroyed() { this.stop() }
+      }
+
+      // One peon and one prop, in pixels, per the UI kit's board 3c. The job
+      // comes in as data-job, which LiveView keeps updating on this ignored
+      // element: build hammers a hut that grows, wave holds up an amber flag
+      // (waiting on you), need a red flag and "!", nap sits with z's.
+      function peonMini(canvas) {
+        const W = 72, H = 17, S = 2, GY = 16;
+        canvas.width = W * S;
+        canvas.height = H * S;
+        const ctx = canvas.getContext("2d");
+        ctx.imageSmoothingEnabled = false;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        let col = {};
+        const readCols = () => {
+          const cs = getComputedStyle(canvas);
+          const v = (n) => cs.getPropertyValue(n).trim();
+          col = { rock: v("--border-strong"), rock2: v("--text-3"), warn: v("--warn"), err: v("--err") };
+        };
+        readCols();
+        const G = "#8FBF5A", GD = "#6E9B3D", EYE = "#1C2412", TUSK = "#F7F4EA", BARK = "#7A4E2D",
+          BARK2 = "#9A6A40", MUD = "#A07850", STEEL = "#C9CED6", SPARK = "#FFF4CC", DOOR = "#1C1612";
+        const px = (x, y, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x), Math.round(y), w, h) };
+        let frame = Math.floor(Math.random() * 200), raf = 0;
+        const peon = (x, lift, dir, sit) => {
+          const sx = Math.round(x - 4), sy = GY - 9 - lift + (sit ? 1 : 0);
+          px(sx + 1, sy, 6, 1, G); px(sx, sy + 1, 8, 6, G); px(sx + 1, sy + 7, 6, 1, G); px(sx, sy + 6, 8, 1, GD);
+          const f = dir > 0 ? 1 : 0, a = sx + 1 + f, b = sx + 5 + f;
+          if (sit) { px(a, sy + 3, 2, 1, EYE); px(b - 1, sy + 3, 2, 1, EYE) } else { px(a, sy + 2, 1, 1, EYE); px(b, sy + 2, 1, 1, EYE) }
+          px(a, sy + 5, 1, 2, TUSK); px(b, sy + 5, 1, 2, TUSK);
+          if (!sit) { px(sx + 2, sy + 8, 1, 1, EYE); px(sx + 5, sy + 8, 1, 1, EYE) }
+          return { sx, sy };
+        };
+        const draw = () => {
+          const job = canvas.dataset.job;
+          ctx.setTransform(S, 0, 0, S, 0, 0);
+          ctx.clearRect(0, 0, W, H);
+          px(0, GY, W, 1, col.rock);
+          if (job === "build") {
+            const stage = 1 + Math.floor(frame / 180) % 4, x0 = 34;
+            px(x0, GY - 2, 26, 2, col.rock);
+            if (stage >= 2) px(x0 + 2, GY - 6, 22, 4, MUD);
+            if (stage >= 3) px(x0 + 2, GY - 10, 22, 4, MUD);
+            if (stage >= 4) for (let i = 0; i < 6; i++) { px(x0 + 1 + i * 2, GY - 11 - i, 2, 1, BARK); px(x0 + 23 - i * 2, GY - 11 - i, 2, 1, BARK) }
+            px(x0 - 2, GY - 12, 1, 12, BARK); px(x0 - 2, GY - 9, 4, 1, BARK2);
+            const { sx, sy } = peon(24, 0, 1);
+            if (frame % 16 < 8) { px(sx + 8, sy + 1, 1, 3, BARK); px(sx + 7, sy, 3, 1, STEEL) }
+            else { px(sx + 8, sy + 3, 3, 1, BARK); px(sx + 10, sy + 2, 1, 3, STEEL); if (frame % 16 < 11) px(sx + 12, sy + 1, 1, 1, SPARK) }
+          } else if (job === "wave" || job === "need") {
+            const c = job === "need" ? col.err : col.warn;
+            const { sx, sy } = peon(30, job === "need" && frame % 40 < 6 ? 1 : 0, 1);
+            px(sx + 8, sy - 6, 1, 11, BARK);
+            const w = (frame >> 4) % 2;
+            px(sx + 9, sy - 6, 5, 3, c); px(sx + 14, sy - 5 + w, 1, 2, c);
+            if (job === "need") { px(sx + 3, sy - 7, 2, 4, c); px(sx + 3, sy - 2, 2, 1, c) }
+            px(48, GY - 8, 14, 8, MUD); px(53, GY - 5, 4, 5, DOOR);
+          } else {
+            px(46, GY - 8, 14, 8, MUD); px(51, GY - 5, 4, 5, DOOR);
+            const { sx, sy } = peon(30, 0, 1, true);
+            const t = frame % 150;
+            if (t < 70) { const zx = sx + 8 + Math.floor(t / 24), zy = sy - 1 - Math.floor(t / 14); px(zx, zy, 3, 1, col.rock2); px(zx + 1, zy + 1, 1, 1, col.rock2); px(zx, zy + 2, 3, 1, col.rock2) }
+          }
+        };
+        const tick = () => {
+          frame += 1;
+          if (frame % 120 === 0) readCols();
+          draw();
+          raf = requestAnimationFrame(tick);
+        };
+        if (reduce) draw(); else raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+      }
+    </script>
     """
+  end
+
+  # "2 projects · both waiting on you"
+  defp summary(projects, cards) do
+    n = length(projects)
+    waiting = Enum.count(cards, fn {_id, c} -> c.st in ~w(waiting need) end)
+    working = Enum.count(cards, fn {_id, c} -> c.st == "working" end)
+
+    rest =
+      cond do
+        n == 2 and waiting == 2 -> "both waiting on you"
+        n > 2 and waiting == n -> "all waiting on you"
+        waiting > 0 -> "#{waiting} waiting on you"
+        working > 0 -> "#{working} working"
+        true -> "all quiet"
+      end
+
+    "#{count(n, "project")} · #{rest}"
   end
 
   defp blank?(value), do: value in [nil, ""] or String.trim(to_string(value)) == ""

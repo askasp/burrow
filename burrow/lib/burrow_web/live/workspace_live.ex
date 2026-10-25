@@ -52,7 +52,6 @@ defmodule BurrowWeb.WorkspaceLive do
         base: ~p"/projects/#{project.id}",
         user: scope.user.email,
         theme: scope.user.theme,
-        chats_collapsed: scope.user.chats_collapsed,
         folded_days: scope.user.folded_days
       )
 
@@ -120,8 +119,8 @@ defmodule BurrowWeb.WorkspaceLive do
     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
     |> assign(env_names: Env.names(project), live_only?: not Ship.staging?(project))
     |> assign(secrets: Secrets.list(project.id), secrets_key: 0)
-    # Phones: one pane at a time
-    |> assign(pane: "chat")
+    # Phones: one pane at a time; wide screens can put the preview away
+    |> assign(pane: "chat", preview_open: true)
     |> assign(envs: Map.new(Env.names(project), &{&1, Env.info(project, &1)}))
     |> load_tabs()
     |> load_ship()
@@ -252,6 +251,14 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("cancel_image", %{"ref" => ref}, socket),
     do: {:noreply, cancel_upload(socket, :images, ref)}
 
+  # The queue's own box: a task for after the current one.
+  def handle_event("add_ticket", %{"text" => text}, socket) do
+    %{project: project, chat: chat} = socket.assigns
+
+    with text when text != "" <- String.trim(text), do: Chat.add_ticket(project, chat.id, text)
+    {:noreply, socket}
+  end
+
   def handle_event("work_queue", _params, socket),
     do: {:noreply, say(socket, "Work through your tk queue.", [])}
 
@@ -273,6 +280,24 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_event("typing", params, socket),
     do: {:noreply, slash_menu(socket, params["text"] || "")}
+
+  # Plan, Build or Design, from the next message. Design shows the boards;
+  # leaving it starts the preview.
+  def handle_event("pick_agent", %{"agent" => agent}, socket) do
+    %{chat: chat, project: project} = socket.assigns
+
+    if agent in Chats.agents(project) do
+      Chats.pick_agent(chat, agent)
+      Chat.agent_picked(chat.id)
+      socket = assign(socket, chat: Chats.get(chat.id))
+
+      if agent == "design",
+        do: {:noreply, socket |> assign(view: "design", overview: false) |> load_boards()},
+        else: {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
 
   # Each box sends only itself: the model, or the thinking level. A level
   # the (newly picked) model lacks goes back to its default.
@@ -327,25 +352,12 @@ defmodule BurrowWeb.WorkspaceLive do
       else: {:noreply, socket}
   end
 
-  def handle_event("toggle_drawer", _params, socket) do
-    collapsed? = !socket.assigns.chats_collapsed
-    Accounts.put_chats_collapsed(socket.assigns.current_scope.user, collapsed?)
-    {:noreply, assign(socket, chats_collapsed: collapsed?)}
-  end
-
   # A day group in the drawer folds to the chats still open, or unfolds.
   def handle_event("fold_day", %{"day" => day}, socket) do
     folded = socket.assigns.folded_days
     folded = if day in folded, do: List.delete(folded, day), else: [day | folded]
     Accounts.put_folded_days(socket.assigns.current_scope.user, folded)
     {:noreply, assign(socket, folded_days: folded)}
-  end
-
-  # System, light, dark, round again; the user's, everywhere in Burrow.
-  def handle_event("theme", _params, socket) do
-    theme = %{"system" => "light", "light" => "dark"}[socket.assigns.theme] || "system"
-    Accounts.put_theme(socket.assigns.current_scope.user, theme)
-    {:noreply, assign(socket, theme: theme)}
   end
 
   def handle_event("keep_running", %{"hours" => hours}, socket) do
@@ -626,6 +638,9 @@ defmodule BurrowWeb.WorkspaceLive do
 
   def handle_event("pane", %{"pane" => pane}, socket) when pane in ["chat", "preview"],
     do: {:noreply, assign(socket, pane: pane)}
+
+  def handle_event("toggle_preview", _params, socket),
+    do: {:noreply, update(socket, :preview_open, &(!&1))}
 
   def handle_event("view", %{"view" => "design"}, socket),
     do: {:noreply, socket |> assign(view: "design", overview: false) |> load_boards()}
@@ -1195,12 +1210,23 @@ defmodule BurrowWeb.WorkspaceLive do
         follows: assigns.chat && assigns.chat.started_at == nil && assigns.followed,
         from: assigns.chat && assigns.chat.started_at == nil && assigns[:from],
         goal: goal(assigns),
-        done?: assigns.tab != nil and Activity.done?(assigns.tab, assigns.live_only?)
+        done?: assigns.tab != nil and Activity.done?(assigns.tab, assigns.live_only?),
+        busy?: assigns.info != nil and assigns.info.busy?,
+        blocks: blocks((assigns.info && assigns.info.messages) || [])
+      )
+
+    assigns =
+      assign(assigns,
+        queue?: assigns.chat != nil and assigns.tickets != [] and not assigns.done?,
+        cards?:
+          match?(%{status: "failed"}, assigns.main_check) or assigns.board_card != nil or
+            (assigns.chat != nil and asked(assigns.secrets, assigns.chat.id) != []) or
+            (assigns.draft != nil and not Design.only?(assigns.draft.files))
       )
 
     ~H"""
     <Layouts.flash_group flash={@flash} />
-    <div class="ws-root" data-pane={@pane}>
+    <div class="ws-root" data-pane={@pane} data-preview={if @preview_open, do: "open", else: "closed"}>
       <div
         class="ws-scrim"
         aria-hidden="true"
@@ -1214,39 +1240,37 @@ defmodule BurrowWeb.WorkspaceLive do
         chat={@chat}
         project={@project}
         base={@base}
-        collapsed={@chats_collapsed}
         folded={@folded_days}
-        theme={@theme}
+        user={@current_scope.user}
         nothing_built?={@nothing_built?}
         repo?={@repo?}
         live_only?={@live_only?}
       />
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
+      <.rail new_chat={JS.push("new_chat")} />
 
       <div class="ws-main">
-        <.chat_bar
-          title={if @tab, do: chat_title(@tab, @project, @nothing_built?), else: ""}
-          number={@draft && @draft.change}
-          project={@project}
-          meta={meta(assigns)}
-          overview={@overview}
-          sharing={@sharing}
-          live_only?={@live_only?}
-          repo?={@repo?}
-          secrets={@secrets}
-          open_incidents={@open_incidents}
-          pane={@pane}
-          preview={@preview}
-          view={@view}
-          agent?={@info != nil}
-        />
-
         <div class="ws-split">
           <main
             class="ws-chat"
             aria-label={"#{@project && @project.name} chats"}
             data-kb-zoom-hide
           >
+            <.chat_bar
+              title={if @tab, do: chat_title(@tab, @project, @nothing_built?), else: ""}
+              project={@project}
+              ctx={ctx(assigns)}
+              status={chat_status(assigns)}
+              meta={meta(assigns)}
+              overview={@overview}
+              sharing={@sharing}
+              live_only?={@live_only?}
+              repo?={@repo?}
+              secrets={@secrets}
+              open_incidents={@open_incidents}
+              preview_open={@preview_open}
+              preview_tone={if @view == "design", do: "idle", else: st_tone(@preview.status)}
+            />
             <div class="ws-scroll" id="messages" phx-hook=".ScrollBottom">
               <div class="ws-thread">
                 <div :if={(@chat && @chat.started_at == nil) and @pending == nil} class="ws-hello">
@@ -1267,31 +1291,14 @@ defmodule BurrowWeb.WorkspaceLive do
                   <.icon name="hero-arrow-path" class="size-4 spin" /> Starting the agent and preview…
                 </div>
                 <div :if={@start_error} class="say-error">{@start_error}</div>
-                <%= for block <- blocks((@info && @info.messages) || []) do %>
-                  <.block block={block} images={@images_url} />
+                <%= for {block, i} <- Enum.with_index(@blocks) do %>
+                  <.block
+                    block={block}
+                    images={@images_url}
+                    live={@busy? and i == length(@blocks) - 1}
+                  />
                 <% end %>
                 <div :if={@pending} class="bubble-user opacity-60">{@pending}</div>
-                <.peon_at_work
-                  :if={@info && @info.busy?}
-                  job={job(@info.messages)}
-                  stage={stage(@info.messages)}
-                />
-                <div :if={@info && @info.busy?} class="ws-working" role="status">
-                  <span class="font-medium shrink-0">{peon_says(@info.messages)}</span>
-                  <span class="mono muted text-[12.5px] truncate">
-                    {if @info[:judging?], do: "Checking the goal…", else: doing(@info.messages)}
-                  </span>
-                  <button
-                    phx-click="interrupt"
-                    data-kb-key="x"
-                    data-kb-label="Stop the agent"
-                    data-kb-group="Agent & preview"
-                    data-kb-esc
-                    class="btn btn-ghost btn-sm ml-auto"
-                  >
-                    Stop
-                  </button>
-                </div>
                 <div
                   :for={m <- (@info && @info[:inbox]) || []}
                   id={"inbox-#{m.id}"}
@@ -1329,7 +1336,7 @@ defmodule BurrowWeb.WorkspaceLive do
               </div>
             </div>
 
-            <div class="ws-bottom">
+            <div :if={@cards?} class="ws-cards">
               <div :if={@main_check && @main_check.status == "failed"} class="notice err">
                 <span>Main #{@main_check.change_id} did not pass in prod mode.</span>
               </div>
@@ -1348,11 +1355,9 @@ defmodule BurrowWeb.WorkspaceLive do
                 promote={@promote}
                 main_check={@main_check}
               />
-              <.queue_card
-                :if={@chat && @tickets != [] && !@done?}
-                tickets={@tickets}
-                busy?={@info != nil && @info.busy?}
-              />
+            </div>
+
+            <div id="box" class="ws-bottom ws-box" phx-hook=".Pops">
               <.chat_done
                 :if={@done?}
                 tab={@tab}
@@ -1360,6 +1365,39 @@ defmodule BurrowWeb.WorkspaceLive do
                 attach?={@info != nil}
               />
               <pre :if={@done? && @info && @show_attach} class="out mono">{@info.attach}</pre>
+              <div :if={(@busy? or @queue?) and !@done?} id="status-bar" class="ws-now">
+                <div :if={@busy?} class="ws-scene">
+                  <.peon_at_work job={job(@info.messages)} stage={stage(@info.messages)} />
+                </div>
+                <button
+                  id="queue-link"
+                  type="button"
+                  class="qlink"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  phx-click={
+                    JS.toggle(to: "#queue-pop", display: "flex")
+                    |> JS.toggle_attribute({"aria-expanded", "true", "false"})
+                  }
+                >
+                  <span :if={@busy?} class="now" role="status">
+                    {if @info[:judging?], do: "Checking the goal…", else: doing(@info.messages)}
+                  </span>
+                  <span class="sub">
+                    <span
+                      :if={@busy? && @info[:since]}
+                      id="elapsed"
+                      class="mono"
+                      phx-hook=".Elapsed"
+                      phx-update="ignore"
+                      data-since={@info.since}
+                    ></span><span :if={@busy? && @info[:since]} aria-hidden="true">·</span>
+                    <span>Queue · {queue_next(@tickets)}</span>
+                    <.icon name="hero-chevron-up" class="size-3.5" />
+                  </span>
+                </button>
+                <.queue_card tickets={@tickets} busy?={@busy?} />
+              </div>
               <.form
                 :if={!@done?}
                 for={@form}
@@ -1367,7 +1405,7 @@ defmodule BurrowWeb.WorkspaceLive do
                 phx-submit="send"
                 phx-change="typing"
                 phx-drop-target={@uploads.images.ref}
-                class="composer"
+                class={["composer", @chat && @chat.agent == "design" && "design"]}
               >
                 <span :if={@follows} class="ctx">
                   <span>↳ follows #{@follows.id} · {@follows.intent}</span>
@@ -1447,7 +1485,7 @@ defmodule BurrowWeb.WorkspaceLive do
                 <label class="sr-only" for="chat-input">Message Peon</label>
                 <textarea
                   name="text"
-                  rows="2"
+                  rows="1"
                   id="chat-input"
                   data-kb="search"
                   data-kb-label="Chat box"
@@ -1456,43 +1494,114 @@ defmodule BurrowWeb.WorkspaceLive do
                   placeholder={placeholder(@tab, @follows)}
                 >{@form[:text].value}</textarea>
                 <div class="cbar">
-                  <.model_pick
-                    :if={@chat && !closed?(@tab)}
-                    chat={@chat}
-                    models={@models}
-                    default={@default_model}
-                  />
+                  <div :if={@chat && !closed?(@tab)} class="menuw plusw">
+                    <button
+                      id="plus-btn"
+                      type="button"
+                      class="icon-btn plus"
+                      aria-label="Agent, model and attachments"
+                      aria-haspopup="dialog"
+                      aria-expanded="false"
+                      phx-click={toggle_plus()}
+                    >
+                      <.icon name="hero-plus" class="size-5" />
+                    </button>
+                    <div
+                      id="plus-pop"
+                      class="pop plus-pop"
+                      role="dialog"
+                      aria-label="Message options"
+                      style="display: none"
+                    >
+                      <button type="button" class="qscrim" aria-label="Close" phx-click={hide_plus()}></button>
+                      <div class="psheet" phx-click-away={hide_plus()}>
+                        <div class="h">Agent</div>
+                        <.agent_pick chat={@chat} agents={Chats.agents(@project)} />
+                        <p class="mhelp">{agent_help(@chat.agent)}</p>
+                        <div class="msep" role="separator"></div>
+                        <div class="h">Model</div>
+                        <div class="picks">
+                          <.model_pick chat={@chat} models={@models} default={@default_model} />
+                        </div>
+                        <div class="msep" role="separator"></div>
+                        <label class="mi" title="Or paste them into the box">
+                          <.icon name="hero-photo" class="size-[18px]" />
+                          <span class="flex-1">Attach a photo</span>
+                          <.live_file_input upload={@uploads.images} class="sr-only" />
+                        </label>
+                        <button
+                          :if={@info}
+                          id="opencode-btn"
+                          type="button"
+                          class="mi"
+                          phx-click={hide_plus() |> JS.push("toggle_attach")}
+                        >
+                          <.icon name="hero-arrow-top-right-on-square" class="size-4" />
+                          <span class="flex-1">Open in opencode</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                   <button
-                    :if={@info}
+                    :if={@chat && @chat.agent in ~w(plan design) && !closed?(@tab)}
+                    id="agent-chip"
                     type="button"
-                    phx-click="toggle_attach"
-                    data-kb="row"
-                    class="xlink"
+                    class="chip on"
+                    phx-click={toggle_plus()}
                   >
-                    Open in opencode
+                    <.icon
+                      name={if @chat.agent == "design", do: "hero-swatch", else: "hero-light-bulb"}
+                      class="size-3.5"
+                    />
+                    <span>{if @chat.agent == "design", do: "Design only", else: "Plan"}</span>
                   </button>
-                  <label
-                    :if={!closed?(@tab)}
-                    class="icon-btn sm ml-auto"
-                    title="Add images (or paste them)"
-                  >
-                    <span class="sr-only">Add images</span>
-                    <.icon name="hero-photo" class="size-4" />
-                    <.live_file_input upload={@uploads.images} class="sr-only" />
-                  </label>
                   <button
-                    id="queue-btn"
-                    name="to"
-                    value="queue"
-                    class="btn btn-ghost btn-sm"
-                    title="Put it in Peon's queue instead (Alt+Enter)"
-                    disabled={closed?(@tab)}
+                    :if={@chat && !closed?(@tab)}
+                    type="button"
+                    class="chip mchip"
+                    phx-click={toggle_plus()}
                   >
-                    Queue
+                    <span>{model_words(@chat, @default_model)}</span>
                   </button>
-                  <button class="icon-btn ws-send" aria-label="Send" disabled={closed?(@tab)}>
-                    <.icon name="hero-arrow-up" class="size-4" />
+                  <div class="flex-1"></div>
+                  <button
+                    :if={@busy?}
+                    id="stop-btn"
+                    type="button"
+                    class="go-stop"
+                    aria-label="Stop Peon"
+                    title="Stop Peon"
+                    phx-click="interrupt"
+                    data-kb-key="x"
+                    data-kb-label="Stop the agent"
+                    data-kb-group="Agent & preview"
+                    data-kb-esc
+                  >
+                    <.icon name="hero-stop-solid" class="size-4" />
                   </button>
+                  <div id="send" class={["sendw", @busy? && "with-stop"]} phx-hook=".SendHold">
+                    <button
+                      id="send-btn"
+                      class="icon-btn go-send"
+                      aria-label="Send"
+                      aria-haspopup="menu"
+                      title="Send (Enter). Hold it, or press Alt+Enter, to queue it instead."
+                      disabled={closed?(@tab)}
+                    >
+                      <.icon name="hero-arrow-up" class="size-4" />
+                    </button>
+                    <div id="send-menu" class="menu send-menu" role="menu" style="display: none">
+                      <button
+                        id="queue-btn"
+                        name="to"
+                        value="queue"
+                        role="menuitem"
+                        disabled={closed?(@tab)}
+                      >
+                        Queue it instead<span class="k">Alt+↵</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <pre :if={@info && @show_attach} class="out mono">{@info.attach}</pre>
               </.form>
@@ -1518,6 +1627,7 @@ defmodule BurrowWeb.WorkspaceLive do
               preview={@preview}
               view={@view}
               env_names={@env_names}
+              envs={@envs}
               live_only?={@live_only?}
               dev?={@dev?}
               number={@draft && @draft.change}
@@ -1528,6 +1638,7 @@ defmodule BurrowWeb.WorkspaceLive do
               logs={@logs}
               project={@project}
               design={@design}
+              now={@busy? && doing(@info.messages)}
             >
               <.design_pane
                 boards={@boards}
@@ -1560,6 +1671,79 @@ defmodule BurrowWeb.WorkspaceLive do
         mounted() { this.apply() },
         updated() { this.apply() },
         apply() { document.documentElement.dataset.theme = this.el.dataset.theme }
+      }
+    </script>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Elapsed">
+      // How long Peon has been on this turn: "0:42", "1 h 5 min".
+      export default {
+        mounted() { this.tick(); this.timer = setInterval(() => this.tick(), 1000) },
+        updated() { this.tick() },
+        destroyed() { clearInterval(this.timer) },
+        tick() {
+          const s = Math.max(0, Math.floor((Date.now() - Number(this.el.dataset.since)) / 1000))
+          this.el.textContent = s < 3600
+            ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+            : `${Math.floor(s / 3600)} h ${Math.floor(s / 60) % 60} min`
+        }
+      }
+    </script>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Pops">
+      // Esc closes the queue or the + menu first; only then is it Stop
+      // (data-kb-esc), so putting a menu away never stops Peon.
+      export default {
+        mounted() {
+          this.onKey = e => {
+            if (e.key !== "Escape") return
+            const open = [...this.el.querySelectorAll(".pop")].filter(p => p.offsetParent !== null || getComputedStyle(p).display !== "none")
+            if (!open.length) return
+            e.preventDefault()
+            e.stopPropagation()
+            open.forEach(p => this.js().hide(p))
+          }
+          window.addEventListener("keydown", this.onKey, true)
+        },
+        destroyed() { window.removeEventListener("keydown", this.onKey, true) }
+      }
+    </script>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".SendHold">
+      // The send button: a tap sends; holding it (or a right-click) opens
+      // "Queue it instead" rather than sending.
+      export default {
+        mounted() {
+          const button = this.el.querySelector("#send-btn")
+          const menu = this.el.querySelector("#send-menu")
+          let timer = null
+          let held = false
+          const open = () => {
+            held = true
+            this.js().show(menu, {display: "flex"})
+            menu.querySelector("button")?.focus()
+          }
+          const close = () => this.js().hide(menu)
+          const cancel = () => clearTimeout(timer)
+          button.addEventListener("pointerdown", e => {
+            if (button.disabled || e.button !== 0) return
+            held = false
+            timer = setTimeout(open, 450)
+          })
+          for (const type of ["pointerup", "pointerleave", "pointercancel"]) button.addEventListener(type, cancel)
+          button.addEventListener("click", e => {
+            if (held) e.preventDefault()
+            held = false
+          })
+          button.addEventListener("contextmenu", e => {
+            e.preventDefault()
+            cancel()
+            if (!button.disabled) open()
+          })
+          menu.addEventListener("click", () => setTimeout(close))
+          menu.addEventListener("keydown", e => {
+            if (e.key === "Escape") { close(); button.focus() }
+          })
+          this.away = e => { if (!this.el.contains(e.target)) close() }
+          document.addEventListener("pointerdown", this.away)
+        },
+        destroyed() { document.removeEventListener("pointerdown", this.away) }
       }
     </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".ScrollBottom">
@@ -1601,15 +1785,10 @@ defmodule BurrowWeb.WorkspaceLive do
             // With images the text goes once they are up, so the box keeps
             // it until the server empties it ("composer:put")
             const images = document.querySelector("#composer-images .shot")
-            if (e.key === "Enter" && e.altKey) {
-              e.preventDefault()
-              this.el.form.requestSubmit(document.getElementById("queue-btn"))
-              if (!images) this.el.value = ""
-              return
-            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              this.el.form.requestSubmit()
+              if (e.altKey) this.el.form.requestSubmit(document.getElementById("queue-btn"))
+              else this.el.form.requestSubmit()
               if (!images) this.el.value = ""
             }
           })
@@ -1620,6 +1799,28 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   # The open chat's goal: what its agent says while it runs, else its row's.
+  # The box's + menu: the agent, the model, a photo, opencode.
+  defp toggle_plus,
+    do:
+      JS.toggle(to: "#plus-pop", display: "flex")
+      |> JS.toggle_attribute({"aria-expanded", "true", "false"}, to: "#plus-btn")
+
+  defp hide_plus,
+    do: JS.hide(to: "#plus-pop") |> JS.set_attribute({"aria-expanded", "false"}, to: "#plus-btn")
+
+  defp agent_help("plan"), do: "Peon reads and plans. It won't change any files."
+
+  defp agent_help("design"),
+    do: "Peon draws boards in design/ and won't touch the code until you say “Build this”."
+
+  defp agent_help(_build), do: "Peon changes the code, runs the checks and hands in the change."
+
+  # "beam-free · default": the chat's model, without its provider, and thinking level.
+  defp model_words(chat, default) do
+    model = (chat.model || default || "") |> String.split("/", parts: 2) |> List.last()
+    "#{model} · #{chat.effort || "default"}"
+  end
+
   defp goal(%{info: %{goal: goal}}), do: goal
   defp goal(%{chat: %{goal: goal}}), do: goal
   defp goal(_assigns), do: nil
@@ -1710,6 +1911,28 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
+  # The line under the chat's title: "watchtower", a repo project's repo,
+  # and whom it is shared with.
+  defp ctx(%{project: nil}), do: []
+
+  defp ctx(%{project: project, sharing: sharing, repo?: repo?}) do
+    repo = if repo?, do: [repo_name(project)], else: []
+    shared = if sharing && sharing.team, do: ["shared with #{sharing.team.name}"], else: []
+    [project.slug] ++ repo ++ shared
+  end
+
+  # Where the open chat's change stands (Components.row_status/2), its number with it.
+  defp chat_status(%{tab: nil}), do: nil
+
+  defp chat_status(%{tab: tab, live_only?: live_only?}) do
+    {text, tone} = row_status(tab, live_only?)
+
+    case tab.draft do
+      %{change: id} when id != nil -> {"##{id} #{String.downcase(text)}", tone}
+      _ -> {text, tone}
+    end
+  end
+
   # "watchtower · live #8 · no staging · shared with Ops"
   defp meta(%{project: nil}), do: ""
 
@@ -1749,7 +1972,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp placeholder(_tab, %{}), do: "What should change next?"
   defp placeholder(%{phase: "new"}, _follows), do: "Describe the change"
-  defp placeholder(_tab, _follows), do: "Message Peon (/ for commands)"
+  defp placeholder(_tab, _follows), do: "Message Peon · / for commands"
 
   # The line under the thread once the chat's change is on main.
   defp event_line(%{phase: "landing", draft: %{change: id}}, _live_only?),
@@ -1844,26 +2067,9 @@ defmodule BurrowWeb.WorkspaceLive do
         {Enum.map(users, &{:user, &1}), not String.starts_with?(List.last(users).text, "[Peon]")}
 
       agent, ack? ->
-        {[{:peon, drop_preambles(agent), ack?}], false}
+        {[{:peon, turn_items(agent), ack?}], false}
     end)
     |> elem(0)
-  end
-
-  # The agent's text before more tool calls is a preamble or progress note; the
-  # user only reads its answer, the last text of the turn. Tool lines stay, and
-  # Peon's notes, after which it kept going: the turn before keeps its answer.
-  defp drop_preambles(messages) do
-    {kept, _tool_after?} =
-      messages
-      |> Enum.reverse()
-      |> Enum.reduce({[], false}, fn
-        %{role: :note} = m, {kept, _} -> {[m | kept], false}
-        %{role: :assistant}, {kept, true} -> {kept, true}
-        %{role: :tool} = m, {kept, _} -> {[m | kept], true}
-        m, {kept, tool_after?} -> {[m | kept], tool_after?}
-      end)
-
-    kept
   end
 
   # The tool calls of the turn so far, latest first.
@@ -1909,11 +2115,6 @@ defmodule BurrowWeb.WorkspaceLive do
   defp tool_job({"todowrite", _}), do: nil
   defp tool_job(_), do: "mine"
 
-  # What the peon says while it works, as in Warcraft III; a new line as the
-  # turn goes on.
-  @peon_says ["Work, work.", "Zug zug.", "Okie dokie.", "Be happy to.", "Dabu.", "Me busy."]
-  defp peon_says(messages), do: Enum.at(@peon_says, rem(length(messages), length(@peon_says)))
-
   defp activity({"bash", command}) do
     cond do
       command =~ "mix test" -> "Running the tests…"
@@ -1955,6 +2156,9 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp preview_message({:pack_error, message}),
     do: "The preview pack (.peon/preview.json) needs fixing: #{message}"
+
+  defp preview_message(:off),
+    do: "Peon is in Design mode: no preview. It starts when you switch to Build or Plan."
 
   defp preview_message(_), do: ""
 

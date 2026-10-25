@@ -1284,6 +1284,8 @@ defmodule Burrow.Chat do
       pr_url: state.pr_url,
       agent_status: state.agent.status,
       busy?: state.busy?,
+      # When the turn (or Peon's latest keep-going) started, in ms
+      since: state.prompted_at,
       goal: state.goal,
       judging?: state.judging != nil,
       note: state.note,
@@ -1617,6 +1619,9 @@ defmodule Burrow.Chat do
             id: id,
             role: :tool,
             text: "#{name} #{summarize(input)}",
+            # What the agent said the call is for, e.g. a command's "Run the tests"
+            about:
+              if(is_map(input) and is_binary(input["description"]), do: input["description"]),
             status: status,
             detail: detail,
             peon?: peon?
