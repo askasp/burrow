@@ -418,12 +418,12 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       pick =
         &(view
-          |> element(".pick[aria-label='Pick design/#{&1}.html to build']")
+          |> element(".tpick[aria-label='Pick design/#{&1}.html to build']")
           |> render_click())
 
       pick.("list")
       pick.("home")
-      assert has_element?(view, ".thumb.picked .pick[aria-checked=true]")
+      assert has_element?(view, ".thumb.picked .tpick[aria-checked=true]")
       assert has_element?(view, "#build-boards", "Build 2 boards")
 
       view |> element("#build-boards") |> render_click()
@@ -432,7 +432,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
         text: "Build these boards: design/home.html, design/list.html"
       })
 
-      refute has_element?(view, ".pick[aria-checked=true]")
+      refute has_element?(view, ".tpick[aria-checked=true]")
 
       view |> element(".dpick button", "Pick all") |> render_click()
       assert has_element?(view, "#build-boards", "Build 3 boards")

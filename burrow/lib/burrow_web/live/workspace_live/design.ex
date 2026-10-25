@@ -205,7 +205,7 @@ defmodule BurrowWeb.WorkspaceLive.Design do
           :if={@board.hash && !@busy}
           type="button"
           role="checkbox"
-          class="pick"
+          class="tpick"
           aria-checked={to_string(@picked)}
           aria-label={"Pick #{@board.path} to build"}
           phx-click="pick_board"
