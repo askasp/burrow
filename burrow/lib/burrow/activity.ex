@@ -37,16 +37,35 @@ defmodule Burrow.Activity do
     :ok
   end
 
-  @doc "`[%{chat, draft, phase}]`, oldest first; `busy` holds the chats whose agent works."
+  @doc """
+  `[%{chat, draft, phase, worked_at}]`, the one worked on last first;
+  `busy` holds the chats whose agent works. A chat was worked on when it
+  got a message (`Burrow.Chats.started/2`) or its draft was submitted.
+  """
   def chats(project, busy) do
     repo = if !Projects.Project.repo?(project), do: Projects.repo_dir(project)
     refs = repo && Repo.refs(repo)
 
-    for chat <- Chats.list(project.id) do
+    # Newest first, so that of two worked on in the same second the newer leads
+    for chat <- Enum.reverse(Chats.list(project.id)) do
       draft = repo && Repo.draft(repo, chat.id)
-      %{chat: chat, draft: draft, phase: phase(chat, draft, MapSet.member?(busy, chat.id), refs)}
+
+      %{
+        chat: chat,
+        draft: draft,
+        phase: phase(chat, draft, MapSet.member?(busy, chat.id), refs),
+        worked_at: worked_at(chat, draft)
+      }
     end
+    |> Enum.sort_by(& &1.worked_at, {:desc, DateTime})
   end
+
+  defp worked_at(chat, %{at: at}) when is_binary(at) do
+    {:ok, submitted, _offset} = DateTime.from_iso8601(at)
+    Enum.max([chat.updated_at, submitted], DateTime)
+  end
+
+  defp worked_at(chat, _draft), do: chat.updated_at
 
   defp phase(_chat, _draft, true, _refs), do: "working"
   defp phase(%{pr_url: url}, _draft, false, nil) when url != nil, do: "ready"

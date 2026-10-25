@@ -52,7 +52,8 @@ defmodule BurrowWeb.WorkspaceLive do
         base: ~p"/projects/#{project.id}",
         user: scope.user.email,
         theme: scope.user.theme,
-        chats_collapsed: scope.user.chats_collapsed
+        chats_collapsed: scope.user.chats_collapsed,
+        folded_days: scope.user.folded_days
       )
 
     if connected?(socket) do
@@ -160,10 +161,10 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # The workspace opens on the first open chat, or a new empty one.
+  # The workspace opens on the chat worked on last, or a new empty one.
   def handle_params(_params, _uri, socket) do
     id =
-      case open_tabs(socket) do
+      case socket.assigns.tabs do
         [first | _] -> first.chat.id
         [] -> Chats.create_empty(socket.assigns.project.id, socket.assigns.user).id
       end
@@ -330,6 +331,14 @@ defmodule BurrowWeb.WorkspaceLive do
     collapsed? = !socket.assigns.chats_collapsed
     Accounts.put_chats_collapsed(socket.assigns.current_scope.user, collapsed?)
     {:noreply, assign(socket, chats_collapsed: collapsed?)}
+  end
+
+  # A day group in the drawer folds to the chats still open, or unfolds.
+  def handle_event("fold_day", %{"day" => day}, socket) do
+    folded = socket.assigns.folded_days
+    folded = if day in folded, do: List.delete(folded, day), else: [day | folded]
+    Accounts.put_folded_days(socket.assigns.current_scope.user, folded)
+    {:noreply, assign(socket, folded_days: folded)}
   end
 
   # System, light, dark, round again; the user's, everywhere in Burrow.
@@ -1204,6 +1213,7 @@ defmodule BurrowWeb.WorkspaceLive do
         project={@project}
         base={@base}
         collapsed={@chats_collapsed}
+        folded={@folded_days}
         theme={@theme}
         nothing_built?={@nothing_built?}
         repo?={@repo?}

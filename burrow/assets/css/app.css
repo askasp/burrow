@@ -326,8 +326,15 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .newchat[disabled] { opacity: .45; cursor: not-allowed }
 .ws-root .newchat kbd { margin-left: auto; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; font-weight: 400; color: var(--text-3); padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px }
 .ws-root .dscroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 10px }
-.ws-root .dsec { display: flex; align-items: center; justify-content: space-between; padding: 14px 8px 4px; font-size: 11.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-3) }
-.ws-root .dsec .mono { letter-spacing: 0; font-weight: 400 }
+.ws-root .dsec { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 8px 4px; font-size: 12px; font-weight: 500; line-height: 18px; color: var(--text-3) }
+.ws-root .dsec .mono { font-size: 11px; font-weight: 400 }
+/* A day before today folds to the chats still open (and the one shown) */
+.ws-root .dfold { display: inline-flex; align-items: center; gap: 4px; margin: 0 -4px; padding: 0 4px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; cursor: pointer }
+.ws-root .dfold:hover { color: var(--text-2) }
+.ws-root .dfold .dchev { transition: transform .15s }
+.ws-root .dday.folded .dchev { transform: rotate(-90deg) }
+.ws-root .dfold .dn { margin-left: 2px; font-weight: 400 }
+.ws-root .dday.folded .crow.past:not([data-on="true"]) { display: none }
 .ws-root .crow { position: relative; display: flex; align-items: center; border-radius: 6px }
 .ws-root .crow:hover, .ws-root .crow[data-on="true"] { background: var(--surface) }
 .ws-root .crow[data-on="true"]::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2px; border-radius: 2px; background: var(--text) }
@@ -351,11 +358,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .dlink:hover { color: var(--text) }
 .ws-root .dtheme { margin-left: auto }
 .ws-root .dshow { display: none }
-.ws-root :is(.pswitch, .pmrow, .newchat, .crb, .dlink, .cx):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root :is(.pswitch, .pmrow, .newchat, .crb, .dlink, .cx, .dfold):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
 /* Collapsed (wide screens only): a 56px strip of the tile, New chat and a dot per open chat */
 @media (min-width: 961px) {
   .ws-root .drawer.closed { width: 56px }
-  .ws-root .drawer.closed :is(.pn, .pchev, .dhide, .dt, .newchat kbd, .dsec, .dday, .dnone, .cb, .cx, .dbot > :not(.dshow)) { display: none }
+  .ws-root .drawer.closed :is(.pn, .pchev, .dhide, .dt, .newchat kbd, .dsec, .crow.past, .dnone, .cb, .cx, .dbot > :not(.dshow)) { display: none }
   .ws-root .drawer.closed .dtop { justify-content: center; padding: 10px 0 6px }
   .ws-root .drawer.closed .pswitch { width: auto; padding: 4px }
   .ws-root .drawer.closed .pmenu { left: calc(100% + 10px); top: 0 }

@@ -18,6 +18,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :project, :map
   attr :base, :string, required: true, doc: "the workspace's path"
   attr :collapsed, :boolean, required: true
+  attr :folded, :list, required: true, doc: "the day groups folded to their open chats"
   attr :theme, :string, required: true
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
@@ -27,17 +28,18 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   The project switcher on top: the project's tile with its health bar
   (`Burrow.Activity`), opening Chats (`BurrowWeb.ChatsLive`) and every
   project the user can open. Then New
-  chat, the chats still open (what needs the user first) and the done ones
-  by day. Collapses to a strip of the tile, New chat and a dot per open
-  chat; on phones it slides in from the left.
+  chat and the chats by the day they were worked on, the last first. A day
+  before today folds to the chats still open (and the one shown).
+  Collapses to a strip of the tile, New chat and a dot per chat; on phones
+  it slides in from the left.
   """
   def drawer(assigns) do
     open = open_chats(assigns.tabs, assigns.live_only?)
 
     assigns =
       assign(assigns,
-        open: open,
-        done: assigns.tabs |> Enum.filter(&Activity.done?(&1, assigns.live_only?)) |> by_day(),
+        open: length(open),
+        days: by_day(assigns.tabs, assigns.live_only?),
         tile: Enum.find(assigns.rail, & &1.current) || %{state: "stopped", pct: 8},
         full?: length(open) >= Chats.max()
       )
@@ -171,21 +173,31 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         </button>
       </span>
       <div class="dscroll">
-        <div class="dsec">
-          <span>Open</span><span class="mono">{length(@open)} of {Chats.max()}</span>
-        </div>
-        <.chat_row
-          :for={t <- @open}
-          tab={t}
-          url={"#{@base}/c/#{t.chat.id}"}
-          current={@chat != nil and @chat.id == t.chat.id}
-          title={chat_title(t, @project, @nothing_built?)}
-          sub={sub(t, @live_only?)}
-          confirm={close_confirm(t, @repo?)}
-        />
-        <p :if={@open == []} class="dnone">Nothing open. Start a new chat for the next change.</p>
-        <div :for={{day, tabs} <- @done} class="dday">
-          <div class="dsec"><span>{day}</span></div>
+        <div
+          :for={{{day, tabs, done}, i} <- Enum.with_index(@days)}
+          id={"day-" <> String.replace(String.downcase(day), " ", "-")}
+          class={["dday", day in @folded && "folded"]}
+        >
+          <div class="dsec">
+            <button
+              :if={day != "Today" and done > 0}
+              type="button"
+              class="dfold"
+              phx-click="fold_day"
+              phx-value-day={day}
+              aria-expanded={to_string(day not in @folded)}
+              title={if day in @folded, do: "Show the done chats", else: "Show only the open chats"}
+            >
+              {day}<.icon name="hero-chevron-down" class="size-3 dchev" /><span
+                :if={day in @folded}
+                class="dn"
+              >{done} done</span>
+            </button>
+            <span :if={day == "Today" or done == 0}>{day}</span>
+            <span :if={i == 0} class="mono" title={"Up to #{Chats.max()} chats open at once"}>
+              {@open} of {Chats.max()} open
+            </span>
+          </div>
           <.chat_row
             :for={t <- tabs}
             tab={t}
@@ -193,7 +205,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             current={@chat != nil and @chat.id == t.chat.id}
             title={chat_title(t, @project, @nothing_built?)}
             sub={sub(t, @live_only?)}
-            done
+            confirm={close_confirm(t, @repo?)}
+            done={Activity.done?(t, @live_only?)}
           />
         </div>
       </div>
@@ -309,31 +322,25 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   @doc "Why New chat is off."
   def full_text, do: "#{Chats.max()} changes are open. Merge or discard one first."
 
-  @doc """
-  The chats that aren't done, what needs the user first: failed checks, a
-  pull request or staging to look at; then the working ones; empty ones last.
-  """
-  def open_chats(tabs, live_only?),
-    do: tabs |> Enum.reject(&Activity.done?(&1, live_only?)) |> Enum.sort_by(&need(&1.phase))
-
-  defp need(phase) when phase in ~w(failed ready staged), do: 0
-  defp need(phase) when phase in ~w(working landing), do: 1
-  defp need("new"), do: 3
-  defp need(_phase), do: 2
+  @doc "The chats that aren't done, the one worked on last first."
+  def open_chats(tabs, live_only?), do: Enum.reject(tabs, &Activity.done?(&1, live_only?))
 
   @days ["Today", "Yesterday", "This week", "Older"]
 
-  # Done chats, newest change first, by the day it went out.
-  defp by_day(tabs) do
+  # The chats by the day they were worked on, each day's last first, and
+  # how many of each day's are done.
+  defp by_day(tabs, live_only?) do
     tabs
-    |> Enum.sort_by(& &1.draft.change, :desc)
     |> Enum.group_by(&day/1)
     |> Enum.sort_by(fn {day, _tabs} -> Enum.find_index(@days, &(&1 == day)) end)
+    |> Enum.map(fn {day, tabs} ->
+      {day, tabs, Enum.count(tabs, &Activity.done?(&1, live_only?))}
+    end)
   end
 
-  # When a done chat's change was submitted, in the drawer's words.
+  # When a chat was worked on, in the drawer's words.
   defp day(tab) do
-    case Date.diff(Date.utc_today(), DateTime.to_date(at(tab))) do
+    case Date.diff(Date.utc_today(), DateTime.to_date(tab.worked_at)) do
       n when n <= 0 -> "Today"
       1 -> "Yesterday"
       n when n < 7 -> "This week"
@@ -1182,19 +1189,19 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :attach?, :boolean, required: true, doc: "its agent runs, so opencode can attach"
 
   @doc """
-  In place of a done chat's box: its change is out and the chat sits under
-  Done in the drawer, so the next change starts in a new chat, maybe
-  following up on this one.
+  In place of a done chat's box: its change is out and the chat stays in
+  the drawer, so the next change starts in a new chat, maybe following up
+  on this one.
   """
   def chat_done(assigns) do
-    assigns = assign(assigns, id: assigns.tab.draft.change, day: day(assigns.tab))
+    assigns = assign(assigns, id: assigns.tab.draft.change)
 
     ~H"""
     <section id="chat-done" class="ws-done" aria-label="This chat is done">
       <div class="h">
         <.icon name="hero-check" class="size-[17px] self-center text-[var(--ok)]" />
         <b>#{@id} {if @tab.phase == "live", do: "is live.", else: "is on main."}</b>
-        <span>This chat is done and has moved to {@day}.</span>
+        <span>This chat is done.</span>
       </div>
       <div class="a">
         <button

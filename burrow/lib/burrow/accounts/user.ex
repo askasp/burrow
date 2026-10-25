@@ -5,10 +5,12 @@ defmodule Burrow.Accounts.User do
   schema "users" do
     field :email, :string
     field :ai_model, :string
-    # The project opened last (`Burrow.Accounts.opened_project/2`), and
-    # whether the workspace's chat drawer is collapsed to a strip
+    # The project opened last (`Burrow.Accounts.opened_project/2`), whether
+    # the workspace's chat drawer is collapsed to a strip, and its day groups
+    # folded to the chats still open
     field :last_project_id, :integer
     field :chats_collapsed, :boolean, default: false
+    field :folded_days, {:array, :string}, default: []
     # "system", "light" or "dark", in Burrow and every Peon
     field :theme, :string, default: "system"
     # Admins make the logins while sign-ups are closed

@@ -122,12 +122,12 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, ".pbar-name", "##{change.id}")
       assert has_element?(view, ".ws-cs h2", "Change ##{change.id}")
       # Without staging, main is what goes live: the chat box gives way, and
-      # the chat is done, under Today.
+      # the chat is done; it stays under Today.
       assert has_element?(view, "#chat-done", "##{change.id} is on main.")
-      assert has_element?(view, "#chat-done", "This chat is done and has moved to Today.")
+      assert has_element?(view, "#chat-done", "This chat is done.")
       assert has_element?(view, "#drawer .dday:has(#chat-#{chat.id}) .dsec", "Today")
       assert has_element?(view, "#chat-#{chat.id} .okic")
-      assert has_element?(view, "#drawer .dnone", "Nothing open")
+      assert has_element?(view, "#drawer .dsec", "0 of 4 open")
       refute has_element?(view, "#chat-input")
       # Its dev preview stays, to look into, until it is live.
       refute has_element?(view, ".vbar .seg button[disabled]", "dev")
@@ -461,6 +461,66 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       end)
     end
 
+    test "lists the chats by when they were worked on, and opens on the last", %{
+      conn: conn,
+      project: project
+    } do
+      older = Chats.create(project.id, "Older", "aksel")
+      week = Chats.create(project.id, "This week", "aksel")
+      yesterday = Chats.create(project.id, "Yesterday", "aksel")
+      earlier = Chats.create(project.id, "Earlier today", "aksel")
+      last = Chats.create(project.id, "Last", "aksel")
+      worked!(project, older, -24 * 30)
+      worked!(project, week, -24 * 3)
+      worked!(project, yesterday, -24)
+      worked!(project, earlier, -1)
+      worked!(project, last, 0)
+
+      {:ok, view, html} = open(conn, project)
+      assert has_element?(view, "#chat-#{last.id}[data-on=true]")
+      assert has_element?(view, "#day-today .dsec", "5 of 4 open")
+      assert has_element?(view, "#day-today #chat-#{last.id}")
+      assert has_element?(view, "#day-yesterday #chat-#{yesterday.id}")
+      assert has_element?(view, "#day-this-week #chat-#{week.id}")
+      assert has_element?(view, "#day-older #chat-#{older.id}")
+      assert order(html) == Enum.map([last, earlier, yesterday, week, older], & &1.id)
+
+      # A message puts its chat on top.
+      Chats.started(Chats.get(yesterday.id), "Once more")
+      worked!(project, last, -1 / 60)
+      {:ok, _view, html} = open(conn, project)
+      assert hd(order(html)) == yesterday.id
+    end
+
+    test "a day before today folds to its open chats, and stays folded", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      done = Chats.create(project.id, "Say hello", "aksel")
+      land!(project, done, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      open = Chats.create(project.id, "Still open", "aksel")
+      worked!(project, done, -24)
+      worked!(project, open, -24)
+
+      {:ok, view, _html} =
+        live(conn, ~p"/projects/#{project.id}/c/#{Chats.create_empty(project.id, "aksel").id}")
+
+      refute has_element?(view, "#day-today .dfold")
+      view |> element("#day-yesterday .dfold", "Yesterday") |> render_click()
+      assert has_element?(view, "#day-yesterday.folded .dfold[aria-expanded=false]", "1 done")
+      assert Accounts.get_user!(user.id).folded_days == ["Yesterday"]
+
+      # Folded, the done chat hides (CSS) unless it is the one shown.
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{done.id}")
+      assert has_element?(view, "#day-yesterday.folded #chat-#{done.id}.past[data-on=true]")
+      assert has_element?(view, "#day-yesterday.folded #chat-#{open.id}:not(.past)")
+
+      view |> element("#day-yesterday .dfold") |> render_click()
+      refute has_element?(view, "#day-yesterday.folded")
+      assert Accounts.get_user!(user.id).folded_days == []
+    end
+
     test "collapses, and the user's choice is kept", %{conn: conn, project: project, user: user} do
       {:ok, view, _html} = open(conn, project)
       view |> element("#drawer .dhide") |> render_click()
@@ -560,6 +620,26 @@ defmodule BurrowWeb.WorkspaceLiveTest do
     }
 
   # The workspace opens its first chat (a new empty one when there is none).
+  # The chat was worked on `hours` from now (negative: ago), and so was its draft.
+  defp worked!(project, chat, hours) do
+    at = DateTime.utc_now(:second) |> DateTime.add(round(hours * 3600), :second)
+    Chats.set(chat, updated_at: at)
+    path = Path.join([Projects.repo_dir(project), "drafts", chat.id <> ".json"])
+
+    with {:ok, json} <- File.read(path),
+         do:
+           File.write!(
+             path,
+             JSON.encode!(%{JSON.decode!(json) | "at" => DateTime.to_iso8601(at)})
+           )
+  end
+
+  # The chat ids in the drawer, top to bottom.
+  defp order(html),
+    do:
+      Regex.scan(~r/id="chat-([a-z0-9]+)" class="crow/, html, capture: :all_but_first)
+      |> List.flatten()
+
   defp open(conn, project) do
     {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/projects/#{project.id}")
     assert to =~ ~r"^/projects/#{project.id}/c/[a-z0-9]+$"

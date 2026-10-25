@@ -53,14 +53,17 @@ defmodule Burrow.Chats do
     chat
   end
 
-  @doc "The chat got its first message: an empty chat takes its title from it."
+  @doc """
+  The chat got a message: it was worked on now (`updated_at`, the drawer's
+  order), and an empty chat takes its title from it.
+  """
   def started(%Chat{} = chat, text) do
     title = text |> String.trim() |> String.replace(~r/\s+/, " ") |> String.slice(0, 80)
     query = from c in Chat, where: c.id == ^chat.id
+    now = DateTime.utc_now(:second)
 
-    Repo.update_all(where(query, [c], is_nil(c.started_at)),
-      set: [started_at: DateTime.utc_now(:second)]
-    )
+    Repo.update_all(query, set: [updated_at: now])
+    Repo.update_all(where(query, [c], is_nil(c.started_at)), set: [started_at: now])
 
     Repo.update_all(where(query, [c], c.title == ""), set: [title: title])
     Projects.broadcast(chat.project_id, "chats", {:chat_started, chat.id})

@@ -38,6 +38,12 @@ defmodule Burrow.Accounts do
     :ok
   end
 
+  @doc "The chat drawer's day groups (\"Yesterday\", \"This week\", \"Older\") folded, for this user."
+  def put_folded_days(%User{id: id}, days) when is_list(days) do
+    Repo.update_all(from(u in User, where: u.id == ^id), set: [folded_days: days])
+    :ok
+  end
+
   @themes ~w(system light dark)
 
   def themes, do: @themes
