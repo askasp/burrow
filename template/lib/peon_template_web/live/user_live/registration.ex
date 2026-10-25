@@ -14,6 +14,9 @@ defmodule PeonTemplateWeb.UserLive.Registration do
           <.header>
             Register for an account
             <:subtitle>
+              <span :if={@first?} class="block">
+                You are the first: this account is the admin, who adds the others.
+              </span>
               Already registered?
               <.link navigate={~p"/users/log-in"} class="font-semibold text-brand hover:underline">
                 Log in
@@ -65,13 +68,38 @@ defmodule PeonTemplateWeb.UserLive.Registration do
   end
 
   def mount(_params, _session, socket) do
-    changeset = Accounts.change_user_registration(%User{})
+    if Accounts.registration_open?() do
+      changeset = Accounts.change_user_registration(%User{})
 
-    {:ok, socket |> assign(trigger_submit: false) |> assign_form(changeset)}
+      {:ok,
+       socket
+       |> assign(trigger_submit: false, first?: Accounts.no_users?())
+       |> assign_form(changeset)}
+    else
+      {:ok, closed(socket)}
+    end
   end
 
   @impl true
   def handle_event("save", %{"user" => user_params}, socket) do
+    if Accounts.registration_open?(),
+      do: register(socket, user_params),
+      else: {:noreply, closed(socket)}
+  end
+
+  def handle_event("validate", %{"user" => user_params}, socket) do
+    changeset = Accounts.change_user_registration(%User{}, user_params)
+    {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
+  end
+
+  # Sign-ups are closed (`PeonTemplate.SiteAccess.signups?/0`) and the admin exists.
+  defp closed(socket) do
+    socket
+    |> put_flash(:error, "Sign-ups are closed. Ask an admin for an account.")
+    |> redirect(to: ~p"/users/log-in")
+  end
+
+  defp register(socket, user_params) do
     case Accounts.register_user_with_password(user_params) do
       {:ok, user} ->
         changeset = Accounts.change_user_registration(user, user_params)
@@ -80,11 +108,6 @@ defmodule PeonTemplateWeb.UserLive.Registration do
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign_form(socket, changeset)}
     end
-  end
-
-  def handle_event("validate", %{"user" => user_params}, socket) do
-    changeset = Accounts.change_user_registration(%User{}, user_params)
-    {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 
   defp assign_form(socket, %Ecto.Changeset{} = changeset) do

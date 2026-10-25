@@ -18,6 +18,10 @@ defmodule Burrow.Projects.Project do
     # to the new app once (`Burrow.Bootstrap`), as its secrets.
     field :basic_username, :string, virtual: true, redact: true
     field :basic_password, :string, virtual: true, redact: true
+    # For "accounts": whether anyone can sign up, or only the people the
+    # first account (the admin) adds. The app keeps it in its code
+    # (`SiteAccess.signups?/0`), so it is only handed to the new app.
+    field :signups, :boolean, virtual: true, default: false
     belongs_to :user, Burrow.Accounts.User
     belongs_to :team, Burrow.Teams.Team
     timestamps(type: :utc_datetime)
@@ -37,7 +41,7 @@ defmodule Burrow.Projects.Project do
 
   def create_changeset(project, attrs) do
     project
-    |> cast(attrs, [:name, :repo_url, :auth, :basic_username, :basic_password])
+    |> cast(attrs, [:name, :repo_url, :auth, :basic_username, :basic_password, :signups])
     |> validate_required([:name])
     |> validate_length(:name, min: 2, max: 60)
     |> validate_format(:name, ~r/[a-zA-Z]/, message: "must contain a letter")
@@ -56,9 +60,16 @@ defmodule Burrow.Projects.Project do
         |> delete_change(:auth)
         |> delete_change(:basic_username)
         |> delete_change(:basic_password)
+        |> delete_change(:signups)
+
+      get_field(changeset, :auth) == "accounts" ->
+        changeset
+        |> delete_change(:basic_username)
+        |> delete_change(:basic_password)
 
       get_field(changeset, :auth) == "basic" ->
         changeset
+        |> delete_change(:signups)
         |> update_change(:basic_username, &String.trim/1)
         |> validate_required([:basic_username, :basic_password])
         |> validate_length(:basic_username, max: 100)
@@ -75,6 +86,7 @@ defmodule Burrow.Projects.Project do
         |> validate_inclusion(:auth, Enum.map(@auths, &elem(&1, 1)))
         |> delete_change(:basic_username)
         |> delete_change(:basic_password)
+        |> delete_change(:signups)
     end
   end
 

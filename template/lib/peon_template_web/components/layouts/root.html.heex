@@ -47,6 +47,9 @@
         <li>
           {@current_scope.user.email}
         </li>
+        <li :if={@current_scope.user.admin}>
+          <.link href={~p"/users/admin"} data-kb-go="u" data-kb-label="Users">Users</.link>
+        </li>
         <li>
           <.link href={~p"/users/settings"} data-kb-go=",">Settings</.link>
         </li>
@@ -54,7 +57,7 @@
           <.link href={~p"/users/log-out"} method="delete">Log out</.link>
         </li>
       <% else %>
-        <li>
+        <li :if={PeonTemplate.Accounts.registration_open?()}>
           <.link href={~p"/users/register"}>Register</.link>
         </li>
         <li>

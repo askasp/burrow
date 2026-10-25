@@ -13,6 +13,27 @@ defmodule PeonTemplateWeb.UserLive.LoginTest do
       assert html =~ "Sign up"
       assert html =~ "Log in and stay logged in"
     end
+
+    # The tests follow the switch, so they pass whichever way it is set.
+    if PeonTemplate.SiteAccess.signups?() do
+      test "offers sign up after the first account too", %{conn: conn} do
+        user_fixture()
+
+        {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+
+        assert html =~ "Sign up"
+      end
+    else
+      test "offers no sign up once the admin exists and sign-ups are closed", %{conn: conn} do
+        user_fixture()
+
+        {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+
+        assert html =~ "Ask an admin"
+        refute html =~ "Sign up"
+        refute html =~ ~s(href="/users/register")
+      end
+    end
   end
 
   describe "user login - password" do

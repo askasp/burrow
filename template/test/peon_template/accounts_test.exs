@@ -5,7 +5,7 @@ defmodule PeonTemplate.AccountsTest do
   alias PeonTemplate.Accounts
 
   import PeonTemplate.AccountsFixtures
-  alias PeonTemplate.Accounts.{User, UserToken}
+  alias PeonTemplate.Accounts.{Scope, User, UserToken}
 
   describe "get_user_by_email/1" do
     test "does not return the user if the email does not exist" do
@@ -85,6 +85,87 @@ defmodule PeonTemplate.AccountsTest do
       assert is_nil(user.hashed_password)
       assert is_nil(user.confirmed_at)
       assert is_nil(user.password)
+    end
+  end
+
+  describe "the first account" do
+    test "is the admin; the next ones are not" do
+      {:ok, first} = Accounts.register_user(valid_user_attributes())
+
+      {:ok, second} =
+        Accounts.register_user_with_password(%{
+          email: unique_user_email(),
+          password: valid_user_password()
+        })
+
+      assert first.admin
+      refute second.admin
+    end
+
+    test "can always register; the next ones only with sign-ups" do
+      assert Accounts.no_users?()
+      assert Accounts.registration_open?(false)
+
+      user_fixture()
+
+      refute Accounts.no_users?()
+      refute Accounts.registration_open?(false)
+      assert Accounts.registration_open?(true)
+    end
+
+    test "can't be made an admin through the registration params" do
+      user_fixture()
+      {:ok, user} = Accounts.register_user(%{email: unique_user_email(), admin: true})
+      refute user.admin
+    end
+  end
+
+  describe "admin" do
+    setup do
+      admin = user_fixture()
+      %{admin: Scope.for_user(admin), user: user_fixture()}
+    end
+
+    test "lists every account, the oldest first", %{admin: admin, user: user} do
+      assert Enum.map(Accounts.list_users(admin), & &1.id) == [admin.user.id, user.id]
+    end
+
+    test "adds a confirmed account that can log in", %{admin: admin} do
+      email = unique_user_email()
+      {:ok, user} = Accounts.add_user(admin, %{email: email, password: valid_user_password()})
+
+      assert user.confirmed_at
+      refute user.admin
+      assert Accounts.get_user_by_email_and_password(email, valid_user_password())
+    end
+
+    test "can't add an email that has an account", %{admin: admin, user: user} do
+      {:error, changeset} =
+        Accounts.add_user(admin, %{email: user.email, password: valid_user_password()})
+
+      assert "has already been taken" in errors_on(changeset).email
+    end
+
+    test "removes another account and its sessions", %{admin: admin, user: user} do
+      token = Accounts.generate_user_session_token(user)
+
+      assert {:ok, {_user, [%UserToken{}]}} = Accounts.delete_user(admin, user)
+      refute Repo.get(User, user.id)
+      refute Accounts.get_user_by_session_token(token)
+    end
+
+    test "can't remove themselves", %{admin: admin} do
+      assert_raise FunctionClauseError, fn -> Accounts.delete_user(admin, admin.user) end
+    end
+
+    test "is only for admins", %{user: user} do
+      scope = Scope.for_user(user)
+
+      assert_raise FunctionClauseError, fn -> Accounts.list_users(scope) end
+
+      assert_raise FunctionClauseError, fn ->
+        Accounts.add_user(scope, %{email: unique_user_email(), password: valid_user_password()})
+      end
     end
   end
 

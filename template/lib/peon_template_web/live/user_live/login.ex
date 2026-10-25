@@ -11,14 +11,17 @@ defmodule PeonTemplateWeb.UserLive.Login do
           <.header>
             <p>Log in</p>
             <:subtitle>
-              <%= if @current_scope do %>
-                You need to reauthenticate to perform sensitive actions on your account.
-              <% else %>
-                Don't have an account? <.link
-                  navigate={~p"/users/register"}
-                  class="font-semibold text-brand hover:underline"
-                  phx-no-format
-                >Sign up</.link> for an account now.
+              <%= cond do %>
+                <% @current_scope -> %>
+                  You need to reauthenticate to perform sensitive actions on your account.
+                <% not @registration_open? -> %>
+                  No account? Ask an admin for one.
+                <% true -> %>
+                  Don't have an account? <.link
+                    navigate={~p"/users/register"}
+                    class="font-semibold text-brand hover:underline"
+                    phx-no-format
+                  >Sign up</.link> for an account now.
               <% end %>
             </:subtitle>
           </.header>
@@ -69,7 +72,12 @@ defmodule PeonTemplateWeb.UserLive.Login do
 
     form = to_form(%{"email" => email}, as: "user")
 
-    {:ok, assign(socket, form: form, trigger_submit: false)}
+    {:ok,
+     assign(socket,
+       form: form,
+       trigger_submit: false,
+       registration_open?: PeonTemplate.Accounts.registration_open?()
+     )}
   end
 
   @impl true

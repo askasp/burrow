@@ -516,6 +516,31 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert made.team_id == team.id and made.auth == "open"
       assert_redirect(view, ~p"/projects/#{made.id}")
     end
+
+    test "a new app with accounts can let anyone sign up", %{conn: conn, project: project} do
+      Phoenix.PubSub.subscribe(Burrow.PubSub, "projects")
+      {:ok, view, _html} = open(conn, project)
+
+      view |> element("#new-project-btn") |> render_click()
+      view |> element("#new-project button.disc") |> render_click()
+
+      # Off unless picked: the first account is the admin and adds the others.
+      assert has_element?(view, "#np-signups:not([checked])")
+      assert has_element?(view, "#np-signups-hint", "adds everyone else")
+
+      form = element(view, "#new-project-form")
+      render_change(form, %{"project" => %{"auth" => "basic"}})
+      refute has_element?(view, "#np-signups")
+
+      render_change(form, %{"project" => %{"auth" => "accounts", "signups" => "true"}})
+      assert has_element?(view, "#np-signups[checked]")
+      assert has_element?(view, "#np-signups-hint", "anyone can make an account")
+
+      render_submit(form, %{"project" => %{"name" => "Club", "signups" => "true"}})
+
+      # Handed to the new app (`Burrow.Bootstrap`), not stored.
+      assert_receive {:project_created, %{name: "Club", auth: "accounts", signups: true}}
+    end
   end
 
   # An env as Burrow.Env.info/2 has it when it runs nothing.

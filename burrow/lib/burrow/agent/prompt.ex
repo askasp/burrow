@@ -241,8 +241,14 @@ defmodule Burrow.Agent.Prompt do
       "SITE_PASSWORD) or `:public`."
   end
 
-  defp accounts_line(true),
-    do: "Read the logged-in user from `@current_scope.user`."
+  defp accounts_line(true) do
+    """
+    Read the logged-in user from `@current_scope.user`. If `SiteAccess` has `signups?/0`,
+    the first account is the admin, who adds and removes accounts at /users/admin, and
+    `signups?/0` decides whether anyone else can sign up: to open or close sign-ups,
+    change that one line.\
+    """
+  end
 
   defp accounts_line(false) do
     """

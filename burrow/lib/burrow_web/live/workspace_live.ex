@@ -511,7 +511,8 @@ defmodule BurrowWeb.WorkspaceLive do
           "repo_url" => p.repo_url,
           "github_token" => p.github_token,
           "team_id" => p.team_id,
-          "auth" => p.auth
+          "auth" => p.auth,
+          "signups" => p.signups
         },
         basic
       )
@@ -1094,6 +1095,7 @@ defmodule BurrowWeb.WorkspaceLive do
       github_token: "",
       team_id: "",
       auth: "accounts",
+      signups: false,
       basic_username: "",
       basic_password: "",
       more: false
@@ -1111,10 +1113,16 @@ defmodule BurrowWeb.WorkspaceLive do
   ]
 
   defp new_project_params(params) do
-    for {key, field} <- @new_project_fields,
-        is_binary(params[key]),
-        into: %{},
-        do: {field, String.trim(params[key])}
+    fields =
+      for {key, field} <- @new_project_fields,
+          is_binary(params[key]),
+          into: %{},
+          do: {field, String.trim(params[key])}
+
+    # The checkbox sends "true", its hidden twin "false" when unchecked.
+    if is_binary(params["signups"]),
+      do: Map.put(fields, :signups, params["signups"] == "true"),
+      else: fields
   end
 
   defp start_error({:session, _}),

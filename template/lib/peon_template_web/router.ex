@@ -78,6 +78,11 @@ defmodule PeonTemplateWeb.Router do
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
 
+    live_session :require_admin,
+      on_mount: [{PeonTemplateWeb.UserAuth, :require_admin}] do
+      live "/users/admin", UserLive.Admin, :index
+    end
+
     post "/users/update-password", UserSessionController, :update_password
   end
 

@@ -5,8 +5,8 @@ defmodule Burrow.TemplateTest do
 
   @template Path.expand("../../../template", __DIR__)
 
-  defp files(auth) do
-    {tree, blobs} = Template.instantiate(@template, "sauna", auth)
+  defp files(auth, opts \\ []) do
+    {tree, blobs} = Template.instantiate(@template, "sauna", auth, opts)
     Map.new(tree, fn {path, hash} -> {path, Map.fetch!(blobs, hash)} end)
   end
 
@@ -25,6 +25,24 @@ defmodule Burrow.TemplateTest do
     refute files["AGENTS.md"] =~ "There are no user accounts"
     assert grep(files, ~r/peon:(accounts-only|if-accounts|unless-accounts|end)/) == []
     assert grep(files, ~r/PeonTemplate|peon_template/) == []
+  end
+
+  test "user accounts: sign-ups are closed unless picked; the first account is the admin" do
+    closed = files("accounts")
+    assert closed["lib/sauna/site_access.ex"] =~ "def signups?, do: false"
+    assert closed["lib/sauna/accounts.ex"] =~ "def registration_open?"
+    assert closed["lib/sauna_web/live/user_live/admin.ex"] =~ "defmodule SaunaWeb.UserLive.Admin"
+    assert closed["lib/sauna_web/router.ex"] =~ ~s(live "/users/admin")
+
+    open = files("accounts", signups: true)
+    assert open["lib/sauna/site_access.ex"] =~ "def signups?, do: true"
+    refute open["lib/sauna/site_access.ex"] =~ "def signups?, do: false"
+
+    assert Map.delete(open, "lib/sauna/site_access.ex") ==
+             Map.delete(closed, "lib/sauna/site_access.ex")
+
+    # Without accounts there is nothing to sign up for.
+    refute files("open", signups: true)["lib/sauna/site_access.ex"] =~ "signups?"
   end
 
   for {auth, mode} <- [{"basic", ":basic_auth"}, {"open", ":public"}] do

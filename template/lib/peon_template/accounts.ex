@@ -7,7 +7,8 @@ defmodule PeonTemplate.Accounts do
   import Ecto.Query, warn: false
   alias PeonTemplate.Repo
 
-  alias PeonTemplate.Accounts.{User, UserToken, UserNotifier}
+  alias PeonTemplate.Accounts.{Scope, User, UserToken, UserNotifier}
+  alias PeonTemplate.SiteAccess
 
   ## Database getters
 
@@ -64,7 +65,17 @@ defmodule PeonTemplate.Accounts do
   ## User registration
 
   @doc """
-  Registers a user.
+  Whether a visitor can make an account at /users/register: anyone when
+  `PeonTemplate.SiteAccess.signups?/0` is true, otherwise only the first
+  account (the admin).
+  """
+  def registration_open?(signups? \\ SiteAccess.signups?()), do: signups? or no_users?()
+
+  @doc "Whether nobody has an account yet, so the next one is the admin."
+  def no_users?, do: not Repo.exists?(User)
+
+  @doc """
+  Registers a user. The first account is the admin.
 
   ## Examples
 
@@ -78,18 +89,27 @@ defmodule PeonTemplate.Accounts do
   def register_user(attrs) do
     %User{}
     |> User.email_changeset(attrs)
-    |> Repo.insert()
+    |> insert_user()
   end
 
   @doc """
   Registers a user with email and password. The account is confirmed at once.
+  The first account is the admin.
   """
   def register_user_with_password(attrs) do
     %User{}
     |> User.email_changeset(attrs)
     |> User.password_changeset(attrs)
     |> User.confirm_changeset()
-    |> Repo.insert()
+    |> insert_user()
+  end
+
+  defp insert_user(changeset) do
+    Repo.transact(fn ->
+      changeset
+      |> Ecto.Changeset.put_change(:admin, no_users?())
+      |> Repo.insert()
+    end)
   end
 
   @doc """
@@ -99,6 +119,37 @@ defmodule PeonTemplate.Accounts do
     user
     |> User.email_changeset(attrs, Keyword.put_new(opts, :validate_unique, false))
     |> User.password_changeset(attrs, hash_password: false)
+  end
+
+  ## Admin
+
+  @doc "Every account, the oldest first. Only for admins."
+  def list_users(%Scope{user: %User{admin: true}}) do
+    Repo.all(from(u in User, order_by: [asc: u.id]))
+  end
+
+  @doc """
+  An admin adds an account with an email and a first password, which the
+  admin passes on. The account is confirmed at once and is not an admin.
+  """
+  def add_user(%Scope{user: %User{admin: true}}, attrs) do
+    %User{}
+    |> User.email_changeset(attrs)
+    |> User.password_changeset(attrs)
+    |> User.confirm_changeset()
+    |> Repo.insert()
+  end
+
+  @doc """
+  An admin removes another account, with its sessions. Returns the removed
+  user and its tokens, to disconnect (`PeonTemplateWeb.UserAuth.disconnect_sessions/1`).
+  """
+  def delete_user(%Scope{user: %User{admin: true, id: admin_id}}, %User{id: id} = user)
+      when id != admin_id do
+    Repo.transact(fn ->
+      tokens = Repo.all_by(UserToken, user_id: user.id)
+      with {:ok, user} <- Repo.delete(user), do: {:ok, {user, tokens}}
+    end)
   end
 
   ## Settings

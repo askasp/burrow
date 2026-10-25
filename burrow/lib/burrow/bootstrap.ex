@@ -4,7 +4,9 @@ defmodule Burrow.Bootstrap do
   login the owner picked, run through `mix format` once (renaming the
   template's modules changes line lengths), as change #1 of its history. A
   `"basic"` login becomes the app's secrets `BASIC_AUTH_USERNAME` and
-  `BASIC_AUTH_PASSWORD`; without them the owner is asked for them.
+  `BASIC_AUTH_PASSWORD`; without them the owner is asked for them. With
+  `"accounts"`, `signups` picks whether anyone can sign up or only the
+  people the first account (the admin) adds.
   """
 
   require Logger
@@ -26,7 +28,8 @@ defmodule Burrow.Bootstrap do
         Template.instantiate(
           Application.fetch_env!(:burrow, :template_dir),
           otp_app,
-          project.auth
+          project.auth,
+          signups: project.signups == true
         )
 
       {tree, blobs} = formatted(project, tree, blobs)

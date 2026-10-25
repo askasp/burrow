@@ -130,6 +130,22 @@ defmodule Burrow.ProjectsTest do
       assert Project.basic_login(stored) == nil
     end
 
+    test "with accounts, sign-ups are off unless picked, and only handed to the new app" do
+      scope = user_scope_fixture()
+
+      {:ok, closed} = Projects.create(scope, %{"name" => "Closed"})
+      refute closed.signups
+
+      {:ok, open} = Projects.create(scope, %{"name" => "Signups", "signups" => "true"})
+      assert open.auth == "accounts" and open.signups
+
+      # Other logins have no accounts to sign up for.
+      {:ok, public} =
+        Projects.create(scope, %{"name" => "Public", "auth" => "open", "signups" => "true"})
+
+      refute public.signups
+    end
+
     test "doesn't apply to a repo project" do
       {:ok, project} =
         Projects.create(user_scope_fixture(), %{

@@ -5,6 +5,8 @@ defmodule PeonTemplateWeb.UserLive.RegistrationTest do
   import Phoenix.LiveViewTest
   import PeonTemplate.AccountsFixtures
 
+  alias PeonTemplate.{Accounts, SiteAccess}
+
   describe "Registration page" do
     test "renders registration page", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/users/register")
@@ -52,19 +54,79 @@ defmodule PeonTemplateWeb.UserLive.RegistrationTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :info) == "Account created successfully!"
     end
 
-    test "renders errors for duplicated email", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/users/register")
+    test "the first account is the admin", %{conn: conn} do
+      {:ok, lv, html} = live(conn, ~p"/users/register")
+      assert html =~ "this account is the admin"
 
-      user = user_fixture(%{email: "test@email.com"})
+      email = unique_user_email()
 
-      result =
+      lv
+      |> form("#registration_form", user: %{email: email, password: valid_user_password()})
+      |> render_submit()
+
+      assert Accounts.get_user_by_email(email).admin
+    end
+  end
+
+  # The tests follow the switch, so they pass whichever way it is set.
+  if SiteAccess.signups?() do
+    describe "with sign-ups open" do
+      test "anyone can register, but only the first account is the admin", %{conn: conn} do
+        user_fixture()
+
+        {:ok, lv, html} = live(conn, ~p"/users/register")
+        refute html =~ "this account is the admin"
+
+        email = unique_user_email()
+
         lv
-        |> form("#registration_form",
-          user: %{"email" => user.email, "password" => valid_user_password()}
-        )
+        |> form("#registration_form", user: %{email: email, password: valid_user_password()})
         |> render_submit()
 
-      assert result =~ "has already been taken"
+        refute Accounts.get_user_by_email(email).admin
+      end
+
+      test "renders errors for duplicated email", %{conn: conn} do
+        {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+        user = user_fixture(%{email: "test@email.com"})
+
+        result =
+          lv
+          |> form("#registration_form",
+            user: %{"email" => user.email, "password" => valid_user_password()}
+          )
+          |> render_submit()
+
+        assert result =~ "has already been taken"
+      end
+    end
+  else
+    describe "with sign-ups closed" do
+      test "nobody else can register once the admin exists", %{conn: conn} do
+        user_fixture()
+
+        assert {:error, {:redirect, %{to: path, flash: flash}}} = live(conn, ~p"/users/register")
+        assert path == ~p"/users/log-in"
+        assert flash["error"] =~ "Sign-ups are closed"
+      end
+
+      test "a form opened before the admin registered is turned away", %{conn: conn} do
+        {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+        user_fixture()
+        email = unique_user_email()
+
+        result =
+          lv
+          |> form("#registration_form",
+            user: %{"email" => email, "password" => valid_user_password()}
+          )
+          |> render_submit()
+
+        assert {:error, {:redirect, %{to: "/users/log-in"}}} = result
+        refute Accounts.get_user_by_email(email)
+      end
     end
   end
 

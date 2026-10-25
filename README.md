@@ -35,7 +35,7 @@ A change goes live in five stages:
  "start": "docker compose up -d --build", "stop": "docker compose down -v", "ready": "/"}
 ```
 
-**Login.** A new project picks its app's login: user accounts (phx.gen.auth, email and password), one username and password for everyone (HTTP basic auth; they become the secrets `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`), or open. Basic and open apps are made without the accounts code at all: `Burrow.Template` leaves out what the template marks `peon:accounts-only` / `peon:if-accounts`.
+**Login.** A new project picks its app's login: user accounts (phx.gen.auth, email and password; the first account is the admin and adds the others at `/users/admin`, and "Allow sign-ups" lets anyone register too, `SiteAccess.signups?/0`), one username and password for everyone (HTTP basic auth; they become the secrets `BASIC_AUTH_USERNAME` and `BASIC_AUTH_PASSWORD`), or open. Basic and open apps are made without the accounts code at all: `Burrow.Template` leaves out what the template marks `peon:accounts-only` / `peon:if-accounts`.
 
 **Who can see an app** is one line in it: `<App>.SiteAccess.mode/0` is `:login` (with accounts), `:basic_auth`, `:shared_password` (the secret `SITE_PASSWORD`, asked at `/unlock`) or `:public`. Ask in the chat to switch.
 

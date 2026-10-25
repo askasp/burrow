@@ -9,6 +9,10 @@ runs `mix test` and shows the result in a live preview.
 <!-- peon:if-accounts -->
 - Authentication already exists (phx.gen.auth, email + password, `PeonTemplate.Accounts`).
   Read the user from `@current_scope.user`.
+- The first account is the admin (`user.admin`); admins add and remove
+  accounts at /users/admin. Whether anyone else can sign up at
+  /users/register is `PeonTemplate.SiteAccess.signups?/0`: when the owner asks
+  to open or close sign-ups, change that one line. The tests follow it.
 - The app's pages go in the router's `:app` scope: controller routes next to
   `get "/"`, LiveViews in `live_session :app`. Who may see them is set in one
   place, `PeonTemplate.SiteAccess` (below). Pages that always need an account

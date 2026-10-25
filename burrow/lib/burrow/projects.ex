@@ -93,7 +93,8 @@ defmodule Burrow.Projects do
 
   `"auth"` picks the new app's login (`Project.auths/0`, default
   `"accounts"`); `"basic"` needs `"basic_username"` and `"basic_password"`,
-  which become the app's secrets and are not stored here. A repo project's
+  which become the app's secrets and are not stored here; `"accounts"` takes
+  `"signups"` (default false: the first account adds the others). A repo project's
   `"github_token"` becomes its `GITHUB_TOKEN` secret (`Burrow.GitRepo`).
   """
   def create(%Scope{user: user} = scope, attrs) do

@@ -7,7 +7,9 @@ defmodule Burrow.Template do
   The project picks its login (`auth`):
 
     * `"accounts"` - the template as it is: phx.gen.auth's email and password
-      accounts, `SiteAccess` mode `:login`.
+      accounts, `SiteAccess` mode `:login`. The first account is the admin,
+      who adds the others; with `signups: true` anyone can sign up too
+      (`SiteAccess.signups?/0`).
     * `"basic"` - no accounts; the browser asks for one username and password
       (`SiteAccess` mode `:basic_auth`, the secrets `BASIC_AUTH_USERNAME` and
       `BASIC_AUTH_PASSWORD`).
@@ -29,17 +31,22 @@ defmodule Burrow.Template do
   @auths ~w(accounts basic open)
   @site_access "lib/peon_template/site_access.ex"
   @default_mode "def mode, do: :login"
+  @default_signups "def signups?, do: false"
 
   @marker ~r/^\s*(?:#|<%!--|<!--)\s*peon:(accounts-only|if-accounts|unless-accounts|end)\b/
 
   @doc "The logins a new project can start with."
   def auths, do: @auths
 
-  @doc "Returns `{tree, blobs}` for `Totem.Tree`, ready to import."
-  def instantiate(template_dir, otp_app, auth \\ "accounts") when auth in @auths do
+  @doc """
+  Returns `{tree, blobs}` for `Totem.Tree`, ready to import. Option:
+  `signups: true` lets anyone sign up to an app with accounts.
+  """
+  def instantiate(template_dir, otp_app, auth \\ "accounts", opts \\ []) when auth in @auths do
     module = Macro.camelize(otp_app)
     {tree, blobs} = Totem.Tree.from_dir(template_dir, Burrow.Workspace.ignore(template_dir))
     accounts? = auth == "accounts"
+    signups? = Keyword.get(opts, :signups, false)
 
     Enum.reduce(tree, {%{}, %{}}, fn {path, hash}, {tree, new_blobs} ->
       case variant(path, Map.fetch!(blobs, hash), accounts?) do
@@ -47,7 +54,7 @@ defmodule Burrow.Template do
           {tree, new_blobs}
 
         {:ok, content} ->
-          content = content |> set_mode(path, auth) |> rename(module, otp_app)
+          content = content |> set_mode(path, auth, signups?) |> rename(module, otp_app)
           new_hash = Totem.Blob.hash(content)
 
           {Map.put(tree, rename(path, module, otp_app), new_hash),
@@ -93,18 +100,25 @@ defmodule Burrow.Template do
     end
   end
 
-  # The login the app starts with is the one line in SiteAccess.
-  defp set_mode(content, @site_access, "accounts"), do: content
+  # The login the app starts with is the one line in SiteAccess; with
+  # accounts, so is whether anyone can sign up.
+  defp set_mode(content, @site_access, "accounts", false), do: content
 
-  defp set_mode(content, @site_access, auth) do
+  defp set_mode(content, @site_access, "accounts", true),
+    do: replace_line(content, @default_signups, "def signups?, do: true")
+
+  defp set_mode(content, @site_access, auth, _signups?) do
     mode = if auth == "basic", do: ":basic_auth", else: ":public"
-
-    if String.contains?(content, @default_mode),
-      do: String.replace(content, @default_mode, "def mode, do: " <> mode),
-      else: raise(ArgumentError, "#{@site_access} has no `#{@default_mode}` line")
+    replace_line(content, @default_mode, "def mode, do: " <> mode)
   end
 
-  defp set_mode(content, _path, _auth), do: content
+  defp set_mode(content, _path, _auth, _signups?), do: content
+
+  defp replace_line(content, line, new) do
+    if String.contains?(content, line),
+      do: String.replace(content, line, new),
+      else: raise(ArgumentError, "#{@site_access} has no `#{line}` line")
+  end
 
   defp rename(text, module, otp_app) do
     text |> String.replace(@module, module) |> String.replace(@otp_app, otp_app)

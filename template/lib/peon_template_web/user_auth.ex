@@ -197,6 +197,9 @@ defmodule PeonTemplateWeb.UserAuth do
       on user_token.
       Redirects to login page if there's no logged user.
 
+    * `:require_admin` - Assigns the current_scope like `:require_authenticated`;
+      the user must be an admin. Redirects to the home page otherwise.
+
   ## Examples
 
   Use the `on_mount` lifecycle macro in LiveViews to mount or authenticate
@@ -229,6 +232,21 @@ defmodule PeonTemplateWeb.UserAuth do
         socket
         |> Phoenix.LiveView.put_flash(:error, "You must log in to access this page.")
         |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+
+      {:halt, socket}
+    end
+  end
+
+  def on_mount(:require_admin, _params, session, socket) do
+    socket = mount_current_scope(socket, session)
+
+    if match?(%Scope{user: %Accounts.User{admin: true}}, socket.assigns.current_scope) do
+      {:cont, socket}
+    else
+      socket =
+        socket
+        |> Phoenix.LiveView.put_flash(:error, "Only an admin can open that page.")
+        |> Phoenix.LiveView.redirect(to: ~p"/")
 
       {:halt, socket}
     end

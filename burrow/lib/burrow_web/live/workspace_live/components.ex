@@ -1973,6 +1973,24 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               </option>
             </select>
           </div>
+          <div :if={@p.repo_url == "" and @p.auth == "accounts"}>
+            <input type="hidden" name="project[signups]" value="false" />
+            <label class="check">
+              <input
+                id="np-signups"
+                name="project[signups]"
+                type="checkbox"
+                value="true"
+                checked={@p.signups}
+                aria-describedby="np-signups-hint"
+              /> Allow sign-ups
+            </label>
+            <div id="np-signups-hint" class="mono hint">
+              {if @p.signups,
+                do: "anyone can make an account; the first one is the admin",
+                else: "the first account is the admin and adds everyone else"}
+            </div>
+          </div>
           <div :if={@p.repo_url == "" and @p.auth == "basic"} class="flex flex-col gap-3.5">
             <div>
               <label class="flabel" for="np-user">Username</label>

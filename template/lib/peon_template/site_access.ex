@@ -18,6 +18,13 @@ defmodule PeonTemplate.SiteAccess do
   def mode, do: :login
   # peon:if-accounts
 
+  @doc """
+  Whether anyone can make an account at /users/register. When false, only
+  the first account is made there; the first account is the admin, who adds
+  everyone else at /users/admin.
+  """
+  def signups?, do: false
+
   @doc "Whether people have accounts, so the header offers log in and register."
   def accounts?, do: accounts?(mode())
 

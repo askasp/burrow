@@ -352,6 +352,13 @@ defmodule BurrowWeb.ProjectLive.Index do
             <.input field={@form[:auth]} type="select" label="Login" options={Project.auths()} />
           </div>
           <div
+            :if={blank?(@form[:repo_url].value) and @form[:auth].value == "accounts"}
+            class="min-w-0"
+          >
+            <.input field={@form[:signups]} type="checkbox" label="Allow sign-ups" />
+            <p class="hint">Off: the first account is the admin and adds everyone else.</p>
+          </div>
+          <div
             :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
             class="flex flex-col gap-3"
           >
