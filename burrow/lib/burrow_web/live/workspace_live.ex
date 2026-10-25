@@ -899,6 +899,8 @@ defmodule BurrowWeb.WorkspaceLive do
     case Chat.send_message(socket.assigns.project, socket.assigns.chat.id, text, images) do
       :ok -> update_info(socket, busy?: true)
       {:ok, :no_turn} -> socket
+      {:ok, :cleared} -> put_flash(socket, :info, "Peon starts over. The files stay.")
+      {:error, message} when is_binary(message) -> put_flash(socket, :error, message)
       {:error, reason} -> put_flash(socket, :error, "Could not send: #{inspect(reason)}")
     end
   end

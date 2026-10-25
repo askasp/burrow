@@ -120,6 +120,32 @@ defmodule Burrow.ChatTest do
              Chat.normalize(synthetic)
   end
 
+  test "a compacted conversation is a note; one that failed says why" do
+    compacted = %{
+      "type" => "compaction",
+      "id" => "c1",
+      "status" => "completed",
+      "reason" => "manual",
+      "summary" => "## Objective\n- ..."
+    }
+
+    assert [%{role: :note, kind: "compact", text: "conversation compacted to a summary"}] =
+             Chat.normalize(compacted)
+
+    failed = %{
+      "type" => "compaction",
+      "id" => "c2",
+      "status" => "failed",
+      "reason" => "manual",
+      "error" => %{"type" => "provider.auth", "message" => "Your token has expired."}
+    }
+
+    assert [%{role: :error, text: "Could not compact: Your token has expired."}] =
+             Chat.normalize(failed)
+
+    assert [] = Chat.normalize(%{failed | "status" => "running"})
+  end
+
   test "a model without a login falls back to the agent's first model" do
     ids = ["opencode/minimax-free", "opencode/big-pickle"]
     assert Burrow.OpenCode.usable("openai/gpt-6-sol", ids) == "opencode/minimax-free"

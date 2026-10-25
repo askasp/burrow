@@ -91,7 +91,8 @@ defmodule Burrow.Chat do
   Sends the user's message with `images` (`%{name, mime}`, files in
   `images_dir/2`). "/goal <condition>" sets the chat's goal and starts on
   it; "/goal clear" (or just "/goal") drops it and returns
-  `{:ok, :no_turn}`.
+  `{:ok, :no_turn}`. "/compact" sums the conversation up for the agent to go
+  on from; "/clear" starts it over (`{:ok, :cleared}`), files and all kept.
   """
   def send_message(project, id, text, images \\ []) do
     with {:ok, _info} <- ensure_started(project, id), do: call(id, {:prompt, text, images})
@@ -481,6 +482,9 @@ defmodule Burrow.Chat do
     do: {:noreply, %{state | waiting: [from | state.waiting]}}
 
   defp on_call(:await_ready, _from, state), do: {:reply, ready_reply(state), touch(state)}
+
+  defp on_call({:prompt, "/compact", _images}, _from, state), do: compact(state)
+  defp on_call({:prompt, "/clear", _images}, _from, state), do: clear(state)
 
   defp on_call({:prompt, text, images}, _from, state) do
     case Regex.run(~r{\A/goal(?:\s+(.*))?\z}s, text) do
@@ -1069,6 +1073,19 @@ defmodule Burrow.Chat do
   # incident this chat was fixing back to the user
   # (`Burrow.Incidents.chat_failed/3`).
   defp turn_over(state, raw, messages) do
+    if compacted?(raw),
+      do: hand_back(state, nil),
+      else: turn_over_on(state, raw, messages)
+  end
+
+  # A turn that only compacted the conversation ("/compact") ends there: it
+  # doesn't keep going, and a failed one shows in the thread, not as an incident.
+  defp compacted?(raw) do
+    last = raw |> Enum.reject(&(&1["type"] == "idle")) |> List.last()
+    match?(%{"type" => "compaction", "reason" => "manual"}, last)
+  end
+
+  defp turn_over_on(state, raw, messages) do
     case List.last(messages) do
       %{role: :error} ->
         errors = messages |> Enum.take(-3) |> Enum.filter(&(&1.role == :error))
@@ -1273,11 +1290,8 @@ defmodule Burrow.Chat do
   # still reading is left behind.
   defp prompt(state, text, images) do
     prompted_at = System.system_time(:millisecond)
-    {picked, effort} = model(state)
-    model = Burrow.OpenCode.usable(picked, Client.model_ids(conn(state)))
-    effort = if model == picked, do: effort
 
-    with :ok <- Client.set_model(conn(state), state.session_id, model, effort),
+    with :ok <- set_model(state),
          {:ok, label} <- run_prompt(state, text, attachments(state, images)) do
       typed = with {:goal, typed} <- text, do: typed
       if chat = Chats.get(state.id), do: Chats.started(chat, typed)
@@ -1297,6 +1311,55 @@ defmodule Burrow.Chat do
       {:reply, :ok, state |> broadcast_status() |> touch()}
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  # The model and thinking level picked last, for the session's next turn.
+  defp set_model(state) do
+    {picked, effort} = model(state)
+    model = Burrow.OpenCode.usable(picked, Client.model_ids(conn(state)))
+    Client.set_model(conn(state), state.session_id, model, if(model == picked, do: effort))
+  end
+
+  # "/compact": the model sums the conversation up and the agent goes on from
+  # the summary, a shorter context. Busy, opencode does it at the agent's
+  # next step; idle, it is a turn of its own (turn_over/3 ends it there).
+  defp compact(%{busy?: true} = state) do
+    case Client.compact(conn(state), state.session_id) do
+      :ok -> {:reply, {:ok, :no_turn}, touch(state)}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp compact(state) do
+    prompted_at = System.system_time(:millisecond)
+
+    with :ok <- set_model(state), :ok <- Client.compact(conn(state), state.session_id) do
+      state = %{state | busy?: true, prompted_at: prompted_at, label: nil, note: nil}
+      send(self(), :poll)
+      {:reply, :ok, state |> broadcast_status() |> touch()}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  # "/clear": a new opencode session, so the agent starts over without the
+  # conversation. The chat's files, queue and change stay; its goal goes.
+  defp clear(%{busy?: true} = state),
+    do: {:reply, {:error, "Peon is working. Stop it first, then /clear."}, state}
+
+  defp clear(state) do
+    chat = Chats.get(state.id)
+
+    case Client.create_session(conn(state), chat.title) do
+      {:ok, session_id} ->
+        Chats.set(chat, session_id: session_id)
+        state = %{state | session_id: session_id, messages: [], inbox: [], note: nil}
+        state = state |> set_goal(nil) |> broadcast({:messages, []})
+        {:reply, {:ok, :cleared}, state |> broadcast_status() |> touch()}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -1352,8 +1415,8 @@ defmodule Burrow.Chat do
   defp queue_hint(%{tk?: true}), do: @queue_hint
   defp queue_hint(_state), do: ""
 
-  # Peon's own "/goal" first; commands win over skills of the same name, as
-  # in opencode's own UI.
+  # Peon's own "/goal", "/compact" and "/clear" first; commands win over
+  # skills of the same name, as in opencode's own UI.
   defp slash_commands_of(state) do
     commands = with({:ok, list} <- Client.commands(conn(state)), do: list, else: (_ -> []))
     skills = with({:ok, list} <- Client.skills(conn(state)), do: list, else: (_ -> []))
@@ -1364,7 +1427,13 @@ defmodule Burrow.Chat do
         name: "goal",
         description: "Keep working until this holds (/goal clear stops)",
         kind: :peon
-      }
+      },
+      %{
+        name: "compact",
+        description: "Sum the conversation up; Peon goes on from the summary",
+        kind: :peon
+      },
+      %{name: "clear", description: "Start the conversation over; the files stay", kind: :peon}
     ] ++
       Enum.map(commands, &Map.put(&1, :kind, :command)) ++
       for skill <- skills,
@@ -1428,6 +1497,15 @@ defmodule Burrow.Chat do
         else: parts
     end)
   end
+
+  # "/compact", or opencode's own when the context fills up.
+  def normalize(%{"type" => "compaction", "status" => "completed"} = m),
+    do: [
+      %{id: m["id"], role: :note, text: "conversation compacted to a summary", kind: "compact"}
+    ]
+
+  def normalize(%{"type" => "compaction", "status" => "failed"} = m),
+    do: [%{id: m["id"], role: :error, text: "Could not compact: #{error_text(m["error"])}"}]
 
   def normalize(%{"type" => "idle", "outcome" => outcome} = m) when outcome != "succeeded",
     do: [%{id: m["id"], role: :error, text: "The agent stopped: #{outcome}"}]

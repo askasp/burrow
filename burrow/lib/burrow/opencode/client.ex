@@ -73,6 +73,17 @@ defmodule Burrow.OpenCode.Client do
     end
   end
 
+  @doc """
+  Compacts the session: its model sums the conversation up and the agent goes
+  on from the summary. Busy, it happens at the agent's next step.
+  """
+  def compact(conn, session_id) do
+    case Req.post(req(conn), url: "/api/session/#{session_id}/compact", json: %{}) do
+      {:ok, %{status: 200}} -> :ok
+      other -> {:error, other}
+    end
+  end
+
   @doc "Runs a command (e.g. `review`) with its arguments as a user message."
   def command(conn, session_id, name, arguments) do
     case Req.post(req(conn),
