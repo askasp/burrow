@@ -47,6 +47,14 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert_redirect(view, ~p"/projects/#{other.id}")
     end
 
+    test "once up, opens what was asked for, such as a new chat", %{conn: conn, user: user} do
+      {:ok, other} = Projects.create(Scope.for_user(user), %{"name" => "Later"})
+      {:ok, view, _html} = live(conn, ~p"/projects/#{other.id}/c/new")
+
+      Phoenix.PubSub.broadcast(Burrow.PubSub, "cells", {:cell, other.id, :running})
+      assert_redirect(view, ~p"/projects/#{other.id}/c/new")
+    end
+
     test "is only for those who can open the project", %{project: project} do
       stranger = user_fixture()
       conn = log_in_user(build_conn(), stranger)

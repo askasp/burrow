@@ -43,7 +43,7 @@ defmodule BurrowWeb.WorkspaceLive do
   alias BurrowWeb.Peek
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
+  def mount(%{"id" => id} = params, _session, socket) do
     scope = socket.assigns.current_scope
     project = Projects.get!(scope, id)
 
@@ -56,7 +56,14 @@ defmodule BurrowWeb.WorkspaceLive do
         theme: scope.user.theme,
         folded_days: scope.user.folded_days,
         # Another place whose chats the drawer lists (BurrowWeb.Peek)
-        peek: nil
+        peek: nil,
+        # Where a project still starting opens once it is up: the chat asked
+        # for (or /c/new), else the one worked on last
+        after_start:
+          if(params["chat"],
+            do: ~p"/projects/#{project.id}/c/#{params["chat"]}",
+            else: ~p"/projects/#{project.id}"
+          )
       )
 
     if connected?(socket) do
@@ -758,7 +765,7 @@ defmodule BurrowWeb.WorkspaceLive do
         {:cell, id, :running},
         %{assigns: %{ready: false, burrow_project: %{id: id}}} = socket
       ),
-      do: {:noreply, push_navigate(socket, to: socket.assigns.base)}
+      do: {:noreply, push_navigate(socket, to: socket.assigns.after_start)}
 
   def handle_info(
         {:cell, id, status},

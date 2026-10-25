@@ -4,8 +4,10 @@ defmodule BurrowWeb.ProjectLive.Index do
   teams, with what it is doing (`Burrow.Activity`), its latest change and
   its chats. A card opens the project's workspace; its ⋯ menu restarts the
   project and, for its owner, shares, hands over, adds staging and prod or
-  deletes it. New project opens the form. Under "No project", Chats with
-  the latest general chats.
+  deletes it. New project, by the title, opens the form. + starts a chat:
+  the page has no "here", so it asks where (Chats, a project, or a new
+  project), next to the rail on wide screens and from the bottom on phones.
+  Under "No project", Chats with the latest general chats.
   """
 
   use BurrowWeb, :live_view
@@ -53,6 +55,10 @@ defmodule BurrowWeb.ProjectLive.Index do
     )
     |> Peek.reload(nil)
   end
+
+  # + asks where to start a chat; picking a place opens a fresh one there.
+  defp show_start, do: JS.show(to: "#start-chat")
+  defp hide_start, do: JS.hide(to: "#start-chat")
 
   # The drawer opens on the project opened last, else on Chats.
   defp first_peek(socket) do
@@ -358,7 +364,32 @@ defmodule BurrowWeb.ProjectLive.Index do
           />
         </div>
       </nav>
-      <.rail new_chat={JS.navigate(~p"/chats")} user={@current_scope.user} home? />
+      <.rail new_chat={show_start()} user={@current_scope.user} home? />
+      <div id="start-chat" class="startw" style="display: none">
+        <div class="start-scrim" aria-hidden="true" phx-click={hide_start()}></div>
+        <div
+          class="pop start"
+          role="dialog"
+          aria-label="Start a chat"
+          phx-window-keydown={hide_start()}
+          phx-key="Escape"
+        >
+          <div class="grab" aria-hidden="true"></div>
+          <div class="h">Start a chat in</div>
+          <.link navigate={~p"/chats"} class="mi">
+            <span class="sav"><.icon name="hero-chat-bubble-bottom-center" class="size-[18px]" /></span>
+            <span class="pn"><span>Chats</span><span class="mm">No project · ask, search, think</span></span>
+          </.link>
+          <.link :for={p <- @projects} navigate={~p"/projects/#{p.id}/c/new"} class="mi">
+            <span class="sav ini">{String.upcase(String.first(p.name))}</span>
+            <span class="flex-1 truncate">{p.name}</span>
+          </.link>
+          <div class="msep" role="separator"></div>
+          <button type="button" class="mi" phx-click={hide_start() |> JS.push("new_project")}>
+            <.icon name="hero-plus" class="size-5" /><span class="flex-1">New project</span>
+          </button>
+        </div>
+      </div>
       <main class="pr-main">
         <header class="pr-bar">
           <button
@@ -369,7 +400,13 @@ defmodule BurrowWeb.ProjectLive.Index do
           >
             <.icon name="hero-bars-2" class="size-5" />
           </button>
-          <button type="button" class="icon-btn" aria-label="New project" phx-click="new_project">
+          <button
+            type="button"
+            class="icon-btn"
+            aria-label="New chat"
+            aria-haspopup="dialog"
+            phx-click={show_start()}
+          >
             <.icon name="hero-plus" class="size-5" />
           </button>
         </header>

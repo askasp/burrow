@@ -300,12 +300,35 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .pr-root .plnk { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--text-3); font-family: inherit; font-size: 13.5px; cursor: pointer }
 .pr-root .plnk:hover { color: var(--text) }
 .pr-root :is(.pcn, .grow, .plnk):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
-@media (max-width: 760px) {
-  .pr-root .pr-main { padding: 0 20px 32px }
+/* + on the projects page asks where to start a chat: next to the rail on
+   wide screens, a sheet from the bottom where the rail is away */
+.pr-root .startw { position: fixed; inset: 0; z-index: 70 }
+.pr-root .start-scrim { position: absolute; inset: 0 }
+.pr-root .pop.start { position: absolute; top: 104px; left: 60px; width: 290px; z-index: 1 }
+.pr-root .start .grab { display: none }
+.pr-root .start .h { padding: 8px 10px 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3) }
+.pr-root .start .mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-family: inherit; font-size: 14.5px; text-align: left; text-decoration: none; cursor: pointer }
+.pr-root .start .mi:hover { background: var(--surface) }
+.pr-root .start .mi:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.pr-root .start .sav { flex: none; width: 32px; height: 32px; border-radius: 9px; background: var(--surface); color: var(--text-2); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600 }
+.pr-root .start .sav.ini { border: 1px solid var(--border); color: var(--text) }
+.pr-root .start .pn .mm { font-size: 12.5px }
+@media (max-width: 960px) {
+  .pr-root .pr-main { padding-top: 0 }
   .pr-root .pr-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 56px; margin: 0 -14px 4px; background: var(--bg) }
   .pr-root .pr-bar .icon-btn { width: 44px; height: 44px; border: 0; border-radius: 22px }
+  .pr-root .start-scrim { background: rgba(10, 8, 6, .5) }
+  .pr-root .pop.start { top: auto; right: 0; bottom: 0; left: 0; width: auto; padding: 8px 12px 24px; border: 0; border-radius: 20px 20px 0 0; background: var(--surface) }
+  .pr-root .start .grab { display: block; width: 36px; height: 4px; margin: 2px auto 8px; border-radius: 2px; background: var(--border-strong) }
+  .pr-root .start .mi:hover { background: var(--raised) }
+  .pr-root .start .sav { background: var(--raised) }
+}
+@media (max-width: 760px) {
+  .pr-root .pr-main { padding: 0 20px 32px }
   .pr-root .pr-head h1 { font-size: 30px; line-height: 38px }
-  .pr-root .pr-head .pr-new, .pr-root .phead { display: none }
+  .pr-root .phead { display: none }
+  .pr-root .pr-head { align-items: flex-start; flex-wrap: nowrap }
+  .pr-root .pr-new { height: 36px; margin-top: 1px; padding: 0 12px; font-size: 13px }
   .pr-root .drow { grid-template-columns: 64px minmax(0, 1fr) 44px; column-gap: 14px }
   .pr-root .drow { min-height: 88px; padding: 12px 8px }
   .pr-root .mini { width: 64px; height: 15px }

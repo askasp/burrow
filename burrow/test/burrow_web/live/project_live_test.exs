@@ -141,6 +141,22 @@ defmodule BurrowWeb.ProjectLiveTest do
       %{project: project}
     end
 
+    test "+ asks where to start a chat: Chats, a project, or a new project", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, lv, _html} = live(conn, ~p"/projects")
+      assert has_element?(lv, ".pr-bar button[aria-label='New chat']")
+      assert has_element?(lv, "#start-chat a[href='/chats']", "Chats")
+      assert has_element?(lv, "#start-chat a[href='/projects/#{project.id}/c/new']", "Watchtower")
+      refute has_element?(lv, "#new-project-dialog")
+
+      lv |> element("#start-chat button", "New project") |> render_click()
+      assert has_element?(lv, "#new-project-dialog #project_form")
+      # New project itself is by the title.
+      assert has_element?(lv, ".pr-head #new-project", "New project")
+    end
+
     test "its card opens its workspace", %{conn: conn, project: project} do
       {:ok, lv, _html} = live(conn, ~p"/projects")
       assert has_element?(lv, "#project-#{project.id} a.nm[href='/projects/#{project.id}']")
