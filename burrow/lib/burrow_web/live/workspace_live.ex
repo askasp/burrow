@@ -277,8 +277,12 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("add_ticket", %{"text" => text}, socket) do
     %{project: project, chat: chat} = socket.assigns
 
-    with text when text != "" <- String.trim(text), do: Chat.add_ticket(project, chat.id, text)
-    {:noreply, socket}
+    with text when text != "" <- String.trim(text),
+         :ok <- Chat.add_ticket(project, chat.id, text) do
+      {:noreply, push_event(socket, "queue:added", %{})}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   def handle_event("work_queue", _params, socket),

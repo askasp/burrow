@@ -355,6 +355,11 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert [%{id: id, status: "in_progress"}] = Chat.tickets(project, chat.id)
       assert id == footer.id
       refute has_element?(view, "#ticket-#{logo.id}")
+
+      # The queue's own box empties once its task is in, ready for the next.
+      view |> element("#queue-add-form") |> render_submit(%{"text" => "Add a header"})
+      assert has_element?(view, "#queue .qrow", "Add a header")
+      assert_push_event(view, "queue:added", %{})
     end
 
     test "the chat's goal shows in the box until it is dropped", %{conn: conn, project: project} do

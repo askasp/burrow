@@ -1443,7 +1443,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               <.icon name="hero-trash" class="size-4" />
             </button>
           </div>
-          <form id={"queue-add-#{length(@tickets)}"} class="qadd" phx-submit="add_ticket">
+          <form id="queue-add-form" class="qadd" phx-submit="add_ticket" phx-hook=".QueueAdd">
             <label class="sr-only" for="queue-add">Add a task to the queue</label>
             <input
               id="queue-add"
@@ -1456,6 +1456,18 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               <.icon name="hero-plus" class="size-5" />
             </button>
           </form>
+          <script :type={Phoenix.LiveView.ColocatedHook} name=".QueueAdd">
+            // The box empties once its task is in the queue, ready for the next.
+            export default {
+              mounted() {
+                this.handleEvent("queue:added", () => {
+                  const input = this.el.querySelector("input")
+                  input.value = ""
+                  input.focus()
+                })
+              }
+            }
+          </script>
           <p class="qhelp">Peon takes these in order when the current task is done.</p>
           <button
             :if={!@busy? && @next != []}
