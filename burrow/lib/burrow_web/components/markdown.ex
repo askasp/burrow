@@ -1,6 +1,7 @@
 defmodule BurrowWeb.Markdown do
   @moduledoc """
-  A small Markdown reader for Peon's answers in Chats (`BurrowWeb.ChatsLive`):
+  A small Markdown reader for Peon's answers, in Chats (`BurrowWeb.ChatsLive`)
+  and in a project's chats (`BurrowWeb.WorkspaceLive`):
   paragraphs, headings, lists (one level deep), code blocks, quotes, rules
   and simple tables; inline code, bold, italics, links and citations
   ("[1]"). The page is built from HEEx, so nothing in the text becomes
@@ -173,13 +174,14 @@ defmodule BurrowWeb.Markdown do
   attr :cites, :any, default: MapSet.new(), doc: "the numbers that are sources"
   attr :turn, :string, default: nil, doc: "the answer's turn, for its citations"
   attr :cited, :any, default: nil, doc: "the citation picked: `{turn, n}`"
+  attr :class, :any, default: nil
 
   @doc "Peon's answer, read as Markdown; its citations are buttons (`cite` events)."
   def markdown(assigns) do
     assigns = assign(assigns, blocks: parse(assigns.text))
 
     ~H"""
-    <div class="md">
+    <div class={["md", @class]}>
       <.block :for={b <- @blocks} block={b} cites={@cites} turn={@turn} cited={@cited} />
     </div>
     """

@@ -54,7 +54,7 @@ defmodule BurrowWeb.WorkspaceLive.ComponentsTest do
 
       html = render_component(&Components.block/1, block: {:peon, items, true})
       doc = LazyHTML.from_fragment(html)
-      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&LazyHTML.text/1) end
+      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&String.trim(LazyHTML.text(&1))) end
 
       # The answer, with Peon's "Zug zug."; the preamble isn't shown
       assert text.(".say-agent") == ["Zug zug. Done."]
@@ -81,7 +81,7 @@ defmodule BurrowWeb.WorkspaceLive.ComponentsTest do
 
       html = render_component(&Components.block/1, block: {:peon, items, false}, live: true)
       doc = LazyHTML.from_fragment(html)
-      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&LazyHTML.text/1) end
+      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&String.trim(LazyHTML.text(&1))) end
 
       assert text.(".say-agent") == ["Looking around first."]
       assert text.(".qline") |> Enum.map(&String.trim/1) == ["Working through 2 steps"]
@@ -101,12 +101,38 @@ defmodule BurrowWeb.WorkspaceLive.ComponentsTest do
 
       html = render_component(&Components.block/1, block: {:peon, items, false})
       doc = LazyHTML.from_fragment(html)
-      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&LazyHTML.text/1) end
+      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&String.trim(LazyHTML.text(&1))) end
 
       assert text.(".say-agent") == ["One done.", "Two done."]
       assert length(text.(".qline")) == 2
       assert [note] = text.(".evt.note")
       assert note =~ "on to the last ticket in the queue"
+    end
+
+    test "what Peon says reads as Markdown; its \"Zug zug.\" stands over a heading" do
+      answer = """
+      ### 1. Blocking: no migration
+
+      `schemas/doctor-messages.ts` adds two tables:
+
+      - **CI:** fails on a dirty `git status`
+      - **Production:** every route 500s
+
+      ```ts
+      const a = 1;
+      ```
+      """
+
+      items = Components.turn_items([tool("t1", "read /app/a.ex"), said("a", answer)])
+      html = render_component(&Components.block/1, block: {:peon, items, true})
+      doc = LazyHTML.from_fragment(html)
+      text = fn sel -> doc |> LazyHTML.query(sel) |> Enum.map(&String.trim(LazyHTML.text(&1))) end
+
+      assert text.(".say-agent > p:first-child") == ["Zug zug."]
+      assert text.(".say-agent .mdh") == ["1. Blocking: no migration"]
+      assert text.(".say-agent li strong") == ["CI:", "Production:"]
+      assert "schemas/doctor-messages.ts" in text.(".say-agent p code")
+      assert text.(".say-agent pre code") == ["const a = 1;"]
     end
   end
 end

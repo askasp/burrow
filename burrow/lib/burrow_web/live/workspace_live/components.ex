@@ -7,6 +7,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   use BurrowWeb, :html
 
+  import BurrowWeb.Markdown, only: [markdown: 1]
+
   alias Burrow.{Activity, Chats}
 
   ## Chat drawer
@@ -2802,7 +2804,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <span class="ln"></span>
           </div>
           <div :if={part[:error]} class="say-error">{part.error.text}</div>
-          <p :for={text <- part[:texts] || []} class="say-agent">{text}</p>
+          <.markdown :for={text <- part[:texts] || []} text={text} class="say-agent" />
           <.steps :if={part[:tools] not in [nil, []]} tools={part.tools} live={part.live} />
         <% end %>
         <div :if={@drawn != []} class="blink">
@@ -2815,10 +2817,16 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   # What the agent said, its own "Zug zug." off; the turn's first words get
-  # Peon's, when it answers the user.
+  # Peon's, when it answers the user: in its first paragraph, or on its own
+  # over a heading, list or code.
   defp say_text(message, ack?) do
     text = String.replace(message.text, ~r/\A\s*zug zug\.?\s*/i, "")
-    if ack?, do: "Zug zug. " <> text, else: text
+
+    cond do
+      not ack? -> text
+      match?([{:p, _} | _], BurrowWeb.Markdown.parse(text)) -> "Zug zug. " <> text
+      true -> "Zug zug.\n\n" <> text
+    end
   end
 
   defp drawn_text([one]), do: "#{one} is in Design."

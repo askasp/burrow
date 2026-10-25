@@ -539,7 +539,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ws-inbox .meta { display: flex; gap: 10px; align-items: baseline }
 .ws-root .say-peon-turn { display: flex; gap: 10px; align-items: flex-start }
 .ws-root .say-peon-turn > svg { margin-top: 1px }
-.ws-root .say-agent { margin: 0; font-size: 15px; line-height: 23px; white-space: pre-wrap }
+.ws-root .say-agent { margin: 0; font-size: 15px; line-height: 23px }
 /* One quiet line per part of a turn: "Worked through 10 steps · 2 files changed" */
 .ws-root .qsteps > summary, .ws-root .result > summary, .ws-root .qdone > summary { list-style: none }
 .ws-root :is(.qsteps, .result, .qdone) > summary::-webkit-details-marker { display: none }
@@ -901,6 +901,10 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .md table { border-collapse: collapse; font-size: 14px; line-height: 20px }
 .ws-root .md th, .ws-root .md td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top }
 .ws-root .md th { font-weight: 600; border-bottom-color: var(--border-strong) }
+/* In a project's chat, the size of the rest of the thread */
+.ws-root .md.say-agent { font-size: 15px; line-height: 23px }
+.ws-root .md.say-agent > * { margin-bottom: 10px }
+.ws-root .md.say-agent > :last-child { margin-bottom: 0 }
 .ws-root .cite { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; margin: 0 1px; padding: 0 4px; border: 0; border-radius: 4px; background: var(--sunken); color: var(--text-2); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; line-height: 1; vertical-align: 2px; cursor: pointer }
 .ws-root .cite:hover, .ws-root .cite[aria-pressed="true"] { background: var(--text); color: var(--bg) }
 @media (max-width: 1100px) { .ws-root .gc-src { display: none } .ws-root .gc-srcbtn { display: none } }
