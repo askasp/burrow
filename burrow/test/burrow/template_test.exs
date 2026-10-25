@@ -33,6 +33,8 @@ defmodule Burrow.TemplateTest do
     assert closed["lib/sauna/accounts.ex"] =~ "def registration_open?"
     assert closed["lib/sauna_web/live/user_live/admin.ex"] =~ "defmodule SaunaWeb.UserLive.Admin"
     assert closed["lib/sauna_web/router.ex"] =~ ~s(live "/users/admin")
+    assert closed["lib/sauna/backoffice.ex"] =~ "defmodule Sauna.Backoffice"
+    assert closed["lib/sauna_web/router.ex"] =~ ~s(live "/users/admin/data/:schema")
 
     open = files("accounts", signups: true)
     assert open["lib/sauna/site_access.ex"] =~ "def signups?, do: true"
@@ -51,6 +53,8 @@ defmodule Burrow.TemplateTest do
 
       assert files["lib/sauna/site_access.ex"] =~ "def mode, do: #{unquote(mode)}"
       refute files["lib/sauna/accounts.ex"]
+      refute files["lib/sauna/backoffice.ex"]
+      refute Enum.any?(Map.keys(files), &(&1 =~ "data_live"))
       refute Enum.any?(Map.keys(files), &(&1 =~ ~r/accounts|user_|users_auth/))
 
       # Bootstrap unlocks the deps it no longer uses (mix deps.unlock --unused).

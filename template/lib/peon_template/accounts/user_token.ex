@@ -14,7 +14,8 @@ defmodule PeonTemplate.Accounts.UserToken do
   @session_validity_in_days 14
 
   schema "users_tokens" do
-    field :token, :binary
+    # Session tokens: never shown, not even on the admin's data pages.
+    field :token, :binary, redact: true
     field :context, :string
     field :sent_to, :string
     field :authenticated_at, :utc_datetime

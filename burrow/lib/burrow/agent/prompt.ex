@@ -250,7 +250,9 @@ defmodule Burrow.Agent.Prompt do
     Read the logged-in user from `@current_scope.user`. If `SiteAccess` has `signups?/0`,
     the first account is the admin, who adds and removes accounts at /users/admin, and
     `signups?/0` decides whether anyone else can sign up: to open or close sign-ups,
-    change that one line.\
+    change that one line. Admins also see, edit and delete every table's rows at
+    /users/admin/data (`Backoffice`, which finds new schemas itself); mark secret
+    fields `redact: true` to keep them off it.\
     """
   end
 

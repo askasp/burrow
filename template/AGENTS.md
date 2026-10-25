@@ -13,6 +13,11 @@ runs `mix test` and shows the result in a live preview.
   accounts at /users/admin. Whether anyone else can sign up at
   /users/register is `PeonTemplate.SiteAccess.signups?/0`: when the owner asks
   to open or close sign-ups, change that one line. The tests follow it.
+- Admins see, search, add, edit and delete the rows of every table at
+  /users/admin/data (`PeonTemplate.Backoffice`). It finds the schemas itself:
+  a new schema needs nothing. Mark secrets and tokens `redact: true` so they
+  never show there. Rows are saved through the schema's `changeset/2` when it
+  has one, so keep that one fit for an admin's edits (or leave it out).
 - The app's pages go in the router's `:app` scope: controller routes next to
   `get "/"`, LiveViews in `live_session :app`. Who may see them is set in one
   place, `PeonTemplate.SiteAccess` (below). Pages that always need an account
@@ -29,8 +34,8 @@ runs `mix test` and shows the result in a live preview.
 
 ## Data we provide ourselves is code, not tables
 
-Peon changes this app through chats, so there are no admin panels. Data the
-business provides itself lives in code that you edit, test and ship like any
+Peon changes this app through chats, so data the business provides itself
+needs no admin screens. It lives in code that you edit, test and ship like any
 other change: Elixir modules (data as plain maps or structs in functions) or
 files under `priv/` (Markdown, JSON, CSV). Examples: products, prices,
 categories, opening hours, email texts, roles and permissions, settings.

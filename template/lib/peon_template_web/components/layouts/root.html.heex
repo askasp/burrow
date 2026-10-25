@@ -50,6 +50,9 @@
         <li :if={@current_scope.user.admin}>
           <.link href={~p"/users/admin"} data-kb-go="u" data-kb-label="Users">Users</.link>
         </li>
+        <li :if={@current_scope.user.admin}>
+          <.link href={~p"/users/admin/data"} data-kb-go="d" data-kb-label="Data">Data</.link>
+        </li>
         <li>
           <.link href={~p"/users/settings"} data-kb-go=",">Settings</.link>
         </li>

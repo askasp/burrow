@@ -81,6 +81,11 @@ defmodule PeonTemplateWeb.Router do
     live_session :require_admin,
       on_mount: [{PeonTemplateWeb.UserAuth, :require_admin}] do
       live "/users/admin", UserLive.Admin, :index
+      live "/users/admin/data", DataLive.Index, :schemas
+      live "/users/admin/data/:schema", DataLive.Index, :rows
+      live "/users/admin/data/:schema/new", DataLive.Form, :new
+      live "/users/admin/data/:schema/:id", DataLive.Show, :show
+      live "/users/admin/data/:schema/:id/edit", DataLive.Form, :edit
     end
 
     post "/users/update-password", UserSessionController, :update_password
