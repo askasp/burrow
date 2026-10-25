@@ -222,6 +222,45 @@ defmodule PeonTemplateWeb.UserAuthTest do
     end
   end
 
+  describe "the dev preview's log in" do
+    setup do
+      Application.put_env(:peon_template, :dev_login, true)
+      on_exit(fn -> Application.delete_env(:peon_template, :dev_login) end)
+    end
+
+    test "logs everyone in as the first admin", %{conn: conn, user: admin} do
+      _other = user_fixture()
+      conn = UserAuth.fetch_current_scope_for_user(conn, [])
+
+      assert conn.assigns.current_scope.user.id == admin.id
+      assert {%{id: id}, _} = Accounts.get_user_by_session_token(get_session(conn, :user_token))
+      assert id == admin.id
+    end
+
+    test "without an admin, admin@example.com becomes one", %{conn: conn} do
+      PeonTemplate.Repo.update_all(Accounts.User, set: [admin: false])
+      conn = UserAuth.fetch_current_scope_for_user(conn, [])
+
+      assert %{email: "admin@example.com", admin: true} = conn.assigns.current_scope.user
+      assert Accounts.get_user_by_email_and_password("admin@example.com", "admin password")
+      assert Accounts.dev_admin().id == conn.assigns.current_scope.user.id
+    end
+
+    test "after logging out people are visitors until they log in", %{conn: conn, user: user} do
+      logged_out = conn |> fetch_cookies() |> UserAuth.log_out_user() |> get_session()
+      visitor = init_test_session(conn, logged_out)
+      refute UserAuth.fetch_current_scope_for_user(visitor, []).assigns.current_scope
+
+      logged_in = visitor |> UserAuth.log_in_user(user) |> get_session()
+      refute logged_in["dev_logged_out"]
+    end
+
+    test "is off unless config/dev.exs turns it on", %{conn: conn} do
+      Application.delete_env(:peon_template, :dev_login)
+      refute UserAuth.fetch_current_scope_for_user(conn, []).assigns.current_scope
+    end
+  end
+
   describe "on_mount :mount_current_scope" do
     setup %{conn: conn} do
       %{conn: UserAuth.fetch_current_scope_for_user(conn, [])}

@@ -121,6 +121,28 @@ defmodule PeonTemplate.Accounts do
     |> User.password_changeset(attrs, hash_password: false)
   end
 
+  @dev_admin %{email: "admin@example.com", password: "admin password"}
+
+  @doc """
+  The admin the dev preview logs everyone in as (`PeonTemplateWeb.UserAuth`):
+  the first admin. While there is none, admin@example.com (password
+  "admin password") becomes one.
+  """
+  def dev_admin do
+    Repo.one(from(u in User, where: u.admin, order_by: [asc: u.id], limit: 1)) ||
+      case get_user_by_email(@dev_admin.email) do
+        nil ->
+          %User{admin: true}
+          |> User.email_changeset(@dev_admin)
+          |> User.password_changeset(@dev_admin)
+          |> User.confirm_changeset()
+          |> Repo.insert!()
+
+        user ->
+          user |> Ecto.Changeset.change(admin: true) |> Repo.update!()
+      end
+  end
+
   ## Admin
 
   @doc "Every account, the oldest first. Only for admins."

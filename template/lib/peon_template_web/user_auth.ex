@@ -58,6 +58,7 @@ defmodule PeonTemplateWeb.UserAuth do
     conn
     |> renew_session(nil)
     |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
+    |> stay_logged_out()
     |> redirect(to: ~p"/")
   end
 
@@ -73,9 +74,31 @@ defmodule PeonTemplateWeb.UserAuth do
       |> assign(:current_scope, Scope.for_user(user))
       |> maybe_reissue_user_session_token(user, token_inserted_at)
     else
-      nil -> assign(conn, :current_scope, Scope.for_user(nil))
+      nil -> maybe_dev_login(conn)
     end
   end
+
+  # The dev preview logs everyone in as the admin, so nobody has to log in to
+  # check a page (`:dev_login`, set in config/dev.exs). After logging out,
+  # people are visitors until they log in again.
+  defp maybe_dev_login(conn) do
+    if dev_login?() and !get_session(conn, :dev_logged_out) do
+      token = Accounts.generate_user_session_token(Accounts.dev_admin())
+      {user, _inserted_at} = Accounts.get_user_by_session_token(token)
+
+      conn
+      |> put_token_in_session(token)
+      |> assign(:current_scope, Scope.for_user(user))
+    else
+      assign(conn, :current_scope, Scope.for_user(nil))
+    end
+  end
+
+  defp stay_logged_out(conn) do
+    if dev_login?(), do: put_session(conn, :dev_logged_out, true), else: conn
+  end
+
+  defp dev_login?, do: Application.get_env(:peon_template, :dev_login, false)
 
   defp ensure_user_token(conn) do
     if token = get_session(conn, :user_token) do

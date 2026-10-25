@@ -72,6 +72,14 @@ and prod ask for them. Don't build other access checks around the mode; extend
 `PeonTemplateWeb.SiteAccess` if a page needs a different rule.
 
 <!-- peon:if-accounts -->
+The preview also logs everyone in as the admin (the first admin, or else
+admin@example.com with the password `admin password`), so pages that need an
+account or an admin can be checked there, with curl too. To see a page as a
+visitor, log out in the browser; it stays logged out until someone logs in.
+The tests don't do this: they log in as before.
+<!-- peon:end -->
+
+<!-- peon:if-accounts -->
 The account links in the header only show in `:login` mode (or when someone is
 logged in).
 <!-- peon:end -->

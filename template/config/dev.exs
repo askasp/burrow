@@ -3,6 +3,12 @@ import Config
 # The preview doesn't ask for the site's password (PeonTemplate.SiteAccess),
 # so its pages can be checked; staging and prod do.
 config :peon_template, :enforce_site_password, false
+# peon:if-accounts
+
+# Nor does it ask anyone to log in: everyone is the admin
+# (PeonTemplateWeb.UserAuth). Log out to see the app as a visitor.
+config :peon_template, :dev_login, true
+# peon:end
 
 # Configure your database
 config :peon_template, PeonTemplate.Repo,
