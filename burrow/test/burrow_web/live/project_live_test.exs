@@ -16,7 +16,11 @@ defmodule BurrowWeb.ProjectLiveTest do
 
   test "creates a project and shows the slug it gets", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
-    assert has_element?(lv, "#drawer .dswitch a[href='/chats']", "Chats")
+    assert has_element?(lv, "#drawer .dswitch #switch-chats", "Chats")
+    # The drawer has All projects, here, and Chats, with no project opened yet.
+    assert has_element?(lv, "#drawer .dhome a[aria-current=page]", "All projects")
+    assert has_element?(lv, ".rail a[aria-current=page][aria-label='All projects']")
+    assert has_element?(lv, "#peek-switch", "Chats")
     # With no projects yet the dialog is open.
     assert has_element?(lv, "#new-project-dialog #project_form")
 
@@ -141,6 +145,27 @@ defmodule BurrowWeb.ProjectLiveTest do
       {:ok, lv, _html} = live(conn, ~p"/projects")
       assert has_element?(lv, "#project-#{project.id} a.nm[href='/projects/#{project.id}']")
       assert has_element?(lv, "#project-#{project.id} .c6", "0 chats")
+    end
+
+    test "the drawer lists its chats, only the user's", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      chat = Burrow.Chats.create(project.id, "Add a booking page", user)
+      theirs = Burrow.Chats.create(project.id, "Someone else's", user_fixture())
+
+      {:ok, lv, _html} = live(conn, ~p"/projects")
+      lv |> element("#switch-#{project.id}") |> render_click()
+      assert has_element?(lv, "#peek-switch", "Watchtower")
+      assert has_element?(lv, "#peek-#{chat.id} a[href='/projects/#{project.id}/c/#{chat.id}']")
+      refute has_element?(lv, "#peek-#{theirs.id}")
+      assert has_element?(lv, "#peek-new[href='/projects/#{project.id}/c/new']", "New chat")
+      assert has_element?(lv, "#drawer .dswitch #switch-#{project.id}[aria-current=true]")
+
+      # Chats from under "No project", or "Switch to".
+      lv |> element("#no-project .plnk", "All chats") |> render_click()
+      assert has_element?(lv, "#peek-switch", "Chats")
     end
 
     @tag :tmp_dir

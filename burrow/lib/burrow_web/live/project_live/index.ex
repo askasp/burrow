@@ -2,17 +2,20 @@ defmodule BurrowWeb.ProjectLive.Index do
   @moduledoc """
   The projects screen: a card per project, yours and those shared with your
   teams, with what it is doing (`Burrow.Activity`), its latest change and
-  its chats. A card opens the project's workspace, which has a rail back to
-  all of them; its ⋯ menu restarts the project and, for its owner, shares,
-  hands over, adds staging and prod or deletes it. New project opens the form.
+  its chats. A card opens the project's workspace; its ⋯ menu restarts the
+  project and, for its owner, shares, hands over, adds staging and prod or
+  deletes it. New project opens the form. Under "No project", Chats with
+  the latest general chats.
   """
 
   use BurrowWeb, :live_view
 
-  import BurrowWeb.WorkspaceLive.Components, only: [place_switch: 1, account_menu: 1, rail: 1]
+  import BurrowWeb.WorkspaceLive.Components,
+    only: [place_switch: 1, account_menu: 1, rail: 1, all_projects: 1, peek_list: 1, peek: 1]
 
-  alias Burrow.{Activity, Cell, Chat, Chats, Projects, Teams}
+  alias Burrow.{Activity, Cell, Chat, Chats, GeneralChats, Projects, Teams}
   alias Burrow.Projects.Project
+  alias BurrowWeb.{ChatsLive, Peek}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -29,8 +32,9 @@ defmodule BurrowWeb.ProjectLive.Index do
      socket
      |> assign(page_title: "Projects", ai_connected: nil)
      |> assign(form: new_form(), slug: nil)
-     |> assign(menu: nil, dialog: nil)
+     |> assign(menu: nil, dialog: nil, peek: nil)
      |> load()
+     |> first_peek()
      |> then(&assign(&1, creating: &1.assigns.projects == []))
      |> start_async(:ai, fn -> Burrow.OpenCode.connected?(scope.user.id) end)}
   end
@@ -39,12 +43,21 @@ defmodule BurrowWeb.ProjectLive.Index do
     scope = socket.assigns.current_scope
     projects = Projects.list(scope)
 
-    assign(socket,
+    socket
+    |> assign(
       projects: projects,
       cards: Map.new(projects, &{&1.id, card(&1)}),
       rail: Enum.map(projects, &rail_entry/1),
-      teams: Teams.list(scope)
+      teams: Teams.list(scope),
+      recent: GeneralChats.list(scope.user.id) |> Enum.filter(& &1.started_at) |> Enum.take(3)
     )
+    |> Peek.reload(nil)
+  end
+
+  # The drawer opens on the project opened last, else on Chats.
+  defp first_peek(socket) do
+    socket = Peek.pick(socket, socket.assigns.current_scope.user.last_project_id || "chats", nil)
+    if socket.assigns.peek, do: socket, else: Peek.pick(socket, "chats", nil)
   end
 
   # A project as the drawer's "Switch to" lists it.
@@ -169,6 +182,10 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   @impl true
   def handle_event("new_project", _params, socket), do: {:noreply, assign(socket, creating: true)}
+
+  # The drawer lists a project's chats, or the general chats.
+  def handle_event("peek", %{"place" => place}, socket),
+    do: {:noreply, Peek.pick(socket, place, nil)}
 
   def handle_event("close_dialog", _params, socket),
     do: {:noreply, assign(socket, creating: false, form: new_form(), slug: nil, dialog: nil)}
@@ -326,17 +343,22 @@ defmodule BurrowWeb.ProjectLive.Index do
         phx-click={JS.remove_class("show-drawer", to: ".ws-root")}
       >
       </div>
-      <nav id="drawer" class="drawer switching" aria-label="Chats and projects" data-kb-zoom-hide>
+      <nav id="drawer" class="drawer" aria-label="Chats and projects" data-kb-zoom-hide>
+        <div class="dlist">
+          <.all_projects current />
+          <.peek_list :if={@peek} peek={@peek} />
+          <.account_menu user={@current_scope.user} />
+        </div>
         <div class="dswitch">
           <.place_switch
             rail={@rail}
-            chats?={false}
+            shown={@peek && @peek.id}
+            back={JS.remove_class("switching", to: "#drawer")}
             new_project={JS.remove_class("show-drawer", to: ".ws-root") |> JS.push("new_project")}
           />
-          <.account_menu user={@current_scope.user} />
         </div>
       </nav>
-      <.rail new_chat={JS.navigate(~p"/chats")} />
+      <.rail new_chat={JS.navigate(~p"/chats")} user={@current_scope.user} home? />
       <main class="pr-main">
         <header class="pr-bar">
           <button
@@ -656,14 +678,24 @@ defmodule BurrowWeb.ProjectLive.Index do
           </ul>
 
           <div class="h pr-sec">No project</div>
-          <.link navigate={~p"/chats"} class="pchat">
-            <span class="pav"><span class="av"><.icon
-              name="hero-chat-bubble-bottom-center"
-              class="size-[18px]"
-            /></span></span>
-            <span class="pn"><span class="nm">Chats</span><span class="mm">Ask, search, think · no project</span></span>
-            <.icon name="hero-chevron-right" class="size-4 muted" />
-          </.link>
+          <div id="no-project" class="pcard">
+            <div class="pchead">
+              <span class="av"><.icon name="hero-chat-bubble-bottom-center" class="size-[18px]" /></span>
+              <button type="button" class="pcn" phx-click={peek("chats")}>
+                <span class="pct">Chats</span><span class="mm">Ask, search, think · no project</span>
+              </button>
+              <.link navigate={~p"/chats"} class="chip" aria-label="New chat without a project">
+                <.icon name="hero-plus" class="size-5" /><span class="cl">New chat</span>
+              </.link>
+            </div>
+            <.link :for={c <- @recent} navigate={~p"/chats/#{c.id}"} class="grow">
+              <span class="gt">{ChatsLive.title(c)}</span>
+              <span class="mono gm">{ChatsLive.sub(c, false)}</span>
+            </.link>
+            <button type="button" class="plnk" phx-click={peek("chats")}>
+              All chats <.icon name="hero-chevron-right" class="size-3.5" />
+            </button>
+          </div>
         </div>
       </main>
     </div>

@@ -17,12 +17,20 @@ defmodule BurrowWeb.ChatsLive do
   use BurrowWeb, :live_view
 
   import BurrowWeb.WorkspaceLive.Components,
-    only: [model_pick: 1, place_switch: 1, account_menu: 1, rail: 1]
+    only: [
+      model_pick: 1,
+      place_switch: 1,
+      account_menu: 1,
+      rail: 1,
+      all_projects: 1,
+      peek_list: 1
+    ]
 
   import BurrowWeb.Markdown, only: [markdown: 1]
 
   alias Burrow.{Activity, Chats, GeneralChat, GeneralChats, Projects}
   alias Burrow.GeneralChats.Sources
+  alias BurrowWeb.Peek
 
   @accept ~w(.png .jpg .jpeg .gif .webp .pdf .txt .md .csv .json)
 
@@ -43,6 +51,8 @@ defmodule BurrowWeb.ChatsLive do
       # The search over chats and where it looks: "chats", "project" (the
       # last project opened) or "everywhere"
       |> assign(q: "", scope: "chats", found: [])
+      # A project whose chats the drawer lists instead (BurrowWeb.Peek)
+      |> assign(peek: nil)
       # The citation picked ({turn, n}) and whether the sources pane shows
       |> assign(cited: nil, show_sources: true)
       # "Send to a project…" and "Start a project from this"
@@ -196,6 +206,10 @@ defmodule BurrowWeb.ChatsLive do
   def handle_event("search", %{"q" => q}, socket),
     do: {:noreply, socket |> assign(q: q) |> search()}
 
+  # The drawer lists a project's chats, or the general chats again.
+  def handle_event("peek", %{"place" => place}, socket),
+    do: {:noreply, Peek.pick(socket, place, "chats")}
+
   def handle_event("scope", %{"scope" => scope}, socket)
       when scope in ~w(chats project everywhere),
       do: {:noreply, socket |> assign(scope: scope) |> search()}
@@ -314,7 +328,8 @@ defmodule BurrowWeb.ChatsLive do
     end
   end
 
-  def handle_info(:rail_changed, socket), do: {:noreply, load_rail(socket)}
+  def handle_info(:rail_changed, socket),
+    do: {:noreply, socket |> load_rail() |> Peek.reload("chats")}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
@@ -429,8 +444,9 @@ defmodule BurrowWeb.ChatsLive do
 
   ## Words
 
-  defp title(%{title: ""}), do: "New chat"
-  defp title(%{title: title}), do: title
+  @doc "A chat's name: its title, or New chat while it is empty."
+  def title(%{title: ""}), do: "New chat"
+  def title(%{title: title}), do: title
 
   # The name "Start a project from this" suggests: the chat's first words.
   defp project_name(%{title: title}) do
@@ -448,8 +464,8 @@ defmodule BurrowWeb.ChatsLive do
 
   @days ["Today", "Yesterday", "This week", "Older"]
 
-  # Started chats by the day of their latest answer; an empty one only while open.
-  defp history(chats, current) do
+  @doc "Started chats by the day of their latest answer; an empty one only while open."
+  def history(chats, current) do
     chats
     |> Enum.filter(&(&1.started_at != nil or (current != nil and &1.id == current.id)))
     |> Enum.group_by(&day(&1.updated_at))
@@ -465,10 +481,11 @@ defmodule BurrowWeb.ChatsLive do
     end
   end
 
-  defp sub(%{started_at: nil}, _busy?), do: "empty"
-  defp sub(_chat, true), do: "searching…"
+  @doc "The line under a chat's name: its sources, and the time if it was today."
+  def sub(%{started_at: nil}, _busy?), do: "empty"
+  def sub(_chat, true), do: "searching…"
 
-  defp sub(chat, false) do
+  def sub(chat, false) do
     sources =
       case chat.sources do
         0 -> "no sources"
@@ -645,7 +662,8 @@ defmodule BurrowWeb.ChatsLive do
         data-kb-zoom-hide
       >
         <div class="dlist">
-          <div class="dtop">
+          <.all_projects />
+          <div :if={!@peek} class="dtop">
             <button
               id="space-switch"
               type="button"
@@ -665,6 +683,7 @@ defmodule BurrowWeb.ChatsLive do
             </button>
           </div>
           <form
+            :if={!@peek}
             id="chat-search"
             class="gc-search"
             phx-change="search"
@@ -701,7 +720,7 @@ defmodule BurrowWeb.ChatsLive do
               </button>
             </div>
           </form>
-          <span class="ncw">
+          <span :if={!@peek} class="ncw">
             <button
               id="new-chat"
               type="button"
@@ -715,7 +734,7 @@ defmodule BurrowWeb.ChatsLive do
               <.icon name="hero-plus" class="size-4 shrink-0" /><span class="dt">New chat</span><kbd>⌃B C</kbd>
             </button>
           </span>
-          <div class="dscroll">
+          <div :if={!@peek} class="dscroll">
             <%= if String.trim(@q) != "" do %>
               <div class="dsec"><span>Found</span></div>
               <div
@@ -767,19 +786,20 @@ defmodule BurrowWeb.ChatsLive do
               </div>
             <% end %>
           </div>
+          <.peek_list :if={@peek} peek={@peek} />
           <.account_menu user={@current_scope.user} />
         </div>
         <div class="dswitch">
           <.place_switch
             rail={@rail}
-            chats?={true}
+            shown={(@peek && @peek.id) || "chats"}
             back={JS.remove_class("switching", to: "#drawer")}
             new_project={JS.navigate(~p"/projects?new")}
           />
         </div>
       </nav>
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
-      <.rail new_chat={JS.push("new_chat")} />
+      <.rail new_chat={JS.push("new_chat")} user={@current_scope.user} />
 
       <div class="ws-main">
         <div class="pbar">

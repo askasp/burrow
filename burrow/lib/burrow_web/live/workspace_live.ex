@@ -40,6 +40,8 @@ defmodule BurrowWeb.WorkspaceLive do
     Teams
   }
 
+  alias BurrowWeb.Peek
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     scope = socket.assigns.current_scope
@@ -52,7 +54,9 @@ defmodule BurrowWeb.WorkspaceLive do
         base: ~p"/projects/#{project.id}",
         user: scope.user.email,
         theme: scope.user.theme,
-        folded_days: scope.user.folded_days
+        folded_days: scope.user.folded_days,
+        # Another place whose chats the drawer lists (BurrowWeb.Peek)
+        peek: nil
       )
 
     if connected?(socket) do
@@ -129,6 +133,9 @@ defmodule BurrowWeb.WorkspaceLive do
 
   @impl true
   def handle_params(_params, _uri, %{assigns: %{ready: false}} = socket), do: {:noreply, socket}
+
+  # /c/new, from the drawer on another page: an empty chat, as New chat gives.
+  def handle_params(%{"chat" => "new"}, _uri, socket), do: {:noreply, new_chat(socket, [])}
 
   def handle_params(%{"chat" => id}, _uri, socket) do
     case Chats.get(socket.assigns.project, socket.assigns.current_scope.user.id, id) do
@@ -645,6 +652,10 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("pane", %{"pane" => pane}, socket) when pane in ["chat", "preview"],
     do: {:noreply, assign(socket, pane: pane)}
 
+  # The drawer lists another place's chats, or this project's again.
+  def handle_event("peek", %{"place" => place}, socket),
+    do: {:noreply, Peek.pick(socket, place, socket.assigns.project.id)}
+
   def handle_event("toggle_preview", _params, socket),
     do: {:noreply, update(socket, :preview_open, &(!&1))}
 
@@ -735,7 +746,10 @@ defmodule BurrowWeb.WorkspaceLive do
     if Projects.visible?(scope, project.id),
       do:
         {:noreply,
-         socket |> assign(burrow_project: Projects.get!(scope, project.id)) |> load_rail()},
+         socket
+         |> assign(burrow_project: Projects.get!(scope, project.id))
+         |> load_rail()
+         |> Peek.reload(project.id)},
       else: {:noreply, push_navigate(socket, to: ~p"/projects")}
   end
 
@@ -1266,9 +1280,10 @@ defmodule BurrowWeb.WorkspaceLive do
         nothing_built?={@nothing_built?}
         repo?={@repo?}
         live_only?={@live_only?}
+        peek={@peek}
       />
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
-      <.rail new_chat={JS.push("new_chat")} />
+      <.rail new_chat={JS.push("new_chat")} user={@current_scope.user} />
 
       <div class="ws-main">
         <div class="ws-split">

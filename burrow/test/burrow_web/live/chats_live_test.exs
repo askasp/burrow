@@ -51,8 +51,8 @@ defmodule BurrowWeb.ChatsLiveTest do
     {:ok, view, _html} = live(conn, ~p"/chats") |> follow_redirect(conn)
     assert has_element?(view, ".ws-hello", "What do you want to know?")
     assert has_element?(view, "#space-switch", "Chats")
-    assert has_element?(view, "#drawer .dswitch a[data-kb-key='0'][aria-current=page]", "Chats")
-    assert has_element?(view, "#drawer .dswitch a.swt", "Watchtower")
+    assert has_element?(view, "#drawer .dswitch #switch-chats[aria-current=true]", "Chats")
+    assert has_element?(view, "#drawer .dswitch button.swt", "Watchtower")
     assert has_element?(view, "#web-toggle[aria-pressed=true]")
     refute has_element?(view, "#send-to-project")
     assert [%{started_at: nil}] = GeneralChats.list(user.id)
@@ -110,7 +110,7 @@ defmodule BurrowWeb.ChatsLiveTest do
 
     {:ok, workspace, _html} = live(conn, ~p"/projects/#{project.id}/c/#{new.id}")
     assert has_element?(workspace, "#from-chip", "↳ from Chats: Web push in LiveView")
-    assert has_element?(workspace, "#drawer .dswitch a[data-kb-key='0']", "Chats")
+    assert has_element?(workspace, "#drawer .dswitch #switch-chats", "Chats")
 
     # Its agent reads the conversation.
     instructions =

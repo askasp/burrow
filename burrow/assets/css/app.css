@@ -286,10 +286,20 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .pr-root .state.ps { display: none }
 .pr-root .ch { font-size: 13.5px; color: var(--text-2) }
 .pr-root .pr-sec { margin: 40px 12px 6px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3) }
-.pr-root .pchat { display: flex; flex-direction: row; align-items: center; gap: 14px; max-width: 520px; min-height: 72px; padding: 12px 8px; border-radius: 14px; color: var(--text); text-decoration: none }
-.pr-root .pchat:hover { background: var(--surface) }
-.pr-root .pav { flex: none; width: 72px; display: flex; justify-content: center }
-.pr-root .pav .av { width: 40px; height: 40px; border-radius: 12px; border: 0; background: var(--surface) }
+/* No project: Chats, New chat, the latest general chats, All chats */
+.pr-root .pcard { max-width: 640px; padding: 6px; border-radius: 18px; background: var(--surface) }
+.pr-root .pchead { display: flex; align-items: center; gap: 12px; padding: 8px 6px 8px 10px }
+.pr-root .pchead .av { border: 0 }
+.pr-root .pcn { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 0; border: 0; background: none; color: var(--text); font-family: inherit; text-align: left; cursor: pointer }
+.pr-root .pcn .pct { font-size: 15px; font-weight: 500; line-height: 22px }
+.pr-root .pcn .mm { font-size: 13px; color: var(--text-3) }
+.pr-root .grow { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px; border-radius: 10px; color: var(--text); font-size: 14.5px; text-decoration: none }
+.pr-root .grow:hover { background: var(--raised) }
+.pr-root .gt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.pr-root .gm { flex: none; font-size: 12px; color: var(--text-3) }
+.pr-root .plnk { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border: 0; background: none; color: var(--text-3); font-family: inherit; font-size: 13.5px; cursor: pointer }
+.pr-root .plnk:hover { color: var(--text) }
+.pr-root :is(.pcn, .grow, .plnk):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
 @media (max-width: 760px) {
   .pr-root .pr-main { padding: 0 20px 32px }
   .pr-root .pr-bar { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; height: 56px; margin: 0 -14px 4px; background: var(--bg) }
@@ -301,7 +311,9 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .pr-root .mini { width: 64px; height: 15px }
   .pr-root .hide-s { display: none }
   .pr-root .state.ps { display: inline-flex }
-  .pr-root .pav { width: 64px }
+  .pr-root .pchead .chip .cl { display: none }
+  .pr-root .grow { flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 12px }
+  .pr-root .gt { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical }
 }
 
 /* ---- The workspace (BurrowWeb.WorkspaceLive): the Peon UI kit's "4 · Peon: home"
@@ -318,7 +330,8 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 /* The rail on wide screens: chats and projects, New chat, the account */
 .ws-root .rail { flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0 }
 .ws-root .rail .icon-btn { width: 44px; height: 44px; border: 0; border-radius: 22px }
-.ws-root .rail .icon-btn:hover { background: var(--surface); color: var(--text) }
+.ws-root .rail .icon-btn:hover, .ws-root .rail .icon-btn[aria-current="page"] { background: var(--surface); color: var(--text) }
+.ws-root .rav { width: 30px; height: 30px; border-radius: 15px; background: var(--raised); border: 1px solid var(--border-strong); color: var(--text); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600 }
 
 /* Chats and projects: a drawer over the page (the rail's first button, ≡ on
    phones): the place on top, which turns into "Switch to"; search, New chat,
@@ -329,6 +342,15 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .dlist, .ws-root .dswitch { flex: 1; min-height: 0; display: flex; flex-direction: column }
 .ws-root .drawer.switching .dlist, .ws-root .drawer:not(.switching) .dswitch { display: none }
 .ws-root .dtop { flex: none; padding: 10px 8px 6px }
+/* All projects, on top; the place under it */
+.ws-root .dhome { flex: none; padding: 8px 8px 0 }
+.ws-root .drawer .dhome .mi { color: var(--text-2) }
+.ws-root .drawer .dhome .mi[aria-current="page"] { background: var(--raised); color: var(--text) }
+.ws-root .dhome + .dtop, .ws-root .dhome ~ .peek .dtop { padding-top: 2px }
+/* Another place's chats (BurrowWeb.Peek), in place of the page's own */
+.ws-root .peek { flex: 1; min-height: 0; display: flex; flex-direction: column }
+.ws-root .peek.none .dnone { display: block }
+.ws-root .dempty { margin: 0; padding: 10px 12px; font-size: 13.5px; line-height: 19px; color: var(--text-3) }
 .ws-root .swt { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 60px; padding: 8px 10px; border: 0; border-radius: 14px; background: transparent; color: var(--text); font-family: inherit; text-align: left; text-decoration: none; cursor: pointer }
 .ws-root .swt:hover { background: var(--raised); color: var(--text) }
 .ws-root .swt .ri, .ws-root .av { flex: none; width: 38px; height: 38px; border-radius: 11px; border: 1px solid var(--border); background: var(--raised); display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; color: var(--text) }

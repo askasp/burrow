@@ -536,19 +536,16 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = open(conn, project)
       assert has_element?(view, "#project-switch .nm", "App")
-      assert has_element?(view, "#drawer .dswitch .swt[aria-current=page]", "App")
+      assert has_element?(view, "#drawer .dswitch .swt[aria-current=true]", "App")
       # Cells don't run in tests, so it shows as stopped.
-      assert has_element?(
-               view,
-               "#drawer .dswitch a.swt[href='/projects/#{other.id}'] .rhp.stopped"
-             )
+      assert has_element?(view, "#drawer .dswitch #switch-#{other.id} .rhp.stopped")
 
       refute has_element?(view, "#drawer.closed")
 
       {:ok, third} = Projects.create(Scope.for_user(user), %{"name" => "Stash"})
 
       assert_eventually(fn ->
-        has_element?(view, "#drawer .dswitch a.swt[href='/projects/#{third.id}']")
+        has_element?(view, "#drawer .dswitch #switch-#{third.id}")
       end)
     end
 
@@ -620,9 +617,38 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, ".rail button[data-kb-key=h]")
       assert has_element?(view, "#project-switch", "App")
       assert has_element?(view, "#chat-search[placeholder='Search App']")
-      assert has_element?(view, "#drawer .dswitch a[href='/chats']", "Chats")
+      assert has_element?(view, "#drawer .dswitch #switch-chats", "Chats")
       assert has_element?(view, "#drawer .dswitch a[href='/projects']", "All projects")
       assert has_element?(view, "#drawer .dswitch #new-project-btn", "New project")
+      assert has_element?(view, "#drawer .dhome a[href='/projects']", "All projects")
+      assert has_element?(view, ".rail a[href='/projects'][aria-label='All projects']")
+    end
+
+    test "picking another place lists its chats, each a way into it", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      {:ok, other} = Projects.create(Scope.for_user(user), %{"name" => "Stash"})
+      chat = Chats.create(other.id, "Count the jars", user)
+      {:ok, view, _html} = open(conn, project)
+
+      view |> element("#switch-#{other.id}") |> render_click()
+      assert has_element?(view, "#peek-switch", "Stash")
+      assert has_element?(view, "#peek-search[placeholder='Search Stash']")
+      assert has_element?(view, "#peek-#{chat.id} a[href='/projects/#{other.id}/c/#{chat.id}']")
+      assert has_element?(view, "#peek-new[href='/projects/#{other.id}/c/new']")
+      assert has_element?(view, "#switch-#{other.id}[aria-current=true]")
+      refute has_element?(view, "#chat-search")
+
+      # This project again: its own chats.
+      view |> element("#switch-#{project.id}") |> render_click()
+      refute has_element?(view, "#peek")
+      assert has_element?(view, "#chat-search[placeholder='Search App']")
+
+      # /c/new, New chat there from another page, opens an empty chat.
+      assert {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/projects/#{project.id}/c/new")
+      assert to =~ ~r"^/projects/#{project.id}/c/[a-z0-9]+$"
     end
 
     test "the account menu holds teams, logins, the theme and log out", %{

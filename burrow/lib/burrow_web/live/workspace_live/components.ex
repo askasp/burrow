@@ -22,14 +22,17 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
   attr :live_only?, :boolean, required: true
+  attr :peek, :map, default: nil, doc: "another place whose chats show instead (`BurrowWeb.Peek`)"
 
   @doc """
-  Chats and projects, over the page (the rail's first button, ≡ on phones).
-  On top the place, the project: it turns into \"Switch to\" (Chats, every
-  project, All projects, New project). Then a search over the chats, New
-  chat and the chats by the day they were worked on, the last first; a day
-  before today folds to the chats still open (and the one shown). At the
-  bottom the account: teams, AI login, logins, the theme, log out.
+  Chats and projects, over the page (the rail's drawer button, ≡ on
+  phones). On top All projects, then the place, the project: it turns into
+  \"Switch to\" (Chats, every project, All projects, New project), and
+  picking one there lists its chats here instead (`BurrowWeb.Peek`). Then a
+  search over the chats, New chat and the chats by the day they were worked
+  on, the last first; a day before today folds to the chats still open (and
+  the one shown). At the bottom the account: teams, AI login, logins, the
+  theme, log out.
   """
   def drawer(assigns) do
     open = open_chats(assigns.tabs, assigns.live_only?)
@@ -50,7 +53,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       data-kb-zoom-hide
     >
       <div class="dlist">
-        <div class="dtop">
+        <.all_projects />
+        <div :if={!@peek} class="dtop">
           <button
             id="project-switch"
             type="button"
@@ -69,7 +73,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <.icon name="hero-chevron-up-down" class="size-4 shrink-0 pchev" />
           </button>
         </div>
-        <label class="dsearch">
+        <label :if={!@peek} class="dsearch">
           <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
           <span class="sr-only">Search the chats</span>
           <input
@@ -79,7 +83,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             autocomplete="off"
           />
         </label>
-        <span class="ncw" title="New chat (⌃B C)">
+        <span :if={!@peek} class="ncw" title="New chat (⌃B C)">
           <button
             id="new-chat"
             type="button"
@@ -94,7 +98,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <.icon name="hero-plus" class="size-[18px] shrink-0" /><span class="dt">New chat</span><kbd>⌃B C</kbd>
           </button>
         </span>
-        <div class="dscroll">
+        <div :if={!@peek} class="dscroll">
           <div
             :for={{{day, tabs, done}, i} <- Enum.with_index(@days)}
             id={"day-" <> String.replace(String.downcase(day), " ", "-")}
@@ -144,12 +148,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           </div>
           <p class="dnone">No chats match.</p>
         </div>
+        <.peek_list :if={@peek} peek={@peek} />
         <.account_menu user={@user} />
       </div>
       <div class="dswitch">
         <.place_switch
           rail={@rail}
-          chats?={false}
+          shown={(@peek && @peek.id) || @project.id}
           back={JS.remove_class("switching", to: "#drawer")}
           new_project={
             JS.remove_class("show-drawer switching", to: ".ws-root, #drawer")
@@ -197,15 +202,21 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     required: true,
     doc: "every project the user can open, as the drawer has them"
 
-  attr :chats?, :boolean, required: true, doc: "Chats is the place now"
+  attr :shown, :any,
+    required: true,
+    doc: "the place the drawer lists: a project's id or \"chats\""
+
   attr :back, :any, default: nil, doc: "the back button's JS; none hides it"
   attr :new_project, :any, required: true, doc: "New project's JS"
 
   @doc """
   \"Switch to\": Chats (general chats, no project), every project with what
-  it is doing, All projects and New project. The current place is checked.
+  it is doing, All projects and New project. Picking a place lists its
+  chats in the drawer (\"peek\", `BurrowWeb.Peek`); the one listed is checked.
   """
   def place_switch(assigns) do
+    assigns = assign(assigns, shown: to_string(assigns.shown))
+
     ~H"""
     <div class="swhead">
       <button
@@ -220,32 +231,36 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       <span>Switch to</span>
     </div>
     <div class="swlist">
-      <.link
-        navigate={~p"/chats"}
+      <button
+        id="switch-chats"
+        type="button"
         class="swt"
-        aria-current={@chats? && "page"}
+        aria-current={to_string(@shown == "chats")}
+        phx-click={peek("chats")}
         data-kb-key="0"
         data-kb-label="Chats"
         data-kb-group="Projects"
       >
         <span class="av"><.icon name="hero-chat-bubble-bottom-center" class="size-[18px]" /></span>
         <span class="pn"><span class="nm">Chats</span><span class="mm">Ask, search, think · no project</span></span>
-        <.icon :if={@chats?} name="hero-check" class="size-4 shrink-0 swcheck" />
-      </.link>
+        <.icon :if={@shown == "chats"} name="hero-check" class="size-4 shrink-0 swcheck" />
+      </button>
       <div class="h">Projects</div>
-      <.link
+      <button
         :for={p <- @rail}
-        navigate={p.url}
+        id={"switch-#{p.id}"}
+        type="button"
         class="swt"
-        aria-current={p.current && "page"}
+        aria-current={to_string(@shown == to_string(p.id))}
+        phx-click={peek(p.id)}
       >
         <.tile name={p.name} state={p.state} pct={p.pct} />
         <span class="pn">
           <span class="nm">{p.name}</span>
           <span class={["lbl", p.state]}><span class="dot"></span>{p.label}</span>
         </span>
-        <.icon :if={p.current} name="hero-check" class="size-4 shrink-0 swcheck" />
-      </.link>
+        <.icon :if={@shown == to_string(p.id)} name="hero-check" class="size-4 shrink-0 swcheck" />
+      </button>
       <div class="msep" role="separator"></div>
       <.link navigate={~p"/projects"} class="mi">
         <.icon name="hero-squares-2x2" class="size-[18px]" /><span class="flex-1">All projects</span>
@@ -264,6 +279,111 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         <.icon name="hero-plus" class="size-[18px]" /><span class="flex-1">New project</span>
       </button>
     </div>
+    """
+  end
+
+  @doc "Lists a place's chats in the drawer (\"peek\"), opening it if it is away."
+  def peek(place),
+    do:
+      JS.push("peek", value: %{place: place})
+      |> JS.remove_class("switching", to: "#drawer")
+      |> JS.add_class("show-drawer", to: ".ws-root")
+
+  attr :current, :boolean, default: false, doc: "the projects page is the page"
+
+  @doc "All projects, on top of the drawer."
+  def all_projects(assigns) do
+    ~H"""
+    <div class="dhome">
+      <.link navigate={~p"/projects"} class="mi" aria-current={@current && "page"}>
+        <.icon name="hero-squares-2x2" class="size-[18px]" /><span class="flex-1">All projects</span>
+      </.link>
+    </div>
+    """
+  end
+
+  attr :peek, :map, required: true, doc: "the place, as `BurrowWeb.Peek.load/3` has it"
+
+  @doc """
+  Another place's chats in the drawer: the place on top (it turns into
+  \"Switch to\"), a search, New chat there, and its chats by day, each a
+  link into it.
+  """
+  def peek_list(assigns) do
+    ~H"""
+    <div id="peek" class="peek" phx-hook=".Peek">
+      <div class="dtop">
+        <button
+          id="peek-switch"
+          type="button"
+          class="swt"
+          aria-label={"Switch place. Now #{@peek.name}"}
+          phx-click={JS.add_class("switching", to: "#drawer")}
+        >
+          <.tile :if={@peek.tile} name={@peek.name} state={@peek.tile.state} pct={@peek.tile.pct} />
+          <span :if={!@peek.tile} class="av">
+            <.icon name="hero-chat-bubble-bottom-center" class="size-[18px]" />
+          </span>
+          <span class="pn"><span class="nm">{@peek.name}</span><span class="mm">{@peek.sub}</span></span>
+          <.icon name="hero-chevron-up-down" class="size-4 shrink-0 pchev" />
+        </button>
+      </div>
+      <label class="dsearch">
+        <.icon name="hero-magnifying-glass" class="size-4 shrink-0" />
+        <span class="sr-only">Search the chats</span>
+        <input id="peek-search" type="search" placeholder={"Search #{@peek.name}"} autocomplete="off" />
+      </label>
+      <span class="ncw">
+        <.link id="peek-new" navigate={@peek.new_url} class="newchat">
+          <.icon name="hero-plus" class="size-[18px] shrink-0" /><span class="dt">New chat</span>
+        </.link>
+      </span>
+      <div class="dscroll">
+        <div :for={{day, rows} <- @peek.days} class="dday">
+          <div class="dsec"><span>{day}</span></div>
+          <div :for={r <- rows} id={"peek-#{r.id}"} class={["crow", r.done? && "past"]}>
+            <.link navigate={r.url} class="crb" data-kb="item" title={r.title}>
+              <span class="cb">
+                <span class="ct"><span class="tt">{r.title}</span></span>
+                <span class="cs2">
+                  <span :if={r.status} class={["cst", elem(r.status, 1)]}>{elem(r.status, 0)}</span><span
+                    :if={r.meta != ""}
+                    class="mono cm"
+                  >{r.meta}</span>
+                </span>
+              </span>
+            </.link>
+          </div>
+        </div>
+        <p :if={@peek.days == []} class="dempty">No chats here yet.</p>
+        <p class="dnone">No chats match.</p>
+      </div>
+    </div>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".Peek">
+      // The search hides the chats whose title doesn't match.
+      export default {
+        mounted() {
+          this.query = ""
+          this.el.addEventListener("input", e => {
+            if (e.target.id !== "peek-search") return
+            this.query = e.target.value.trim().toLowerCase()
+            this.filter()
+          })
+        },
+        updated() { this.filter() },
+        filter() {
+          const q = this.query
+          let any = false
+          this.el.querySelectorAll(".crow").forEach(row => {
+            const hit = !q || row.querySelector(".tt").textContent.toLowerCase().includes(q)
+            row.classList.toggle("miss", !hit)
+            any = any || hit
+          })
+          this.el.querySelectorAll(".dday").forEach(day => day.classList.toggle("miss", !day.querySelector(".crow:not(.miss)")))
+          this.el.classList.toggle("none", q !== "" && !any)
+        }
+      }
+    </script>
     """
   end
 
@@ -341,12 +461,26 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       JS.hide(to: "#account-pop")
       |> JS.set_attribute({"aria-expanded", "false"}, to: "#account-btn")
 
-  @doc "The rail on wide screens: chats and projects, New chat, and the account."
+  @doc """
+  The rail on wide screens: All projects, the drawer of chats and projects,
+  New chat, and the account.
+  """
   attr :new_chat, :any, required: true, doc: "New chat's JS"
+  attr :user, :map, required: true, doc: "the signed-in user, for the account button"
+  attr :home?, :boolean, default: false, doc: "the projects page is the page"
 
   def rail(assigns) do
     ~H"""
     <nav class="rail" aria-label="Workspace">
+      <.link
+        navigate={~p"/projects"}
+        class="icon-btn"
+        aria-label="All projects"
+        aria-current={@home? && "page"}
+        title="All projects"
+      >
+        <Layouts.mark size={28} />
+      </.link>
       <button
         type="button"
         class="icon-btn"
@@ -357,7 +491,19 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         data-kb-label="Chats and projects"
         data-kb-group="Chats"
       >
-        <.icon name="hero-bars-2" class="size-5" />
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" />
+        </svg>
       </button>
       <button
         type="button"
@@ -373,13 +519,15 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         type="button"
         class="icon-btn"
         aria-label="Account and settings"
+        title={@user.email}
         phx-click={
           JS.add_class("show-drawer", to: ".ws-root")
+          |> JS.remove_class("switching", to: "#drawer")
           |> JS.show(to: "#account-pop", display: "flex")
           |> JS.set_attribute({"aria-expanded", "true"}, to: "#account-btn")
         }
       >
-        <Layouts.mark size={28} />
+        <span class="rav">{initial(@user.email)}</span>
       </button>
     </nav>
     """
@@ -463,9 +611,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   @days ["Today", "Yesterday", "This week", "Older"]
 
-  # The chats by the day they were worked on, each day's last first, and
-  # how many of each day's are done.
-  defp by_day(tabs, live_only?) do
+  @doc """
+  The chats by the day they were worked on, each day's last first, and how
+  many of each day's are done.
+  """
+  def by_day(tabs, live_only?) do
     tabs
     |> Enum.group_by(&day/1)
     |> Enum.sort_by(fn {day, _tabs} -> Enum.find_index(@days, &(&1 == day)) end)
