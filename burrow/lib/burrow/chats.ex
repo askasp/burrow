@@ -87,6 +87,18 @@ defmodule Burrow.Chats do
   def pick_model(%Chat{} = chat, model, effort),
     do: set(chat, model: model(model), effort: effort(effort))
 
+  @doc """
+  The opencode agents a chat can talk to: Plan reads and plans, Build does
+  the work, Design only draws boards (`Burrow.Design`). A repo has no
+  boards, so no Design.
+  """
+  def agents(%Projects.Project{} = project),
+    do: if(Projects.Project.repo?(project), do: ~w(plan build), else: ~w(plan build design))
+
+  @doc "The chat's agent from its next message; build is nil."
+  def pick_agent(%Chat{} = chat, agent),
+    do: set(chat, agent: if(agent in ~w(plan design), do: agent))
+
   defp model(model), do: if(is_binary(model) and model =~ ~r"\A[\w.-]+/\S+\z", do: model)
   defp effort(effort), do: if(is_binary(effort) and effort =~ ~r"\A[\w.-]+\z", do: effort)
 

@@ -108,6 +108,18 @@ defmodule Burrow.ChatTest do
              Chat.normalize(waiting)
   end
 
+  test "a message to the design agent shows as typed, without Peon's design hint" do
+    hint =
+      "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained " <>
+        "HTML files under `design/`, one per take, in the app's look. You can't change the " <>
+        "app or run commands here: no queue, no submit. The user switches to Build when " <>
+        "the boards are right.)"
+
+    message = %{"type" => "user", "id" => "u2", "text" => "Sketch the overview" <> hint}
+
+    assert [%{role: :user, text: "Sketch the overview"}] = Chat.normalize(message)
+  end
+
   test "Burrow's own keep-going input is a note of its kind" do
     synthetic = %{
       "type" => "synthetic",

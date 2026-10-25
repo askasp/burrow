@@ -74,6 +74,17 @@ defmodule Burrow.OpenCode.Client do
   end
 
   @doc """
+  Sets the agent (build, plan or one of the config's) for the session's next
+  turns. opencode takes any name, so it must be one it has.
+  """
+  def switch_agent(conn, session_id, agent) do
+    case Req.post(req(conn), url: "/api/session/#{session_id}/agent", json: %{agent: agent}) do
+      {:ok, %{status: status}} when status in [200, 204] -> :ok
+      other -> {:error, other}
+    end
+  end
+
+  @doc """
   Compacts the session: its model sums the conversation up and the agent goes
   on from the summary. Busy, it happens at the agent's next step.
   """

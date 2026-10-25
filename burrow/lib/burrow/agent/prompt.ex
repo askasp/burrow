@@ -72,6 +72,10 @@ defmodule Burrow.Agent.Prompt do
     - Don't submit boards: the user lands them with Submit design (no checks; boards never
       ship). "Build design/settings/b.html" means: build that board as the real page,
       then submit as usual; the board lands with the code.
+    - The user can put you in Design mode: then you only draw boards. You can read
+      anything, but write only under `design/`, with no shell, no queue and no submit,
+      until they switch you back to Build. There is no preview then: read the app's CSS
+      and layouts for its look.
 
     ## Data we provide ourselves is code, not tables
     There are no admin panels: the owner changes the app by chatting with you. So data

@@ -67,6 +67,8 @@ defmodule Burrow.Chat do
   # After each message the user types: the instructions alone don't get the
   # agent to split its work into the queue. The thread doesn't show it.
   @queue_hint "\n\n(Peon: if this asks for more than one thing, first put each in your queue with `tk create`, then work them one at a time.)"
+  # The same for the design agent, which can't run tk: what it is for.
+  @design_hint "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained HTML files under `design/`, one per take, in the app's look. You can't change the app or run commands here: no queue, no submit. The user switches to Build when the boards are right.)"
 
   ## API
 
@@ -149,6 +151,13 @@ defmodule Burrow.Chat do
   def slash_commands(id), do: call(id, :slash_commands)
 
   def restart_preview(id), do: call(id, :restart_preview)
+
+  @doc """
+  After the user picks the chat's agent (`Burrow.Chats.pick_agent/2`): a
+  chat that leaves Design starts its preview. The agent itself switches with
+  the next message.
+  """
+  def agent_picked(id), do: call(id, :agent_picked)
 
   @doc "A repo chat's preview pack and its commands' environment: `{:ok, pack, env}`."
   def preview_pack(id), do: call(id, :preview_pack)
@@ -429,7 +438,7 @@ defmodule Burrow.Chat do
            ),
          {:ok, state} <- load_pack(state) do
       Sandbox.create_network(state.project.slug, state.network)
-      state = state |> start_preview() |> start_agent() |> touch()
+      state = state |> boot_preview() |> start_agent() |> touch()
       send(self(), :wait_agent)
       {:noreply, state}
     else
@@ -445,7 +454,7 @@ defmodule Burrow.Chat do
 
     BuildCache.seed(state.dir)
     Sandbox.create_network(state.project.slug, state.network)
-    state = state |> start_preview() |> start_agent() |> touch()
+    state = state |> boot_preview() |> start_agent() |> touch()
     send(self(), :wait_agent)
     {:noreply, state}
   end
@@ -549,6 +558,16 @@ defmodule Burrow.Chat do
   defp on_call(:restart_preview, _from, state) do
     Sandbox.stop(state.preview.name)
     {:reply, :ok, state |> start_preview() |> broadcast_status()}
+  end
+
+  # The config again first: a chat started before an agent existed gets it
+  # (opencode reloads its config when it changes).
+  defp on_call(:agent_picked, _from, state) do
+    write_agent_config(state, Path.join(state.base, "opencode-config"))
+
+    if state.preview.status == :off and not designing?(state),
+      do: {:reply, :ok, state |> start_preview() |> broadcast_status()},
+      else: {:reply, :ok, state}
   end
 
   defp on_call(:preview_pack, _from, state),
@@ -772,6 +791,23 @@ defmodule Burrow.Chat do
 
   ## Containers
 
+  # A chat in Design draws boards: its preview waits until it leaves Design
+  # (agent_picked/1).
+  defp boot_preview(state) do
+    if designing?(state),
+      do: put_in(state.preview.status, :off),
+      else: start_preview(state)
+  end
+
+  defp designing?(%{repo: true}), do: false
+  defp designing?(state), do: agent(state) == "design"
+
+  # The chat's opencode agent (`Burrow.Chats.agents/1`).
+  defp agent(state) do
+    chat = Chats.get(state.id)
+    (chat && chat.agent) || "build"
+  end
+
   defp start_preview(%{repo: true, preview: %{pack: %PreviewPack{} = pack}} = state) do
     env =
       Map.merge(
@@ -908,6 +944,7 @@ defmodule Burrow.Chat do
           "question" => "deny",
           "doom_loop" => "deny"
         }),
+      "agent" => agents(),
       # Peon's tools, over the mounted Unix socket (see Burrow.Agent.MCP.Plug).
       "mcp" => %{
         "peon" => %{
@@ -921,6 +958,27 @@ defmodule Burrow.Chat do
     }
 
     File.write!(Path.join(dir, "opencode.json"), Jason.encode!(config, pretty: true))
+  end
+
+  # The agents next to opencode's build (`Burrow.Chats.agents/1`). An
+  # agent's rules come after the config's own, and the last rule that
+  # matches wins: plan's own "edit: deny" would lose to ours above. No
+  # agent prompt: it would replace opencode's (the design hint says what
+  # Design is for instead).
+  defp agents do
+    %{
+      "plan" => %{"permission" => %{"edit" => "deny"}},
+      "design" => %{
+        "description" => "Draws boards under design/ and changes nothing else.",
+        "mode" => "primary",
+        "permission" => %{
+          "edit" => Jason.OrderedObject.new([{"*", "deny"}, {"design/**", "allow"}]),
+          "bash" => "deny",
+          "task" => "deny",
+          "todowrite" => "deny"
+        }
+      }
+    }
   end
 
   # Peon's instructions as a file opencode reads: in the workspace's own .peon
@@ -1292,6 +1350,7 @@ defmodule Burrow.Chat do
     prompted_at = System.system_time(:millisecond)
 
     with :ok <- set_model(state),
+         :ok <- Client.switch_agent(conn(state), state.session_id, agent(state)),
          {:ok, label} <- run_prompt(state, text, attachments(state, images)) do
       typed = with {:goal, typed} <- text, do: typed
       if chat = Chats.get(state.id), do: Chats.started(chat, typed)
@@ -1407,13 +1466,20 @@ defmodule Burrow.Chat do
 
       _ ->
         with {:ok, _} <-
-               Client.prompt(conn(state), state.session_id, text <> queue_hint(state), [], files),
+               Client.prompt(conn(state), state.session_id, text <> hint(state), [], files),
              do: {:ok, nil}
     end
   end
 
-  defp queue_hint(%{tk?: true}), do: @queue_hint
-  defp queue_hint(_state), do: ""
+  # What goes after the user's message for the chat's agent: Plan has
+  # opencode's own.
+  defp hint(state) do
+    case agent(state) do
+      "design" -> @design_hint
+      "build" when state.tk? -> @queue_hint
+      _ -> ""
+    end
+  end
 
   # Peon's own "/goal", "/compact" and "/clear" first; commands win over
   # skills of the same name, as in opencode's own UI.
@@ -1472,7 +1538,9 @@ defmodule Burrow.Chat do
   # A user message's images go by the names images_dir/2 keeps them under.
   def normalize(%{"type" => "user"} = m) do
     text =
-      String.replace_suffix(m["text"] || get_in(m, ["payload", "text"]) || "", @queue_hint, "")
+      (m["text"] || get_in(m, ["payload", "text"]) || "")
+      |> String.replace_suffix(@queue_hint, "")
+      |> String.replace_suffix(@design_hint, "")
 
     skills = m["skills"] || get_in(m, ["payload", "skills"]) || []
     files = m["files"] || get_in(m, ["payload", "files"]) || []

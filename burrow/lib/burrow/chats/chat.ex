@@ -11,6 +11,8 @@ defmodule Burrow.Chats.Chat do
     # opencode variants (its thinking levels); nil for the defaults
     field :model, :string
     field :effort, :string
+    # The agent it talks to: "plan", "design" or nil for build (`Burrow.Chats.agents/0`)
+    field :agent, :string
     # A repo chat's pull request (`Burrow.GitRepo.PullRequest`)
     field :pr_url, :string
     # Runs without use until then (`Burrow.Chat`)
