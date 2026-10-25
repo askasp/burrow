@@ -173,4 +173,18 @@ defmodule Burrow.ChatTest do
     refute Burrow.Ports.browser_safe?(5061)
     assert Burrow.Ports.browser_safe?(5062)
   end
+
+  test "a starting chat stops the ones used longest ago a place before the cap" do
+    idle = &%{stoppable?: true, used_at: &1}
+    busy = %{stoppable?: false, used_at: 0}
+
+    # With the new one there is still a place free: nothing stops.
+    assert Chat.to_stop([a: idle.(1), b: idle.(2)], 4) == []
+    # The new one takes the last place: the chat used longest ago frees one.
+    assert Chat.to_stop([c: idle.(3), a: idle.(1), b: idle.(2)], 4) == [:a]
+    # Busy or kept chats, and ones that don't answer, stay; others go in their place.
+    assert Chat.to_stop([a: busy, b: nil, d: idle.(4), c: idle.(3)], 4) == [:c, :d]
+    # With only those running the cap is exceeded rather than refusing the chat.
+    assert Chat.to_stop([a: busy, b: busy, c: busy], 4) == []
+  end
 end

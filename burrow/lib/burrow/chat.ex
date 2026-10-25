@@ -18,11 +18,11 @@ defmodule Burrow.Chat do
       sent while the agent was busy, until opencode hands it to the agent
 
   Containers stop after `@idle_timeout` without activity, unless the chat is
-  kept running (`Burrow.Chats.keep_running/2`) or its change is on main and
-  not live yet (`Burrow.Activity.unshipped?/2`: its preview stays to look
-  into); the next use starts them again. At most `:max_running_chats` chats of a project run at once (see
-  `make_room/2`). A chat that stops broadcasts `{:stopped, reason}`:
-  `:idle`, `:room`, `:deleted` or `:exited`.
+  kept running (`Burrow.Chats.keep_running/2`); the next use starts them
+  again. At most `max_running/0` chats run at once, across projects, and
+  starting one makes room before that is reached (see `make_room/1`). A chat
+  that stops broadcasts `{:stopped, reason}`: `:idle`, `:room`, `:deleted`
+  or `:exited`.
 
   In a repo project (`Burrow.GitRepo`) the workspace is a git checkout
   instead, and the preview is the repo's preview pack run on the host
@@ -76,7 +76,7 @@ defmodule Burrow.Chat do
 
   @doc "Starts the chat's containers if needed and waits until the agent is ready."
   def ensure_started(project, id) do
-    unless whereis(id), do: make_room(project, id)
+    unless whereis(id), do: make_room(id)
 
     case DynamicSupervisor.start_child(Burrow.ChatSupervisor, {__MODULE__, {project, id}}) do
       {:ok, pid} ->
@@ -271,27 +271,43 @@ defmodule Burrow.Chat do
     end
   end
 
-  # At most `:max_running_chats` chats of a project run at once: starting
-  # another stops the one used longest ago. Busy chats and chats kept running
-  # are never stopped for room, so with only those running the cap is
-  # exceeded rather than refusing the chat.
-  defp make_room(project, id) do
-    max = Application.get_env(:burrow, :max_running_chats, 4)
-    running = for {other, pid} <- running(project.id), other != id, do: pid
+  # Every project's chats share the host's Docker, whose networks run out, so
+  # at most `max_running/0` run at once. Starting one stops the ones used
+  # longest ago a chat before the cap, so a place is always free: the next
+  # chat starts at once while they stop, and never meets the cap. Busy chats
+  # and chats kept running are never stopped for room, so with only those
+  # running the cap is exceeded rather than refusing the chat.
+  defp make_room(id) do
+    cap = max_running()
+    others = for {other, pid} <- running(), other != id, do: pid
 
-    if length(running) >= max do
-      running
-      |> Enum.flat_map(fn pid ->
-        case activity(pid) do
-          %{stoppable?: true, used_at: used_at} -> [{used_at, pid}]
-          _ -> []
-        end
-      end)
-      |> Enum.sort()
-      |> Enum.take(length(running) - max + 1)
-      |> Enum.each(fn {_, pid} -> send(pid, :make_room) end)
+    if length(others) >= cap - 1 do
+      # At once: one that is booting answers only after its boot.
+      others
+      |> Task.async_stream(&{&1, activity(&1)}, timeout: :infinity)
+      |> Enum.map(fn {:ok, other} -> other end)
+      |> to_stop(cap)
+      |> Enum.each(&send(&1, :make_room))
     end
   end
+
+  @doc false
+  # Which of the other running chats (`{pid, activity}`) to stop as one more
+  # starts, so that fewer than `cap` run once they have: the stoppable ones
+  # used longest ago.
+  def to_stop(others, cap) do
+    others
+    |> Enum.flat_map(fn
+      {pid, %{stoppable?: true, used_at: used_at}} -> [{used_at, pid}]
+      _ -> []
+    end)
+    |> Enum.sort()
+    |> Enum.take(max(length(others) - cap + 2, 0))
+    |> Enum.map(fn {_, pid} -> pid end)
+  end
+
+  @doc "How many chats may run at once, across projects (`:max_host_chats`)."
+  def max_running, do: Application.get_env(:burrow, :max_host_chats, 6)
 
   @doc "The project's chats whose agent is working right now."
   def busy_ids(project_id) do
@@ -308,6 +324,10 @@ defmodule Burrow.Chat do
   # The project's running chats: `[{id, pid}]`.
   defp running(project_id),
     do: Registry.select(@registry, [{{{project_id, :"$1"}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
+
+  # Every project's running chats: `[{id, pid}]`.
+  defp running,
+    do: Registry.select(@registry, [{{{:_, :"$1"}, :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
 
   defp whereis(id) do
     case Registry.select(@registry, [{{{:_, id}, :"$1", :_}, [], [:"$1"]}]) do
@@ -769,10 +789,7 @@ defmodule Burrow.Chat do
 
   defp on_info(_msg, state), do: {:noreply, state}
 
-  defp kept?(state),
-    do:
-      Chats.kept_running?(Chats.get(state.id)) or
-        Burrow.Activity.unshipped?(state.project, state.id)
+  defp kept?(state), do: Chats.kept_running?(Chats.get(state.id))
 
   @impl true
   def terminate(_reason, %{repo: true} = state) do

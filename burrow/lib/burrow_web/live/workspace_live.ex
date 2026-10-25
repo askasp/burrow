@@ -2201,7 +2201,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp stopped_message(:room),
     do:
-      "Stopped to make room: at most #{Application.get_env(:burrow, :max_running_chats, 4)} chats run at once. Send a message or start it again."
+      "Stopped to make room: at most #{Chat.max_running()} chats run at once, across projects. Send a message or start it again."
 
   defp stopped_message(_),
     do: "The agent and preview stopped. Send a message or start them again."

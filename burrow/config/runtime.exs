@@ -68,8 +68,8 @@ if config_env() != :test do
     port_url:
       System.get_env("BURROW_PORT_URL") ||
         "http://#{System.get_env("BURROW_PEON_HOST", "localhost")}:{port}",
-    # Chats running at once per project (agent and preview)
-    max_running_chats: String.to_integer(System.get_env("BURROW_MAX_RUNNING_CHATS", "4")),
+    # Chats running at once on this host, across projects (agent and preview)
+    max_host_chats: String.to_integer(System.get_env("BURROW_MAX_HOST_CHATS", "6")),
     # How long a deploy is watched for new errors
     health_window:
       :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
