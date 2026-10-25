@@ -129,7 +129,7 @@ defmodule BurrowWeb.WorkspaceLive do
     |> assign(slash_items: [], slash: [])
     # "Deploys and usage" in place of the preview; one dialog at a time
     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
-    |> assign(env_names: Env.names(project), live_only?: not Ship.staging?(project))
+    |> assign(env_names: Env.names(project))
     |> assign(secrets: Secrets.list(project.id), secrets_key: 0)
     # Phones: one pane at a time; wide screens can put the preview away, or
     # show the app in it phone-sized
@@ -517,7 +517,7 @@ defmodule BurrowWeb.WorkspaceLive do
 
     case Ship.ship(project, String.to_integer(id), user) do
       :ok ->
-        {:noreply, socket |> info("Shipping ##{id}.") |> assign(view: "prod")}
+        {:noreply, info(socket, "Shipping ##{id}.")}
 
       {:error, reason} ->
         {:noreply, put_flash(socket, :error, "Could not ship: #{inspect(reason)}")}
@@ -641,25 +641,6 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("add_envs", _params, socket) do
-    %{current_scope: scope, burrow_project: project} = socket.assigns
-
-    case Projects.add_envs(scope, project) do
-      {:ok, _project} ->
-        {:noreply,
-         socket
-         |> assign(dialog: nil)
-         |> info("Staging is set up: main goes to staging, then you ship it to prod.")
-         |> load_rail()}
-
-      {:error, :not_owner} ->
-        {:noreply, put_flash(socket, :error, "Only the project's owner can add staging.")}
-
-      {:error, message} ->
-        {:noreply, put_flash(socket, :error, message)}
-    end
-  end
-
   def handle_event("set_secret", %{"name" => name, "value" => value}, socket) do
     name = name |> String.trim() |> String.upcase()
 
@@ -704,7 +685,7 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("view", %{"view" => "design"}, socket),
     do: {:noreply, socket |> assign(view: "design", overview: false) |> load_boards()}
 
-  def handle_event("view", %{"view" => view}, socket) when view in ["dev", "staging", "prod"],
+  def handle_event("view", %{"view" => view}, socket) when view in ["dev", "staging"],
     do:
       {:noreply,
        socket
@@ -856,7 +837,7 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   # The open chats as the drawer lists them.
-  defp open_tabs(socket), do: open_chats(socket.assigns.tabs, socket.assigns.live_only?)
+  defp open_tabs(socket), do: open_chats(socket.assigns.tabs)
 
   # Closing the open chat opens the one above it in the drawer, else the
   # one below, else a new one.
@@ -1038,8 +1019,8 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  defp load_logs(%{assigns: %{view: env}} = socket) when env in ["staging", "prod"],
-    do: assign(socket, logs: Env.logs(socket.assigns.project, env))
+  defp load_logs(%{assigns: %{view: "staging"}} = socket),
+    do: assign(socket, logs: Env.logs(socket.assigns.project, "staging"))
 
   defp load_logs(socket), do: socket
 
@@ -1065,7 +1046,6 @@ defmodule BurrowWeb.WorkspaceLive do
 
     sharing = %{
       owner?: Projects.owner?(scope, project),
-      live_only?: Burrow.Projects.Project.live_only?(project),
       team: project.team && %{id: project.team.id, name: project.team.name},
       teams: for(t <- Teams.list(scope), do: %{id: t.id, name: t.name}),
       teammates: teammates(project)
@@ -1179,11 +1159,13 @@ defmodule BurrowWeb.WorkspaceLive do
   defp default_view(%{assigns: %{view: "design"}} = socket), do: socket
 
   defp default_view(socket) do
-    if dev?(socket.assigns), do: assign(socket, view: "dev"), else: assign(socket, view: "prod")
+    if dev?(socket.assigns),
+      do: assign(socket, view: "dev"),
+      else: assign(socket, view: "staging")
   end
 
-  # The dev preview stays until the chat's change is live, to look into it
-  # while it waits on main or staging (`Burrow.Chat` keeps it running).
+  # The dev preview stays until the chat's change is on prod, to look into
+  # it while it waits on main or staging (`Burrow.Chat` keeps it running).
   defp dev?(%{chat: chat, tab: tab}),
     do: chat != nil and chat.started_at != nil and not match?(%{phase: "live"}, tab)
 
@@ -1286,7 +1268,7 @@ defmodule BurrowWeb.WorkspaceLive do
         follows: assigns.chat && assigns.chat.started_at == nil && assigns.followed,
         from: assigns.chat && assigns.chat.started_at == nil && assigns[:from],
         goal: goal(assigns),
-        done?: assigns.tab != nil and Activity.done?(assigns.tab, assigns.live_only?),
+        done?: assigns.tab != nil and Activity.done?(assigns.tab),
         busy?: assigns.info != nil and assigns.info.busy?,
         blocks: blocks((assigns.info && assigns.info.messages) || [])
       )
@@ -1321,7 +1303,6 @@ defmodule BurrowWeb.WorkspaceLive do
         user={@current_scope.user}
         nothing_built?={@nothing_built?}
         repo?={@repo?}
-        live_only?={@live_only?}
         peek={@peek}
       />
       <div id="theme" phx-hook=".Theme" data-theme={@theme} hidden></div>
@@ -1342,7 +1323,6 @@ defmodule BurrowWeb.WorkspaceLive do
               meta={meta(assigns)}
               overview={@overview}
               sharing={@sharing}
-              live_only?={@live_only?}
               repo?={@repo?}
               secrets={@secrets}
               open_incidents={@open_incidents}
@@ -1405,7 +1385,7 @@ defmodule BurrowWeb.WorkspaceLive do
                   <span class="ln"></span><span class="mono">{elem(@info.note, 1)}</span><span class="ln"></span>
                 </div>
                 <div
-                  :if={event = event_line(@tab, @live_only?)}
+                  :if={event = event_line(@tab)}
                   class={["evt", event.tone]}
                   role="note"
                 >
@@ -1423,13 +1403,12 @@ defmodule BurrowWeb.WorkspaceLive do
                 secrets={asked(@secrets, @chat.id)}
                 key={@secrets_key}
               />
-              <.design_card :if={@board_card} card={@board_card} live_only?={@live_only?} />
+              <.design_card :if={@board_card} card={@board_card} />
               <.change_card
                 :if={@draft && !Design.only?(@draft.files)}
                 draft={@draft}
                 tab={@tab}
                 step={@step}
-                live_only?={@live_only?}
                 promote={@promote}
                 main_check={@main_check}
               />
@@ -1690,7 +1669,6 @@ defmodule BurrowWeb.WorkspaceLive do
               :if={@overview}
               envs={@envs}
               env_names={@env_names}
-              live_only?={@live_only?}
               tabs={@tabs}
               info={@info}
               promote={@promote}
@@ -1705,7 +1683,6 @@ defmodule BurrowWeb.WorkspaceLive do
               view={@view}
               env_names={@env_names}
               envs={@envs}
-              live_only?={@live_only?}
               dev?={@dev?}
               number={@draft && @draft.change}
               chat={@chat}
@@ -1968,26 +1945,17 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # A view that isn't there falls back to what is live.
-  defp effective_view(%{view: "dev"} = assigns), do: if(dev?(assigns), do: "dev", else: "prod")
-  defp effective_view(%{view: "design", repo?: true}), do: "prod"
-
-  defp effective_view(%{view: "staging", env_names: names}),
-    do: if("staging" in names, do: "staging", else: "prod")
-
+  # A view that isn't there falls back to staging.
+  defp effective_view(%{view: "dev"} = assigns), do: if(dev?(assigns), do: "dev", else: "staging")
+  defp effective_view(%{view: "design", repo?: true}), do: "staging"
   defp effective_view(%{view: view}), do: view
 
-  # "working · live #8": what the project does, and what is out.
+  # "working · prod #8": what the project does, and what is out.
   defp status_line(assigns) do
     label = Enum.find_value(assigns.rail, "", &(&1.current && &1.label))
     prod = if id = assigns.envs["prod"][:deployed], do: "##{id}", else: "—"
 
-    cond do
-      assigns.repo? -> label
-      assigns.nothing_built? -> "#{label} · not built"
-      assigns.live_only? -> "#{label} · live #{prod}"
-      true -> "#{label} · prod #{prod}"
-    end
+    if assigns.repo?, do: label, else: "#{label} · prod #{prod}"
   end
 
   # The line under the chat's title: "watchtower", a repo project's repo,
@@ -2003,8 +1971,8 @@ defmodule BurrowWeb.WorkspaceLive do
   # Where the open chat's change stands (Components.row_status/2), its number with it.
   defp chat_status(%{tab: nil}), do: nil
 
-  defp chat_status(%{tab: tab, live_only?: live_only?}) do
-    {text, tone} = row_status(tab, live_only?)
+  defp chat_status(%{tab: tab}) do
+    {text, tone} = row_status(tab)
 
     case tab.draft do
       %{change: id} when id != nil -> {"##{id} #{String.downcase(text)}", tone}
@@ -2012,7 +1980,7 @@ defmodule BurrowWeb.WorkspaceLive do
     end
   end
 
-  # "watchtower · live #8 · no staging · shared with Ops"
+  # "watchtower · staging #9 · prod #8 · shared with Ops"
   defp meta(%{project: nil}), do: ""
 
   defp meta(assigns) do
@@ -2026,12 +1994,9 @@ defmodule BurrowWeb.WorkspaceLive do
     end
 
     parts =
-      cond do
-        assigns.repo? -> [project.slug, "from #{repo_name(project)}"]
-        assigns.nothing_built? -> [project.slug, "nothing built yet"]
-        assigns.live_only? -> [project.slug, "live #{tag.("prod")}", "no staging"]
-        true -> [project.slug, "staging #{tag.("staging")}", "prod #{tag.("prod")}"]
-      end
+      if assigns.repo?,
+        do: [project.slug, "from #{repo_name(project)}"],
+        else: [project.slug, "staging #{tag.("staging")}", "prod #{tag.("prod")}"]
 
     shared = if sharing && sharing.team, do: ["shared with #{sharing.team.name}"], else: []
     Enum.join(parts ++ shared, " · ")
@@ -2047,28 +2012,25 @@ defmodule BurrowWeb.WorkspaceLive do
   defp hello(project, false), do: "What should change in #{project && project.name}?"
 
   defp placeholder(%{phase: phase}, _follows) when phase in ~w(landing staged live),
-    do: "On main. Start a new chat for the next change."
+    do: "Merged. Start a new chat for the next change."
 
   defp placeholder(_tab, %{}), do: "What should change next?"
   defp placeholder(%{phase: "new"}, _follows), do: "Describe the change"
   defp placeholder(_tab, _follows), do: "Message Peon · / for commands"
 
-  # The line under the thread once the chat's change is on main.
-  defp event_line(%{phase: "landing", draft: %{change: id}}, _live_only?),
-    do: %{text: "##{id} on main · ready to ship", tone: nil}
+  # The line under the thread once the chat's change is merged.
+  defp event_line(%{phase: "landing", draft: %{change: id}}),
+    do: %{text: "##{id} merged · going to staging", tone: nil}
 
-  defp event_line(%{phase: "staged", draft: %{change: id}}, _live_only?),
-    do: %{text: "##{id} on main · on staging", tone: "ok"}
+  defp event_line(%{phase: "staged", draft: %{change: id}}),
+    do: %{text: "##{id} on staging", tone: "ok"}
 
-  defp event_line(%{phase: "live", draft: %{change: id}}, true),
-    do: %{text: "##{id} on main · live", tone: "ok"}
-
-  defp event_line(%{phase: "live", draft: %{change: id}}, false),
+  defp event_line(%{phase: "live", draft: %{change: id}}),
     do: %{text: "##{id} shipped to prod", tone: "ok"}
 
-  defp event_line(_tab, _live_only?), do: nil
+  defp event_line(_tab), do: nil
 
-  # What the preview pane shows: the chat's dev preview, or staging or prod.
+  # What the preview pane shows: the chat's dev preview, or staging.
   defp preview(%{view: "dev", info: nil, starting: starting, stopped: stopped} = assigns) do
     %{
       url: nil,
@@ -2094,9 +2056,7 @@ defmodule BurrowWeb.WorkspaceLive do
     }
   end
 
-  defp preview(%{view: env, envs: envs, live_only?: live_only?}) do
-    name = env_label(env, live_only?)
-
+  defp preview(%{view: env, envs: envs}) do
     case envs[env] do
       %{deployed: id, status: {:crashed, _}} = info when id != nil ->
         %{
@@ -2105,19 +2065,17 @@ defmodule BurrowWeb.WorkspaceLive do
           ref: "##{id}",
           live?: false,
           down: env,
-          message: "#{name} is down"
+          message: "#{env} is down"
         }
 
       %{deployed: id} = info when id != nil ->
-        # Real environments keep frame-ancestors 'self' (clickjacking protection),
-        # so they open in their own tab instead of the frame.
+        # Staging lets Burrow frame it (`Burrow.Env.frame_ancestors/0`).
         %{
           url: info.url,
           status: info.status,
           ref: "##{id}",
-          live?: false,
-          message: env_message(name, info),
-          open: info.status == :running
+          live?: info.status == :running,
+          message: env_message(env, info)
         }
 
       info ->
@@ -2251,10 +2209,6 @@ defmodule BurrowWeb.WorkspaceLive do
 
   defp stopped_message(_),
     do: "The agent and preview stopped. Send a message or start them again."
-
-  defp env_message(name, %{status: :running, deployed: id}),
-    do:
-      "#{String.capitalize(name)} runs ##{id} with its real security headers, so it opens in its own tab."
 
   defp env_message(name, %{deploy: %{target: id}}) when id != nil,
     do: "Deploying ##{id} to #{name}…"

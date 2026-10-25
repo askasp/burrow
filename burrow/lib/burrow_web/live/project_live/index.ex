@@ -96,7 +96,7 @@ defmodule BurrowWeb.ProjectLive.Index do
         {refs["main"] && Totem.Repo.change(dir, refs["main"]), refs}
       end
 
-    {st, job, label, sub} = status(project, Activity.of(project), phases, refs)
+    {st, job, label, sub} = status(Activity.of(project), phases, refs)
 
     %{
       st: st,
@@ -113,7 +113,7 @@ defmodule BurrowWeb.ProjectLive.Index do
   # The row's tone, its peon's job, a label and the line under it: the peon
   # builds while the project works, waves a flag while it waits on a person,
   # raises a red one when something is broken and naps when all is done.
-  defp status(project, tile, phases, refs) do
+  defp status(tile, phases, refs) do
     working = Enum.count(phases, &(&1 == "working"))
 
     case tile do
@@ -130,10 +130,7 @@ defmodule BurrowWeb.ProjectLive.Index do
         {"need", "need", "stopped", "restart it from ⋯"}
 
       %{"label" => "ready to ship"} ->
-        ahead =
-          if refs["staging"], do: "staging ##{refs["staging"]}", else: "main ##{refs["main"]}"
-
-        {"waiting", "wave", "ready to ship", "#{ahead} is ahead of #{prod_name(project)}"}
+        {"waiting", "wave", "ready to ship", "staging ##{refs["staging"]} is ahead of prod"}
 
       %{"label" => "new"} ->
         {"idle", "nap", "new", "nothing built yet"}
@@ -151,23 +148,18 @@ defmodule BurrowWeb.ProjectLive.Index do
     end
   end
 
-  # "main #3 · live #2"; a repo project's repo instead.
+  # "main #3 · staging #3 · prod #2"; a repo project's repo instead.
   defp where(project, refs) do
     if Project.repo?(project) do
       project.repo_url
       |> String.replace(~r{\Ahttps?://(www\.)?(github\.com/)?}, "")
       |> String.trim_trailing(".git")
     else
-      names = if Project.live_only?(project), do: ~w(main prod), else: ~w(main staging prod)
-
-      Enum.map_join(names, " · ", fn ref ->
-        name = if ref == "prod", do: prod_name(project), else: ref
-        if refs[ref], do: "#{name} ##{refs[ref]}", else: "#{name} —"
+      Enum.map_join(~w(main staging prod), " · ", fn ref ->
+        if refs[ref], do: "#{ref} ##{refs[ref]}", else: "#{ref} —"
       end)
     end
   end
-
-  defp prod_name(project), do: if(Project.live_only?(project), do: "live", else: "prod")
 
   # Who the owner can hand the project to: the others in its team.
   defp teammates(%Project{team: %Burrow.Teams.Team{} = team, user_id: owner_id}),
@@ -296,25 +288,6 @@ defmodule BurrowWeb.ProjectLive.Index do
 
       {:error, :not_owner} ->
         {:noreply, put_flash(socket, :error, "Only the project's owner can delete it.")}
-    end
-  end
-
-  def handle_event("add_envs", %{"id" => id}, socket) do
-    socket = assign(socket, menu: nil)
-
-    case Projects.add_envs(socket.assigns.current_scope, project!(socket, id)) do
-      {:ok, project} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "#{project.name} has staging and prod now. Both run what is live.")
-         |> load()}
-
-      {:error, :not_owner} ->
-        {:noreply,
-         put_flash(socket, :error, "Only the project's owner can add staging and prod.")}
-
-      {:error, message} ->
-        {:noreply, put_flash(socket, :error, "Could not add staging and prod: #{message}")}
     end
   end
 
@@ -685,18 +658,6 @@ defmodule BurrowWeb.ProjectLive.Index do
                   >
                     Hand over
                   </button>
-                  <div :if={owner? && Project.live_only?(p)} class="msep" role="separator"></div>
-                  <button
-                    :if={owner? && Project.live_only?(p)}
-                    id={"add-envs-#{p.id}"}
-                    type="button"
-                    role="menuitem"
-                    phx-click="add_envs"
-                    phx-value-id={p.id}
-                    data-confirm={"Add staging and prod to #{p.name}? Both start at what is live now. Changes then go to staging first and you promote them to prod. This can't be undone."}
-                  >
-                    Add staging and prod
-                  </button>
                   <div :if={owner?} class="msep" role="separator"></div>
                   <button
                     :if={owner?}
@@ -837,14 +798,9 @@ defmodule BurrowWeb.ProjectLive.Index do
 
   defp blank?(value), do: value in [nil, ""] or String.trim(to_string(value)) == ""
 
-  # "live only · private", "staging · prod · shared · Ops", "git repo · by mira@…"
+  # "staging · prod · private", "staging · prod · shared · Ops", "git repo · by mira@…"
   defp meta(project, owner?) do
-    envs =
-      cond do
-        Project.repo?(project) -> "git repo"
-        Project.live_only?(project) -> "live only"
-        true -> "staging · prod"
-      end
+    envs = if Project.repo?(project), do: "git repo", else: "staging · prod"
 
     who =
       cond do

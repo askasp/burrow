@@ -27,7 +27,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, ".pbar-name", "What should App do?")
       assert has_element?(view, ".ws-hello", "What should App do?")
       assert has_element?(view, ".pbar-meta", "app · New chat")
-      assert has_element?(view, "#more-menu .menu-meta", "app · nothing built yet")
+      assert has_element?(view, "#more-menu .menu-meta", "app · staging — · prod —")
       assert has_element?(view, ".ws-prev-empty", "Nothing here yet")
       # Its agent starts with the first message, not before.
       assert [%{started_at: nil}] = Chats.list(project.id)
@@ -104,7 +104,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       refute has_element?(view, "#phone-btn")
 
       # The other versions keep it.
-      view |> element("#view-menu button", "live") |> render_click()
+      view |> element("#view-menu button", "staging") |> render_click()
       assert has_element?(view, ".ws-prev-body.phone")
 
       view |> element("#phone-btn") |> render_click()
@@ -206,28 +206,32 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#chat-input")
     end
 
-    test "a landed change ships from its card, and its chat is done", %{
+    test "a change on staging ships from its card, and its chat is done", %{
       conn: conn,
       project: project
     } do
       chat = Chats.create(project.id, "Say hello", "aksel")
       change = land!(project, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
-      run = Runs.start(project.id, "check", "main", change.id)
-      Runs.finish(run, status: "passed")
 
+      # Merged, main runs its check: the chat goes on until staging has it.
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
+      assert has_element?(view, ".pbar-meta", "##{change.id} going to staging")
+      refute has_element?(view, "#chat-done")
+
+      stage!(project, change.id)
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
       assert has_element?(view, "#chat-#{chat.id} .cm", "##{change.id}")
-      assert has_element?(view, ".pbar-meta", "##{change.id} on main")
+      assert has_element?(view, ".pbar-meta", "##{change.id} on staging")
       assert has_element?(view, ".ws-cs h2", "Change ##{change.id}")
-      # Without staging, main is what goes live: the chat box gives way, and
-      # the chat is done; it stays under Today.
-      assert has_element?(view, "#chat-done", "##{change.id} is on main.")
+      # On staging the chat box gives way, and the chat is done; it stays
+      # under Today. Shipping to prod is the project's.
+      assert has_element?(view, "#chat-done", "##{change.id} is on staging.")
       assert has_element?(view, "#chat-done", "This chat is done.")
       assert has_element?(view, "#drawer .dday:has(#chat-#{chat.id}) .dsec", "Today")
       assert has_element?(view, "#chat-#{chat.id} .okic")
       refute has_element?(view, "#drawer-edit")
       refute has_element?(view, "#chat-input")
-      # Its dev preview stays, to look into, until it is live.
+      # Its dev preview stays, to look into, until it is on prod.
       refute has_element?(view, "#view-menu button[disabled]", "dev")
       assert Burrow.Activity.unshipped?(project, chat.id)
 
@@ -236,12 +240,12 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#view-menu button[disabled]", "dev")
       refute Burrow.Activity.unshipped?(project, chat.id)
 
-      # Live but not deployed yet, or down: the project's line says so.
-      send(view.pid, {:env, "prod", down_env("prod")})
-      assert has_element?(view, "#more-menu .menu-meta", "live — · no staging")
-      assert has_element?(view, "#chat-done", "##{change.id} is live.")
+      # On prod but not deployed yet, or down: the project's line says so.
+      send(view.pid, {:env, "prod", env_info("prod", nil)})
+      assert has_element?(view, "#more-menu .menu-meta", "staging ##{change.id} · prod —")
+      assert has_element?(view, "#chat-done", "##{change.id} is on prod.")
       refute has_element?(view, "#chat-#{chat.id} .cdot")
-      assert has_element?(view, "#chat-#{chat.id} .cst", "Live")
+      assert has_element?(view, "#chat-#{chat.id} .cst", "On prod")
     end
 
     test "a done chat follows up in a new one, which starts from its change", %{
@@ -250,6 +254,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
     } do
       chat = Chats.create(project.id, "Say hello", "aksel")
       change = land!(project, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      stage!(project, change.id)
 
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
       view |> element("#chat-done button", "Follow up on ##{change.id}") |> render_click()
@@ -287,7 +292,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       project: project
     } do
       chat = Chats.create(project.id, "Say hello", "aksel")
-      land!(project, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      change = land!(project, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      stage!(project, change.id)
       {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat.id}")
 
       view |> element("#chat-done button", "New chat") |> render_click()
@@ -487,7 +493,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       view |> element("#submit-design") |> render_click()
       assert Totem.Repo.file(repo, "design/a.html") == {:ok, "<title>a</title>"}
-      assert has_element?(view, ".ws-cs", "On main, so teammates see the boards")
+      assert has_element?(view, ".ws-cs", "Merged, so teammates see the boards")
       assert has_element?(view, "#chat-#{chat.id} .cdot.done")
       refute has_element?(view, "#chat-input[disabled]")
     end
@@ -538,8 +544,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       project: project,
       user: user
     } do
-      Burrow.Repo.update_all(Projects.Project, set: [envs: "pipeline"])
-      {:ok, view, _html} = open(conn, Projects.get(project.id))
+      {:ok, view, _html} = open(conn, project)
       refute has_element?(view, "#overview")
       view |> element("#overview-btn") |> render_click()
       assert has_element?(view, "#overview-btn", "Back to preview")
@@ -557,19 +562,19 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#view-menu button", "staging")
     end
 
-    test "a project without staging calls prod live, and staging can be added", %{
+    test "staging shows in the pane; prod only opens in a new tab", %{
       conn: conn,
       project: project
     } do
-      assert Projects.get(project.id).envs == "live"
-
+      stage!(project, 1)
       {:ok, view, _html} = open(conn, project)
-      assert has_element?(view, "#view-menu button", "live")
-      refute has_element?(view, "#view-menu button", "staging")
+      refute has_element?(view, "#view-prod")
 
-      view |> element("#more-menu button", "Add staging") |> render_click()
-      assert Projects.get(project.id).envs == "pipeline"
-      assert render(view) =~ "Staging is set up"
+      view |> element("#view-menu button", "staging") |> render_click()
+      assert has_element?(view, "iframe.ws-frame[src='https://staging.test']")
+
+      send(view.pid, {:env, "prod", env_info("prod", 1)})
+      assert has_element?(view, "#view-prod[href='https://prod.test'][target=_blank]")
     end
   end
 
@@ -633,7 +638,8 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       user: user
     } do
       done = Chats.create(project.id, "Say hello", "aksel")
-      land!(project, done, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      change = land!(project, done, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+      stage!(project, change.id)
       open = Chats.create(project.id, "Still open", "aksel")
       worked!(project, done, -24)
       worked!(project, open, -24)
@@ -791,21 +797,6 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert_receive {:project_created, %{name: "Club", auth: "accounts", signups: true}}
     end
   end
-
-  # An env as Burrow.Env.info/2 has it when it runs nothing.
-  defp down_env(name),
-    do: %{
-      name: name,
-      status: :stopped,
-      attach: "",
-      good: nil,
-      usage: %{history: [], errors: 0, sessions: 0, p95: nil, visitors: 0, rpm: 0},
-      stats: nil,
-      errors: [],
-      url: "https://#{name}.test",
-      deployed: nil,
-      deploy: nil
-    }
 
   # The workspace opens its first chat (a new empty one when there is none).
   # The chat was worked on `hours` from now (negative: ago), and so was its draft.

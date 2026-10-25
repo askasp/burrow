@@ -9,7 +9,7 @@ defmodule BurrowWeb.Peek do
 
   use BurrowWeb, :verified_routes
 
-  alias Burrow.{Activity, Chat, GeneralChat, GeneralChats, Projects, Ship}
+  alias Burrow.{Activity, Chat, GeneralChat, GeneralChats, Projects}
   alias BurrowWeb.ChatsLive
   alias BurrowWeb.WorkspaceLive.Components
 
@@ -69,7 +69,6 @@ defmodule BurrowWeb.Peek do
     with {id, ""} <- Integer.parse(to_string(place)),
          true <- Projects.visible?(scope, id) do
       project = Projects.get!(scope, id)
-      live_only? = not Ship.staging?(project)
       tabs = Activity.chats(project, scope.user.id, Chat.busy_ids(project.id))
       tile = Enum.find(rail, &(&1.id == id)) || Activity.of(project) |> tile()
 
@@ -80,8 +79,8 @@ defmodule BurrowWeb.Peek do
         tile: tile,
         new_url: ~p"/projects/#{id}/c/new",
         days:
-          for {day, tabs, _done} <- Components.by_day(tabs, live_only?) do
-            {day, Enum.map(tabs, &row(&1, project, live_only?))}
+          for {day, tabs, _done} <- Components.by_day(tabs) do
+            {day, Enum.map(tabs, &row(&1, project))}
           end
       }
     else
@@ -89,14 +88,14 @@ defmodule BurrowWeb.Peek do
     end
   end
 
-  defp row(tab, project, live_only?) do
+  defp row(tab, project) do
     %{
       id: tab.chat.id,
       title: Components.chat_title(tab, project, false),
       url: ~p"/projects/#{project.id}/c/#{tab.chat.id}",
-      status: Components.row_status(tab, live_only?),
+      status: Components.row_status(tab),
       meta: Components.row_meta(tab),
-      done?: Activity.done?(tab, live_only?)
+      done?: Activity.done?(tab)
     }
   end
 

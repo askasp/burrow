@@ -21,7 +21,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :user, :map, required: true, doc: "the signed-in user, for the account menu"
   attr :nothing_built?, :boolean, required: true
   attr :repo?, :boolean, required: true
-  attr :live_only?, :boolean, required: true
   attr :peek, :map, default: nil, doc: "another place whose chats show instead (`BurrowWeb.Peek`)"
 
   @doc """
@@ -35,12 +34,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   theme, log out.
   """
   def drawer(assigns) do
-    open = open_chats(assigns.tabs, assigns.live_only?)
+    open = open_chats(assigns.tabs)
 
     assigns =
       assign(assigns,
         open: length(open),
-        days: by_day(assigns.tabs, assigns.live_only?),
+        days: by_day(assigns.tabs),
         tile: Enum.find(assigns.rail, & &1.current) || %{state: "stopped", pct: 8}
       )
 
@@ -140,10 +139,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               url={"#{@base}/c/#{t.chat.id}"}
               current={@chat != nil and @chat.id == t.chat.id}
               title={chat_title(t, @project, @nothing_built?)}
-              status={row_status(t, @live_only?)}
+              status={row_status(t)}
               meta={row_meta(t)}
               confirm={close_confirm(t, @repo?)}
-              done={Activity.done?(t, @live_only?)}
+              done={Activity.done?(t)}
             />
           </div>
           <p class="dnone">No chats match.</p>
@@ -607,7 +606,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         "this again: it stays in the box."
 
   @doc "The chats that aren't done, the one worked on last first."
-  def open_chats(tabs, live_only?), do: Enum.reject(tabs, &Activity.done?(&1, live_only?))
+  def open_chats(tabs), do: Enum.reject(tabs, &Activity.done?/1)
 
   @days ["Today", "Yesterday", "This week", "Older"]
 
@@ -615,12 +614,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   The chats by the day they were worked on, each day's last first, and how
   many of each day's are done.
   """
-  def by_day(tabs, live_only?) do
+  def by_day(tabs) do
     tabs
     |> Enum.group_by(&day/1)
     |> Enum.sort_by(fn {day, _tabs} -> Enum.find_index(@days, &(&1 == day)) end)
     |> Enum.map(fn {day, tabs} ->
-      {day, tabs, Enum.count(tabs, &Activity.done?(&1, live_only?))}
+      {day, tabs, Enum.count(tabs, &Activity.done?/1)}
     end)
   end
 
@@ -635,23 +634,18 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   @doc "Where a chat's change stands, in a word or two, and its tone."
-  def row_status(%{phase: "live"}, true), do: {"Live", "done"}
-  def row_status(%{phase: "live"}, false), do: {"On prod", "done"}
-  def row_status(%{phase: "landing"}, true), do: {"On main", "done"}
-  def row_status(%{phase: "landing"}, false), do: {"On main", "working"}
-
-  def row_status(%{phase: "working", draft: %{status: "checking"}}, _),
-    do: {"Checking", "working"}
-
-  def row_status(%{phase: "working"}, _live_only?), do: {"Working", "working"}
-  def row_status(%{phase: "staged"}, _live_only?), do: {"On staging · ship", "waiting"}
-  def row_status(%{phase: "failed"}, _live_only?), do: {"Checks failed", "err"}
-  def row_status(%{phase: "ready"}, _live_only?), do: {"PR open", "waiting"}
-  def row_status(%{phase: "merged"}, _live_only?), do: {"PR merged", "done"}
-  def row_status(%{phase: "closed"}, _live_only?), do: {"PR closed", "done"}
-  def row_status(%{phase: "drawn"}, _live_only?), do: {"Boards on main", "done"}
-  def row_status(%{phase: "idle"}, _live_only?), do: {"No change yet", "new"}
-  def row_status(_tab, _live_only?), do: {"New chat", "new"}
+  def row_status(%{phase: "live"}), do: {"On prod", "done"}
+  def row_status(%{phase: "staged"}), do: {"On staging", "done"}
+  def row_status(%{phase: "landing"}), do: {"Going to staging", "working"}
+  def row_status(%{phase: "working", draft: %{status: "checking"}}), do: {"Checking", "working"}
+  def row_status(%{phase: "working"}), do: {"Working", "working"}
+  def row_status(%{phase: "failed"}), do: {"Checks failed", "err"}
+  def row_status(%{phase: "ready"}), do: {"PR open", "waiting"}
+  def row_status(%{phase: "merged"}), do: {"PR merged", "done"}
+  def row_status(%{phase: "closed"}), do: {"PR closed", "done"}
+  def row_status(%{phase: "drawn"}), do: {"Boards merged", "done"}
+  def row_status(%{phase: "idle"}), do: {"No change yet", "new"}
+  def row_status(_tab), do: {"New chat", "new"}
 
   @doc "A chat's number once its change is on main, and when it was worked on, if lately."
   def row_meta(tab) do
@@ -707,7 +701,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :meta, :string, required: true, doc: "the project's versions, for the menu"
   attr :overview, :boolean, required: true
   attr :sharing, :map
-  attr :live_only?, :boolean, required: true
   attr :repo?, :boolean, required: true
   attr :secrets, :list, required: true
   attr :open_incidents, :integer, required: true
@@ -811,16 +804,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               @secrets
             )}</span>
           </button>
-          <div :if={add_envs?(assigns)} class="msep" role="separator"></div>
-          <button
-            :if={add_envs?(assigns)}
-            type="button"
-            role="menuitem"
-            phx-click={hide_menu() |> JS.push("add_envs")}
-            data-confirm="Add staging? From then on main goes to staging first, and you ship it to prod. This can't be undone."
-          >
-            Add staging
-          </button>
         </div>
       </div>
       <div class="pbar-acts">
@@ -848,11 +831,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     </header>
     """
   end
-
-  defp add_envs?(assigns),
-    do:
-      assigns.live_only? and not assigns.repo? and
-        (assigns.sharing == nil or assigns.sharing.owner?)
 
   defp hide_menu,
     do: JS.hide(to: "#more-menu") |> JS.set_attribute({"aria-expanded", "false"}, to: "#more-btn")
@@ -1272,7 +1250,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :draft, :map, required: true
   attr :tab, :map
   attr :step, :any
-  attr :live_only?, :boolean, required: true
   attr :promote, :any
   attr :main_check, :any
 
@@ -1297,7 +1274,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       assign(assigns,
         phase: phase,
         steps: (draft.checks["steps"] || []) ++ main,
-        end_name: env_label("prod", assigns.live_only?),
         reached: reached(phase),
         title: if(draft.change, do: "Change ##{draft.change}", else: "Change")
       )
@@ -1310,17 +1286,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="size-[17px]"
         /></span>
         <h2 class="m-0 text-[15px] leading-[22px] font-semibold">{@title}</h2>
-        <span class={["st", badge_tone(@phase)]}><span class="dot"></span>{badge(@phase, @live_only?)}</span>
+        <span class={["st", badge_tone(@phase)]}><span class="dot"></span>{badge(@phase)}</span>
         <div class="flow mono ml-auto">
           <span class="on">dev</span>
           <.icon name="hero-arrow-right" class="size-3" />
-          <span class={@reached >= 1 && "on"}>main</span>
-          <span :if={!@live_only?} class="contents">
-            <.icon name="hero-arrow-right" class="size-3" />
-            <span class={@reached >= 2 && "on"}>staging</span>
-          </span>
+          <span class={@reached >= 2 && "on"}>staging</span>
           <.icon name="hero-arrow-right" class="size-3" />
-          <span class={@reached >= 3 && "on"}>{@end_name}</span>
+          <span class={@reached >= 3 && "on"}>prod</span>
         </div>
       </div>
       <div class="truncate muted text-[13px]">{@draft.intent}</div>
@@ -1349,7 +1321,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           <div :if={@phase in ~w(landing staged)} class="dep" role="status">
             <span :if={@phase == "staged"} class="live"><.icon name="hero-check" class="size-4" />
             On staging</span>
-            <span :if={@phase == "landing" and !@promote}>On main</span>
+            <span :if={@phase == "landing" and !@promote}>Going to staging</span>
             <span :if={@phase == "landing" and !@promote} class="dbar" aria-hidden="true"><i></i></span>
             <button
               :if={@phase == "staged"}
@@ -1369,15 +1341,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               data-kb-key="a"
               data-kb-label="Ship"
               data-kb-group="Ship"
-              data-confirm={"Ship ##{@promote} to #{@end_name}?"}
+              data-confirm={"Ship ##{@promote} to prod?"}
             >
               Ship
             </button>
           </div>
           <span :if={@phase == "live"} class="live" role="status">
-            <.icon name="hero-check" class="size-4" /> {if @live_only?,
-              do: "Live",
-              else: "Live on prod"}
+            <.icon name="hero-check" class="size-4" /> On prod
           </span>
         </div>
       </div>
@@ -1532,7 +1502,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     <section id="chat-done" class="ws-done" aria-label="This chat is done">
       <div class="h">
         <.icon name="hero-check" class="size-[17px] self-center text-[var(--ok)]" />
-        <b>#{@id} {if @tab.phase == "live", do: "is live.", else: "is on main."}</b>
+        <b>#{@id} {if @tab.phase == "live", do: "is on prod.", else: "is on staging."}</b>
         <span>This chat is done.</span>
       </div>
       <div class="a">
@@ -1563,17 +1533,15 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp reached("live"), do: 3
   defp reached(_phase), do: 0
 
-  defp badge("working", _), do: "checking"
-  defp badge("failed", _), do: "checks failed"
-  defp badge("ready", _), do: "pull request open"
-  defp badge("merged", _), do: "pull request merged"
-  defp badge("closed", _), do: "pull request closed"
-  defp badge("landing", true), do: "on main"
-  defp badge("landing", false), do: "on main"
-  defp badge("staged", _), do: "on staging"
-  defp badge("live", true), do: "live"
-  defp badge("live", false), do: "on prod"
-  defp badge(_, _), do: "not submitted"
+  defp badge("working"), do: "checking"
+  defp badge("failed"), do: "checks failed"
+  defp badge("ready"), do: "pull request open"
+  defp badge("merged"), do: "pull request merged"
+  defp badge("closed"), do: "pull request closed"
+  defp badge("landing"), do: "going to staging"
+  defp badge("staged"), do: "on staging"
+  defp badge("live"), do: "on prod"
+  defp badge(_), do: "not submitted"
 
   defp badge_tone(phase) when phase in ~w(working landing), do: "warn"
   defp badge_tone("failed"), do: "err"
@@ -1607,7 +1575,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :view, :string, required: true
   attr :env_names, :list, required: true
   attr :envs, :map, required: true, doc: "each environment's `Burrow.Env.info/2`"
-  attr :live_only?, :boolean, required: true
   attr :dev?, :boolean, required: true
   attr :number, :any, doc: "the chat's change number, once on main"
   attr :chat, :map
@@ -1622,8 +1589,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   slot :inner_block, doc: "the design view"
 
   @doc """
-  The version picker and what it shows: the chat's dev preview, staging or
-  prod, or its boards (the inner block) in the design view. Beside it the
+  The version picker and what it shows: the chat's dev preview or staging,
+  or its boards (the inner block) in the design view; prod only opens in a
+  new tab. Beside it the
   address, \"Open\" (the app, its other ports, the pull request), reload,
   the app as a phone (wide screens only), and a ⋯ menu with the logs, a
   restart and how long the preview stays up.
@@ -1655,7 +1623,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="chip fill vpick"
           aria-haspopup="menu"
           aria-expanded="false"
-          aria-label={"Showing #{view_name(@view, @live_only?, @number)}. Change"}
+          aria-label={"Showing #{view_name(@view, @number)}. Change"}
           phx-click={
             JS.toggle(to: "#view-menu") |> JS.toggle_attribute({"aria-expanded", "true", "false"})
           }
@@ -1664,7 +1632,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           data-kb-group="Agent & preview"
         >
           <span class={["st", @tone]}><span class="dot"></span></span>
-          <span class="mono">{view_name(@view, @live_only?, @number)}</span>
+          <span class="mono">{view_name(@view, @number)}</span>
           <span :if={@design && @design.drawing && @view != "design"} class="ddot" aria-hidden="true"></span>
           <.icon name="hero-chevron-down" class="size-3.5 muted" />
         </button>
@@ -1675,20 +1643,36 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           style="display: none"
           phx-click-away={hide_view_menu()}
         >
+          <a
+            :if={(prod = @envs["prod"]) && prod.deployed}
+            id="view-prod"
+            href={prod.url}
+            target="_blank"
+            rel="noopener"
+            role="menuitem"
+            phx-click={hide_view_menu()}
+          >
+            <span class={["st", st_tone(prod.status)]}><span class="dot"></span></span>
+            <span class="vt">
+              <span class="mono">prod</span>
+              <span class="vd">{env_about("prod")} · {env_word(prod)}</span>
+            </span>
+            <.icon name="hero-arrow-top-right-on-square" class="size-4 vout" />
+          </a>
           <button
-            :for={env <- Enum.reverse(@env_names)}
+            :if={"staging" in @env_names}
             type="button"
             role="menuitemradio"
-            aria-checked={to_string(@view == env)}
-            phx-click={hide_view_menu() |> JS.push("view", value: %{view: env})}
+            aria-checked={to_string(@view == "staging")}
+            phx-click={hide_view_menu() |> JS.push("view", value: %{view: "staging"})}
           >
-            <span class={["st", st_tone(@envs[env] && @envs[env].status)]}><span class="dot"></span></span>
+            <span class={["st", st_tone(@envs["staging"] && @envs["staging"].status)]}><span class="dot"></span></span>
             <span class="vt">
-              <span class="mono">{env_label(env, @live_only?)}</span>
-              <span class="vd">{env_about(env, @live_only?)}{env_word(@envs[env])
+              <span class="mono">staging</span>
+              <span class="vd">{env_about("staging")}{env_word(@envs["staging"])
               |> then(&if(&1 != "", do: " · " <> &1, else: ""))}</span>
             </span>
-            <.icon :if={@view == env} name="hero-check" class="size-4 vcheck" />
+            <.icon :if={@view == "staging"} name="hero-check" class="size-4 vcheck" />
           </button>
           <button
             type="button"
@@ -1744,8 +1728,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         target="_blank"
         rel="noopener"
         class="icon-btn"
-        aria-label={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
-        title={"Open #{view_name(@view, @live_only?, @number)} in a new tab"}
+        aria-label={"Open #{view_name(@view, @number)} in a new tab"}
+        title={"Open #{view_name(@view, @number)} in a new tab"}
       >
         <.icon name="hero-arrow-top-right-on-square" class="size-4" />
       </a>
@@ -1900,7 +1884,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           phx-value-env={@preview.down}
           class="btn btn-secondary btn-sm"
         >
-          Restart {env_label(@preview.down, @live_only?)}
+          Restart {@preview.down}
         </button>
         <button
           :if={@preview[:wake]}
@@ -1919,7 +1903,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           data-kb="row"
           class="btn btn-primary"
         >
-          Open {view_name(@view, @live_only?, @number)} in a new tab
+          Open {view_name(@view, @number)} in a new tab
           <.icon name="hero-arrow-top-right-on-square" class="size-4" />
         </a>
       </div>
@@ -1927,11 +1911,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         <div class="ws-logs-head">
           <.icon name="hero-command-line" class="size-4 muted" />
           <span class="font-semibold text-[13px]">Logs</span>
-          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(
-            @view,
-            @live_only?,
-            @number
-          )}</span>
+          <span class="mono muted text-xs">{@project && @project.slug} · {view_name(@view, @number)}</span>
           <button
             type="button"
             phx-click="toggle_logs"
@@ -1960,9 +1940,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp view_tone(%{view: "design"}), do: "idle"
   defp view_tone(%{preview: preview}), do: st_tone(preview.status)
 
-  defp env_about("prod", _live_only?), do: "What your users see now"
-  defp env_about("staging", _live_only?), do: "Main, before it ships"
-  defp env_about(_env, _live_only?), do: ""
+  defp env_about("prod"), do: "What your users see now"
+  defp env_about("staging"), do: "Every merged chat, before prod"
 
   defp env_word(nil), do: ""
   defp env_word(%{deployed: nil}), do: "not built"
@@ -1979,21 +1958,15 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp hide_pop(menu, button),
     do: JS.hide(to: menu) |> JS.set_attribute({"aria-expanded", "false"}, to: button)
 
-  defp view_name("dev", _live_only?, id) when is_integer(id), do: "dev ##{id}"
-  defp view_name("dev", _live_only?, _cs), do: "dev"
-  defp view_name(env, live_only?, _cs), do: env_label(env, live_only?)
+  defp view_name("dev", id) when is_integer(id), do: "dev ##{id}"
+  defp view_name(view, _cs), do: view
 
   defp pr_number(url), do: "#" <> (url |> String.split("/") |> List.last())
-
-  @doc "What the project calls an environment: prod is \"live\" when there is no staging."
-  def env_label("prod", true), do: "live"
-  def env_label(env, _live_only?), do: env
 
   ## Deploys and usage
 
   attr :envs, :map, required: true
   attr :env_names, :list, required: true
-  attr :live_only?, :boolean, required: true
   attr :tabs, :list, required: true
   attr :info, :map
   attr :promote, :any
@@ -2003,8 +1976,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :deploys, :list, required: true
 
   @doc """
-  In place of the preview: each environment's version, prod's (live's) usage
-  and incidents, and the latest deploys.
+  In place of the preview: each environment's version, prod's usage and
+  incidents, and the latest deploys.
   """
   def overview(assigns) do
     prod = assigns.envs["prod"]
@@ -2012,7 +1985,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     assigns =
       assign(assigns,
         prod: prod,
-        prod_name: env_label("prod", assigns.live_only?),
         open: Enum.count(assigns.tabs, &(&1.phase in ~w(idle working failed))),
         running?: match?(%{status: :running, deployed: id} when id != nil, prod),
         usage: prod && prod[:usage],
@@ -2056,7 +2028,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               :for={name <- @env_names}
               name={name}
               info={@envs[name]}
-              live_only?={@live_only?}
               envs={@envs}
             />
           </div>
@@ -2071,7 +2042,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               data-kb-key="P"
               data-kb-label="Ship"
               data-kb-group="Ship"
-              data-confirm={"Ship ##{@promote} to #{@prod_name}?"}
+              data-confirm={"Ship ##{@promote} to prod?"}
             >
               Ship
             </button>
@@ -2089,7 +2060,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
         <div>
           <div class="sec-h">
-            <span class="eyebrow">{@prod_name} · {uptime(@prod, @stats)}</span>
+            <span class="eyebrow">prod · {uptime(@prod, @stats)}</span>
           </div>
           <div :if={@running? and @usage} class="stats">
             <.stat
@@ -2130,7 +2101,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           <div :if={!@running?} class="down-row">
             <%= if @prod && @prod.deployed do %>
               <span class={["st", if(match?({:crashed, _}, @prod.status), do: "err", else: "warn")]}>
-                <span class="dot"></span>{down_text(@prod, @prod_name)}
+                <span class="dot"></span>{down_text(@prod, "prod")}
               </span>
               <button
                 :if={match?({:crashed, _}, @prod.status)}
@@ -2139,7 +2110,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
                 phx-click="restart_env"
                 phx-value-env="prod"
               >
-                Restart {@prod_name}
+                Restart prod
               </button>
             <% else %>
               <span class="st idle"><span class="dot"></span>Nothing built yet</span>
@@ -2147,7 +2118,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           </div>
           <ul :if={@open_incidents != []} class="rows mt-4" aria-label="Incidents">
             <li :for={i <- @open_incidents} class="items-start!">
-              <span class="tag shrink-0">{env_label(i.env, @live_only?)}</span>
+              <span class="tag shrink-0">{i.env}</span>
               <div class="flex-1 min-w-0">
                 <div class="truncate text-[var(--err)]" title={i.detail}>{i.title}</div>
                 <div class="meta">
@@ -2182,7 +2153,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <li :for={d <- @deploys}>
               <span class="n">#{d.id}</span>
               <span class="t" title={d.intent}>{d.intent}</span>
-              <span class="w">{(d.where && env_label(d.where, @live_only?)) || "main"}</span>
+              <span class="w">{d.where || "main"}</span>
               <span class="d">{ago(d.at)}</span>
             </li>
           </ul>
@@ -2195,13 +2166,12 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :name, :string, required: true
   attr :info, :map
   attr :envs, :map, required: true
-  attr :live_only?, :boolean, required: true
 
   defp env_cell(assigns) do
     ~H"""
     <div class="env">
       <div class="flex items-center gap-2.5">
-        <span class="eyebrow">{env_label(@name, @live_only?)}</span>
+        <span class="eyebrow">{@name}</span>
         <span :if={@info} class={["st", st_tone(@info.status)]}>
           <span class="dot"></span>{if @info.deployed, do: env_text(@info), else: "not built"}
         </span>
@@ -2219,7 +2189,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         href={@info.url}
         target="_blank"
         rel="noopener"
-        title={"Open #{env_label(@name, @live_only?)} in a new tab"}
+        title={"Open #{@name} in a new tab"}
       >
         {host(@info.url)}<.icon name="hero-arrow-top-right-on-square" class="size-3" />
       </a>
@@ -2238,14 +2208,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp env_note(_name, _info, _envs), do: ""
 
-  defp sync_text(%{promote: id, live_only?: true}) when id != nil,
-    do: "Main ##{id} passed its check and is ready to ship."
-
   defp sync_text(%{promote: id}) when id != nil,
     do: "Staging is ahead of prod: ##{id} is ready to ship."
 
   defp sync_text(%{auto_promote: true}), do: "Every change that passes ships by itself."
-  defp sync_text(%{live_only?: true}), do: "Live runs main's latest shipped change."
   defp sync_text(_assigns), do: "Staging and prod match."
 
   attr :label, :string, required: true

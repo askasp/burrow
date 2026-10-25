@@ -6,8 +6,6 @@ defmodule Burrow.Projects.Project do
     field :name, :string
     field :slug, :string
     field :preview_ports, :string
-    # "live" (main is live, no staging) or "pipeline" (staging and prod)
-    field :envs, :string, default: "live"
     # An existing git repo to work on instead of a new app from the template
     field :repo_url, :string
     # The login a new app starts with (see `auths/0`); repo projects keep their own.
@@ -94,8 +92,6 @@ defmodule Burrow.Projects.Project do
 
   @doc "Made from an existing git repo: chats open PRs, there are no envs."
   def repo?(%__MODULE__{repo_url: url}), do: url not in [nil, ""]
-
-  def live_only?(%__MODULE__{envs: envs} = project), do: envs == "live" and not repo?(project)
 
   @doc "The basic auth login to hand to a new app, or nil."
   def basic_login(%__MODULE__{auth: "basic", basic_username: user, basic_password: pw})

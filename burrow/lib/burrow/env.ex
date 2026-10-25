@@ -1,7 +1,6 @@
 defmodule Burrow.Env do
   @moduledoc """
-  A running environment of a project's app: "prod", and "staging" when the
-  project has it. A long-lived container runs the app in prod mode; the app
+  A running environment of a project's app: "staging" or "prod". A long-lived container runs the app in prod mode; the app
   has Totem (a dependency in the template), which dials this process on a
   Unix socket mounted into the container (`TOTEM_LINK`). Nothing runs beside
   the app.
@@ -39,13 +38,8 @@ defmodule Burrow.Env do
   ## API
 
   @doc "The project's environments, staging first."
-  def names(project) do
-    cond do
-      Projects.Project.repo?(project) -> []
-      Ship.staging?(project) -> ["staging", "prod"]
-      true -> ["prod"]
-    end
-  end
+  def names(project),
+    do: if(Projects.Project.repo?(project), do: [], else: ["staging", "prod"])
 
   def subscribe(project_id), do: Projects.subscribe(project_id, "envs")
 

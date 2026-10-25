@@ -252,27 +252,4 @@ defmodule Burrow.Projects do
     base = Application.fetch_env!(:burrow, BurrowWeb.Endpoint)[:secret_key_base]
     :crypto.mac(:hmac, :sha256, base, "#{purpose}:#{id}") |> Base.url_encode64(padding: false)
   end
-
-  @doc """
-  Gives a project a staging environment in front of prod, for good: main
-  goes to staging first, and a person ships staging to prod.
-  """
-  def add_envs(%Scope{} = scope, %Project{} = project) do
-    cond do
-      not owner?(scope, project) ->
-        {:error, :not_owner}
-
-      not Project.live_only?(project) ->
-        {:ok, project}
-
-      true ->
-        {1, _} =
-          Repo.update_all(from(p in Project, where: p.id == ^project.id), set: [envs: "pipeline"])
-
-        project = %{project | envs: "pipeline"}
-        Burrow.Cell.restart(project.id)
-        Phoenix.PubSub.broadcast(Burrow.PubSub, "projects", {:project_updated, project})
-        {:ok, project}
-    end
-  end
 end

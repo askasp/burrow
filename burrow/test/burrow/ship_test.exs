@@ -59,10 +59,11 @@ defmodule Burrow.ShipTest do
     assert %{status: "landed", change: 2, intent: "Capital A"} = Repo.draft(repo, chat.id)
     assert Repo.file(repo, "lib/a.ex") == {:ok, "A1\na2\na3\n"}
     assert phase(project, chat) == "landing"
-
-    # Ready to ship once main passed its check, unless shipping is automatic.
     assert Activity.shippable(project) == nil
-    Runs.start(project.id, "check", "main", 2) |> Runs.finish(status: "passed")
+
+    # Main passed its check: staging runs it, ready to ship unless shipping is automatic.
+    Burrow.ProjectHelpers.stage!(project, 2)
+    assert phase(project, chat) == "staged"
     assert Activity.shippable(project) == 2
     Projects.put_settings(project, %{"auto_ship" => true})
     assert Activity.shippable(project) == nil

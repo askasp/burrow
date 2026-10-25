@@ -12,9 +12,10 @@ defmodule Burrow.Ship do
        built and booted in prod mode in a throwaway container. When that
        fails, the newest change is taken out again (reverted) and its chat
        told.
-    3. **Ship**: a person presses Ship (`ship/3`), or the project's
-       `"auto_ship"` does it after a passed check; prod (or staging first,
-       when the project has it) moves to main, and `Burrow.Env` loads it.
+    3. **Stage, ship**: a passed check moves staging to main, and
+       `Burrow.Env` loads it. A person presses Ship (`ship/3`) to move prod
+       to staging's, or the project's `"auto_ship"` does it once staging
+       runs it healthily.
 
   Boards (`Burrow.Design`) skip the checks: a change that is only boards
   lands as it is, from the agent's submit or a person's `submit_design/3`,
@@ -41,9 +42,6 @@ defmodule Burrow.Ship do
     do: GenServer.start_link(__MODULE__, project, name: Burrow.Cell.via(project.id, __MODULE__))
 
   def subscribe(project_id), do: Projects.subscribe(project_id, "ship")
-
-  @doc "Whether the project has staging in front of prod."
-  def staging?(project), do: project.envs == "pipeline"
 
   @doc "The last main check: a `Burrow.Runs` row, or nil."
   def main_check(project), do: Runs.last(project.id, "check", "main")
@@ -174,7 +172,8 @@ defmodule Burrow.Ship do
   defp landed({:ok, change}, :code),
     do:
       {"It landed on main as ##{change.id}. Main is now tested, built and booted in prod " <>
-         "mode; if that fails you get a message here. Then the user ships it.", false}
+         "mode; if that fails you get a message here, else it goes to staging and the " <>
+         "user ships it to prod.", false}
 
   defp landed({:ok, change}, :design),
     do: {"The boards landed on main as ##{change.id}. Boards are never shipped.", false}
@@ -370,21 +369,12 @@ defmodule Burrow.Ship do
     end)
   end
 
-  # Main passed: on to staging, or to prod when shipping is automatic.
+  # Main passed: on to staging.
   defp advance(project, tip) do
     repo = Projects.repo_dir(project)
 
-    cond do
-      staging?(project) ->
-        with :ok <- Repo.move_ref(repo, "staging", tip, Repo.ref(repo, "staging")),
-             do: Projects.broadcast(project.id, "refs", {:ref_moved, "staging", tip})
-
-      Projects.settings(project)["auto_ship"] == true ->
-        ship(project, tip, "auto-ship")
-
-      true ->
-        :ok
-    end
+    with :ok <- Repo.move_ref(repo, "staging", tip, Repo.ref(repo, "staging")),
+         do: Projects.broadcast(project.id, "refs", {:ref_moved, "staging", tip})
   end
 
   @doc false

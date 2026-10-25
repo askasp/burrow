@@ -705,12 +705,13 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .vback, .ws-root .vchat { display: none }
 .ws-root .vnote { flex: 1; min-width: 0; padding: 0 6px; font-size: 13px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ws-root .menu.vmenu { width: 300px; border-radius: 14px; box-shadow: 0 12px 32px var(--shadow) }
-.ws-root .vmenu button { align-items: flex-start; justify-content: flex-start; gap: 10px; height: auto; min-height: 56px; padding: 10px }
-.ws-root .vmenu button .st { margin-top: 6px }
+.ws-root .vmenu button, .ws-root .vmenu a[role="menuitem"] { align-items: flex-start; justify-content: flex-start; gap: 10px; height: auto; min-height: 56px; padding: 10px }
+.ws-root .vmenu button .st, .ws-root .vmenu a .st { margin-top: 6px }
 .ws-root .vmenu .vt { flex: 1; display: flex; flex-direction: column; gap: 2px }
 .ws-root .vmenu .vt .mono { font-size: 13.5px }
 .ws-root .vmenu .vd { font-size: 12.5px; line-height: 17px; color: var(--text-3) }
 .ws-root .vmenu .vcheck { margin-top: 3px; color: var(--accent-text) }
+.ws-root .vmenu .vout { margin-top: 3px; color: var(--text-3) }
 .ws-root .vmenu button[aria-checked="true"] { font-weight: 400; background: transparent }
 .ws-root .vmenu button:hover { background: var(--surface) }
 .ws-root .seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; flex: none }

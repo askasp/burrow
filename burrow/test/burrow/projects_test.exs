@@ -55,7 +55,6 @@ defmodule Burrow.ProjectsTest do
 
     assert project.repo_url == "https://github.com/a/b.git"
     assert Project.repo?(project)
-    refute Project.live_only?(project)
     [first, last] = project.preview_ports |> String.split("-") |> Enum.map(&String.to_integer/1)
     assert Burrow.Cell.ports(project) == {first..last, %{}}
     assert Burrow.Secrets.value(project.id, "GITHUB_TOKEN") == nil

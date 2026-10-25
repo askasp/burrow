@@ -40,6 +40,35 @@ defmodule Burrow.ProjectHelpers do
     change
   end
 
+  @doc """
+  Puts change `id` on staging, running healthily, as a passed main check
+  and its deploy would.
+  """
+  def stage!(project, id) do
+    repo = Projects.repo_dir(project)
+    :ok = Totem.Repo.move_ref(repo, "staging", id, Totem.Repo.ref(repo, "staging"))
+
+    ExUnit.Callbacks.start_supervised!(
+      {Burrow.FakeEnv, {project.id, "staging", env_info("staging", id)}}
+    )
+  end
+
+  @doc "An environment's `Burrow.Env.info/2`, running change `id`, or nothing."
+  def env_info(name, id) do
+    %{
+      name: name,
+      status: if(id, do: :running, else: :stopped),
+      attach: "",
+      good: id,
+      usage: %{history: [], errors: 0, sessions: 0, p95: nil, visitors: 0, rpm: 0},
+      stats: nil,
+      errors: [],
+      url: "https://#{name}.test",
+      deployed: id,
+      deploy: nil
+    }
+  end
+
   def assert_eventually(fun, tries \\ 50) do
     cond do
       fun.() -> :ok

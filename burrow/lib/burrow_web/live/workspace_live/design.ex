@@ -512,7 +512,6 @@ defmodule BurrowWeb.WorkspaceLive.Design do
   end
 
   attr :card, :map, required: true, doc: "`%{state: :drawing | :ready | :landed, change}`"
-  attr :live_only?, :boolean, required: true
 
   @doc "The chat's change when it is boards alone: Submit design lands it, it never ships."
   def design_card(assigns) do
@@ -537,7 +536,7 @@ defmodule BurrowWeb.WorkspaceLive.Design do
           </button>
         </div>
       </div>
-      <div class="muted text-[13px]">{card_note(@card.state, @live_only?)}</div>
+      <div class="muted text-[13px]">{card_note(@card.state)}</div>
     </section>
     """
   end
@@ -547,13 +546,10 @@ defmodule BurrowWeb.WorkspaceLive.Design do
 
   defp card_word(:drawing), do: "drawing"
   defp card_word(:ready), do: "ready"
-  defp card_word(:landed), do: "on main"
+  defp card_word(:landed), do: "merged"
 
-  defp card_note(:landed, _live_only?),
-    do: "On main, so teammates see the boards. Nothing ships."
+  defp card_note(:landed), do: "Merged, so teammates see the boards. Nothing ships."
 
-  defp card_note(_state, live_only?),
-    do:
-      "Lands on main right away, without the checks. Boards never ship to " <>
-        if(live_only?, do: "live.", else: "prod.")
+  defp card_note(_state),
+    do: "Merges right away, without the checks. Boards never ship to staging or prod."
 end

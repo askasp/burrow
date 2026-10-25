@@ -7,8 +7,6 @@ defmodule BurrowWeb.ProjectLiveTest do
   import Phoenix.LiveViewTest
   import Burrow.AccountsFixtures
 
-  import Ecto.Query
-
   alias Burrow.Accounts.Scope
   alias Burrow.{Projects, Teams}
 
@@ -31,7 +29,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     [project] = Projects.list(Scope.for_user(user))
     assert has_element?(lv, "#project-#{project.id} a.nm", "Sauna Booking")
     refute has_element?(lv, "#new-project-dialog")
-    assert has_element?(lv, "#project-#{project.id} .sub", "live only · private")
+    assert has_element?(lv, "#project-#{project.id} .sub", "staging · prod · private")
     assert has_element?(lv, "#project-#{project.id} .chg", "Nothing built yet")
     refute has_element?(lv, "#project_form")
 
@@ -122,9 +120,8 @@ defmodule BurrowWeb.ProjectLiveTest do
     refute has_element?(mate_lv, "#delete-project-#{project.id}")
   end
 
-  test "a project with staging and prod can't add them again", %{conn: conn, user: user} do
+  test "a new project has staging and prod", %{conn: conn, user: user} do
     {:ok, project} = Projects.create(Scope.for_user(user), %{"name" => "Procedures"})
-    pipeline!(project)
 
     {:ok, lv, _html} = live(conn, ~p"/projects")
     assert has_element?(lv, "#project-#{project.id} .sub", "staging · prod · private")
@@ -132,10 +129,9 @@ defmodule BurrowWeb.ProjectLiveTest do
 
     lv |> element("#project-menu-#{project.id}") |> render_click()
     assert has_element?(lv, "#project-menu-items-#{project.id} button", "Restart")
-    refute has_element?(lv, "#add-envs-#{project.id}")
   end
 
-  describe "a live-only project" do
+  describe "a project" do
     setup %{user: user} do
       {:ok, project} = Projects.create(Scope.for_user(user), %{"name" => "Watchtower"})
       %{project: project}
@@ -183,22 +179,6 @@ defmodule BurrowWeb.ProjectLiveTest do
       lv |> element("#no-project .plnk", "All chats") |> render_click()
       assert has_element?(lv, "#peek-switch", "Chats")
     end
-
-    @tag :tmp_dir
-    test "add staging and prod turns it into a pipeline project", %{
-      conn: conn,
-      project: project,
-      tmp_dir: dir
-    } do
-      Burrow.ProjectHelpers.start_project!(project, dir)
-      {:ok, lv, _html} = live(conn, ~p"/projects")
-      running!(project)
-
-      lv |> element("#project-menu-#{project.id}") |> render_click()
-      lv |> element("#add-envs-#{project.id}") |> render_click()
-      assert render(lv) =~ "Watchtower has staging and prod now."
-      assert Projects.get(project.id).envs == "pipeline"
-    end
   end
 
   describe "deleting" do
@@ -227,16 +207,5 @@ defmodule BurrowWeb.ProjectLiveTest do
       assert Burrow.Chats.get(chat.id) == nil
       refute File.exists?(Projects.dir(project))
     end
-  end
-
-  # Tests run no cells; tell the page this one runs, as its cell would.
-  defp running!(project),
-    do: Phoenix.PubSub.broadcast(Burrow.PubSub, "cells", {:cell, project.id, :running})
-
-  defp pipeline!(project) do
-    Burrow.Repo.update_all(
-      from(p in Burrow.Projects.Project, where: p.id == ^project.id),
-      set: [envs: "pipeline"]
-    )
   end
 end

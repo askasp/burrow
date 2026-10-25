@@ -23,7 +23,7 @@ defmodule Burrow.Activity do
 
   use GenServer
 
-  alias Burrow.{Cell, Chat, Chats, Design, Env, Projects, Secrets, Ship}
+  alias Burrow.{Cell, Chat, Chats, Design, Env, Projects, Secrets}
   alias Burrow.GitRepo.PullRequest
   alias Totem.Repo
 
@@ -97,10 +97,8 @@ defmodule Burrow.Activity do
 
   defp phase(_chat, _draft, false, _refs), do: "idle"
 
-  @doc "A chat whose change is live, or on main where main is what goes live: it is done."
-  def done?(%{phase: "live"}, _live_only?), do: true
-  def done?(%{phase: "landing"}, live_only?), do: live_only?
-  def done?(_chat, _live_only?), do: false
+  @doc "A chat whose change is on staging or prod: it is done, shipping is the project's."
+  def done?(%{phase: phase}), do: phase in ~w(staged live)
 
   @doc """
   Whether user `user_id` can start another chat in the project: up to
@@ -110,9 +108,8 @@ defmodule Burrow.Activity do
   """
   def room?(project, user_id \\ nil) do
     room? = fn ->
-      live_only? = not Ship.staging?(project)
       chats = chats(project, user_id || project.user_id, MapSet.new())
-      Enum.count(chats, &counts?(&1, live_only?)) < Chats.max()
+      Enum.count(chats, &counts?/1) < Chats.max()
     end
 
     room?.() or
@@ -123,10 +120,10 @@ defmodule Burrow.Activity do
   Whether the chat counts against the open-chat limit: not while it is
   empty (it runs nothing yet), done, or a repo chat whose PR is through.
   """
-  def counts?(%{phase: phase}, _live_only?) when phase in ~w(new merged closed), do: false
-  def counts?(chat, live_only?), do: not done?(chat, live_only?)
+  def counts?(%{phase: phase}) when phase in ~w(new merged closed), do: false
+  def counts?(chat), do: not done?(chat)
 
-  @doc "Whether the chat's change is on main or staging and not live yet."
+  @doc "Whether the chat's change is on main or staging and not on prod yet."
   def unshipped?(project, chat_id) do
     with false <- Projects.Project.repo?(project),
          repo = Projects.repo_dir(project),
@@ -138,15 +135,10 @@ defmodule Burrow.Activity do
     end
   end
 
-  @doc "The change main could ship to prod now, when a person has to press Ship; else nil."
+  @doc "The change staging could ship to prod now, when a person has to press Ship; else nil."
   def shippable(project) do
     repo = Projects.repo_dir(project)
-    check = Ship.main_check(project)
-
-    candidate =
-      if Ship.staging?(project),
-        do: (Env.info(project, "staging") || %{})[:good],
-        else: check && check.status == "passed" && check.change_id
+    candidate = (Env.info(project, "staging") || %{})[:good]
 
     if is_integer(candidate) and Projects.settings(project)["auto_ship"] != true and
          candidate > (Repo.ref(repo, "prod") || 0),
@@ -175,7 +167,7 @@ defmodule Burrow.Activity do
       match?(%{status: {:crashed, _}}, prod) ->
         tile("stopped", "stopped", 8)
 
-      any?.("ready") or any?.("staged") or any?.("failed") ->
+      any?.("ready") or any?.("failed") ->
         tile("waiting", "waiting on you", 100)
 
       Enum.any?(Secrets.list(project.id), &(not &1.set?)) ->
