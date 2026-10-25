@@ -23,7 +23,9 @@ defmodule Burrow.Agent.MCPTest do
     assert names.(app) ==
              ~w(submit_changeset restart_preview restore runtime secrets request_secret)
 
-    assert names.(repo) == ~w(submit_changeset restart_preview secrets request_secret)
+    assert names.(repo) ==
+             ~w(submit_changeset restart_preview secrets pull_request request_secret)
+
     assert %{error: %{code: -32601}} = rpc("nope", app)
   end
 
@@ -35,6 +37,23 @@ defmodule Burrow.Agent.MCPTest do
              rpc("tools/call", app, %{"name" => "secrets"})
 
     assert %{result: %{isError: true}} = rpc("tools/call", app, %{"name" => "nope"})
+  end
+
+  test "the agent never sees Burrow's own GITHUB_TOKEN as one of its secrets" do
+    {project, _} =
+      repo = {project_fixture(%{repo_url: "https://github.com/acme/shop.git"}), "chat"}
+
+    :ok = Burrow.Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+
+    assert %{result: %{content: [%{text: "No secrets yet." <> _}]}} =
+             rpc("tools/call", repo, %{"name" => "secrets"})
+
+    args = %{"name" => "GITHUB_TOKEN", "why" => "to read a PR"}
+
+    assert %{result: %{content: [%{text: text}], isError: true}} =
+             rpc("tools/call", repo, %{"name" => "request_secret", "arguments" => args})
+
+    assert text =~ "peon_pull_request"
   end
 
   test "tokens name one chat of one project" do

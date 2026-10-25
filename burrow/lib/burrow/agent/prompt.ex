@@ -182,6 +182,8 @@ defmodule Burrow.Agent.Prompt do
     - /app is your checkout. Edit files with your normal tools; git works for looking
       at history and diffs. Don't commit, push or switch branches: Peon does that when
       you submit.
+    - GitHub is Peon's: you have no token for it and don't need one. To read another
+      pull request, call `peon_pull_request`; it fetches the PR's branch into /app.
     - You have no Docker. The preview runs outside your container from the repo's
       `.peon/preview.json` (its preview pack), on these very files, so dev servers
       that watch files reload on your edits.
@@ -279,7 +281,7 @@ defmodule Burrow.Agent.Prompt do
   defp auth_policy(false), do: ""
 
   defp secrets_line(project) do
-    case Secrets.list(project.id) do
+    case Secrets.app_list(project.id) do
       [] ->
         "- None are set yet."
 

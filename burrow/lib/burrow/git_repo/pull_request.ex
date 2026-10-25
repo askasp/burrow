@@ -7,6 +7,9 @@ defmodule Burrow.GitRepo.PullRequest do
   the token stays with Burrow.
 
   A repo that is not on GitHub gets the push without a PR.
+
+  The agent reads the repo's other pull requests through Burrow too
+  (`read/4`, `open_list/2`), since it has no GitHub access of its own.
   """
 
   alias Burrow.GitRepo
@@ -36,6 +39,52 @@ defmodule Burrow.GitRepo.PullRequest do
          :ok <- run_check(dir, check),
          :ok <- push(project, git, dir, branch, chat_id) do
       if github, do: open(project, github, branch, title, body), else: {:ok, nil}
+    end
+  end
+
+  @doc """
+  Pull request `number` (GitHub's PR object), with its head fetched into the
+  checkout in `dir` as `origin/pr/<number>` and its base branch as
+  `origin/<base>`. Errors are `:not_github`, `:no_token` or a message.
+  """
+  def read(project, chat_id, dir, number) do
+    with {:ok, {owner, repo}} <- on_github(project, chat_id),
+         {:ok, pr} <- get(project, "/repos/#{owner}/#{repo}/pulls/#{number}", "read ##{number}"),
+         base = pr["base"]["ref"],
+         {:ok, _} <-
+           GitRepo.git(
+             project,
+             [
+               "fetch",
+               "-q",
+               "origin",
+               "+refs/pull/#{number}/head:refs/remotes/origin/pr/#{number}",
+               "+refs/heads/#{base}:refs/remotes/origin/#{base}"
+             ],
+             cd: dir
+           ) do
+      {:ok, pr}
+    end
+  end
+
+  @doc "The repo's open pull requests, newest first, like `read/4`'s without the fetch."
+  def open_list(project, chat_id) do
+    with {:ok, {owner, repo}} <- on_github(project, chat_id) do
+      get(project, "/repos/#{owner}/#{repo}/pulls", "list the PRs", state: "open", per_page: 50)
+    end
+  end
+
+  defp on_github(project, chat_id) do
+    case github(project) do
+      nil -> {:error, :not_github}
+      github -> with :ok <- token(project, github, chat_id), do: {:ok, github}
+    end
+  end
+
+  defp get(project, path, what, params \\ []) do
+    case Req.get(req(project), url: path, params: params) do
+      {:ok, %{status: 200, body: body}} -> {:ok, body}
+      response -> failed(what, response)
     end
   end
 

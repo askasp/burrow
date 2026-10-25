@@ -42,6 +42,13 @@ defmodule Burrow.Secrets do
     |> Enum.map(&public/1)
   end
 
+  @doc "What the agent may know of: `list/1` without Burrow's own secrets."
+  def app_list(project_id),
+    do: Enum.reject(list(project_id), &burrow_only?(&1.name))
+
+  @doc "Whether the secret is Burrow's own: it never reaches the app or the agent."
+  def burrow_only?(name), do: name in @burrow_only
+
   @doc "The app's environment variables: every set secret."
   def env(project_id) do
     Repo.all(

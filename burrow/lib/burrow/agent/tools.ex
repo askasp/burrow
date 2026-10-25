@@ -11,12 +11,13 @@ defmodule Burrow.Agent.Tools do
   alias Burrow.GitRepo.{PreviewPack, PullRequest}
 
   # A repo project has no history, checks or envs (`Burrow.GitRepo`).
-  @repo_tools ~w(submit_changeset restart_preview secrets request_secret)
+  @repo_tools ~w(submit_changeset restart_preview secrets request_secret pull_request)
+  @repo_only ~w(pull_request)
 
   def specs(project) do
     if Projects.Project.repo?(project),
       do: for(spec <- all_specs(), spec.name in @repo_tools, do: repo_spec(spec)),
-      else: all_specs()
+      else: Enum.reject(all_specs(), &(&1.name in @repo_only))
   end
 
   defp repo_spec(%{name: "submit_changeset"} = spec),
@@ -139,6 +140,22 @@ defmodule Burrow.Agent.Tools do
         parameters: %{type: "object", properties: %{}}
       },
       %{
+        name: "pull_request",
+        description: """
+        Read one of the repo's pull requests on GitHub, like one the user points you to: \
+        its title, author, state, branches and description. Its branch is fetched into /app \
+        as origin/pr/<number>, next to a fresh origin/main, for git log, git diff and git \
+        show. Without a number, lists the open pull requests. You have no GitHub access \
+        of your own; this is how you read GitHub.\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{
+            number: %{type: "integer", description: "The PR's number, like 1122"}
+          }
+        }
+      },
+      %{
         name: "request_secret",
         description: """
         Ask the user for a secret the app needs (an API key, a token, a shared password). \
@@ -212,7 +229,7 @@ defmodule Burrow.Agent.Tools do
   end
 
   defp run("secrets", _args, project, _chat_id) do
-    case Secrets.list(project.id) do
+    case Secrets.app_list(project.id) do
       [] ->
         {"No secrets yet. Ask the user for one with request_secret.", false}
 
@@ -225,6 +242,27 @@ defmodule Burrow.Agent.Tools do
 
   defp run("request_secret", %{"name" => name, "why" => why}, project, chat_id)
        when is_binary(name) and is_binary(why) do
+    if Secrets.burrow_only?(name),
+      do: burrow_only(name),
+      else: request_secret(project, name, why, chat_id)
+  end
+
+  defp run("pull_request", args, project, chat_id) do
+    case Integer.parse(to_string(args["number"] || "")) do
+      {number, ""} when number > 0 -> read_pr(project, chat_id, number)
+      _ -> list_prs(project, chat_id)
+    end
+  end
+
+  defp run(name, _args, _project, _chat_id),
+    do: {"Unknown tool or missing arguments: #{name}", true}
+
+  defp burrow_only(name),
+    do:
+      {"#{name} is Peon's own: it pushes and opens PRs with it, and it never reaches your " <>
+         "shell or the preview. To read a pull request, call peon_pull_request.", true}
+
+  defp request_secret(project, name, why, chat_id) do
     case Secrets.request(project.id, name, String.slice(why, 0, 300), chat_id) do
       {:ok, :already_set} ->
         {"#{name} is already set. Read it with System.get_env(\"#{name}\").", false}
@@ -238,8 +276,41 @@ defmodule Burrow.Agent.Tools do
     end
   end
 
-  defp run(name, _args, _project, _chat_id),
-    do: {"Unknown tool or missing arguments: #{name}", true}
+  defp read_pr(project, chat_id, number) do
+    case PullRequest.read(project, chat_id, Chat.workspace_dir(project, chat_id), number) do
+      {:ok, pr} ->
+        main = pr["base"]["ref"]
+
+        {"""
+         #{pr_line(pr)}
+         #{pr["head"]["ref"]} into #{main}, #{pr["changed_files"]} files, \
+         +#{pr["additions"]} -#{pr["deletions"]}: #{pr["html_url"]}
+
+         #{String.slice(String.trim(pr["body"] || "(no description)"), 0, 8000)}
+
+         Its branch is in /app as origin/pr/#{number}. The change: \
+         git diff origin/#{main}...origin/pr/#{number}; its commits: \
+         git log origin/#{main}..origin/pr/#{number}; a file: \
+         git show origin/pr/#{number}:<path>. Read it there; don't merge or check it out.\
+         """, false}
+
+      {:error, reason} ->
+        {pr_error(reason), true}
+    end
+  end
+
+  defp list_prs(project, chat_id) do
+    case PullRequest.open_list(project, chat_id) do
+      {:ok, []} -> {"The repo has no open pull requests.", false}
+      {:ok, prs} -> {Enum.map_join(prs, "\n", &pr_line/1), false}
+      {:error, reason} -> {pr_error(reason), true}
+    end
+  end
+
+  defp pr_line(pr) do
+    state = if pr["merged_at"], do: "merged", else: pr["state"]
+    "##{pr["number"]} #{pr["title"]} (#{state}, by #{pr["user"]["login"]}, #{pr["head"]["ref"]})"
+  end
 
   defp submit_pr(project, chat_id, intent, description) do
     check =
@@ -277,10 +348,13 @@ defmodule Burrow.Agent.Tools do
 
   defp pr_error(:no_changes), do: "There are no changes in /app to submit."
 
+  defp pr_error(:not_github),
+    do: "The repo is not on GitHub, so Peon can't read its pull requests."
+
   defp pr_error(:no_token),
     do:
-      "Peon needs the GITHUB_TOKEN secret to push and asked the user for it. Tell them, " <>
-        "and submit again when you get the message that it is set."
+      "Peon needs the GITHUB_TOKEN secret for GitHub and asked the user for it. Tell " <>
+        "them, and try again when you get the message that it is set."
 
   defp pr_error({:conflict, paths}) do
     """

@@ -157,6 +157,44 @@ defmodule Burrow.GitRepo.PullRequestTest do
              PullRequest.submit(project, "a", chat, "Newer", "Body")
   end
 
+  test "reads another PR and fetches its branch into the checkout", %{
+    origin: origin,
+    work: work,
+    chat: chat
+  } do
+    project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
+    sh!(["remote", "set-url", "origin", origin], chat)
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+
+    sh!(["checkout", "-q", "-b", "push"], work)
+    File.write!(Path.join(work, "push.ex"), "no secrets")
+    commit!(work, "push")
+    sh!(["push", "-q", "origin", "push:refs/pull/3/head"], work)
+
+    pr = %{
+      "number" => 3,
+      "title" => "Push",
+      "state" => "open",
+      "base" => %{"ref" => "main"},
+      "head" => %{"ref" => "push"}
+    }
+
+    Req.Test.stub(PullRequest, fn conn ->
+      case conn.request_path do
+        "/repos/acme/shop/pulls/3" -> Req.Test.json(conn, pr)
+        "/repos/acme/shop/pulls" -> Req.Test.json(conn, [pr])
+      end
+    end)
+
+    assert {:ok, %{"title" => "Push"}} = PullRequest.read(project, "a", chat, 3)
+    assert git!(["show", "origin/pr/3:push.ex"], chat) == "no secrets"
+    assert git!(["diff", "--name-only", "origin/main...origin/pr/3"], chat) == "push.ex"
+    assert {:ok, [%{"number" => 3}]} = PullRequest.open_list(project, "a")
+
+    assert {:error, :not_github} =
+             PullRequest.read(project_fixture(%{repo_url: origin}), "a", chat, 3)
+  end
+
   defp commit!(dir, message) do
     sh!(["add", "-A"], dir)
     sh!(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", message], dir)
