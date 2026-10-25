@@ -8,8 +8,8 @@ defmodule BurrowWeb.WorkspaceLive do
   project), or gives way to "Deploys and usage".
 
   The project runs in a `Burrow.Cell`; until that is up it says it is
-  starting. A project has up to four open chats (`Burrow.Activity.room?/1`),
-  each with one change (its draft in the project's history);
+  starting. Everyone sees only their own chats in it (`Burrow.Chats.list/2`)
+  and has up to four open (`Burrow.Activity.room?/2`), each with one change (its draft in the project's history);
   `Burrow.Activity` says where each stands. A chat whose change is out is
   done and stays in the drawer. An empty chat starts its agent and preview
   with its first message.
@@ -119,8 +119,9 @@ defmodule BurrowWeb.WorkspaceLive do
     |> assign(overview: false, dialog: nil, new_project: new_project(), creating: false)
     |> assign(env_names: Env.names(project), live_only?: not Ship.staging?(project))
     |> assign(secrets: Secrets.list(project.id), secrets_key: 0)
-    # Phones: one pane at a time; wide screens can put the preview away
-    |> assign(pane: "chat", preview_open: true)
+    # Phones: one pane at a time; wide screens can put the preview away, or
+    # show the app in it phone-sized
+    |> assign(pane: "chat", preview_open: true, phone: false)
     |> assign(envs: Map.new(Env.names(project), &{&1, Env.info(project, &1)}))
     |> load_tabs()
     |> load_ship()
@@ -130,7 +131,7 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_params(_params, _uri, %{assigns: %{ready: false}} = socket), do: {:noreply, socket}
 
   def handle_params(%{"chat" => id}, _uri, socket) do
-    case Chats.get(id) do
+    case Chats.get(socket.assigns.project, socket.assigns.current_scope.user.id, id) do
       nil ->
         {:noreply, push_patch(socket, to: socket.assigns.base)}
 
@@ -165,7 +166,7 @@ defmodule BurrowWeb.WorkspaceLive do
     id =
       case socket.assigns.tabs do
         [first | _] -> first.chat.id
-        [] -> Chats.create_empty(socket.assigns.project.id, socket.assigns.user).id
+        [] -> Chats.create_empty(socket.assigns.project.id, socket.assigns.current_scope.user).id
       end
 
     {:noreply, push_patch(socket, to: chat_path(socket, id), replace: true)}
@@ -341,9 +342,9 @@ defmodule BurrowWeb.WorkspaceLive do
   # minutes, so that runs on its own. Closing the open chat opens the one
   # before it, else a new one.
   def handle_event("close_chat", %{"id" => id}, socket) do
-    project = socket.assigns.project
+    %{project: project, current_scope: scope} = socket.assigns
 
-    with %{} = chat <- Chats.get(id),
+    with %{} = chat <- Chats.get(project, scope.user.id, id),
          do:
            Task.Supervisor.start_child(Burrow.TaskSupervisor, fn -> Chat.delete(project, chat) end)
 
@@ -488,7 +489,7 @@ defmodule BurrowWeb.WorkspaceLive do
     case Incidents.fix(
            Incidents.get(String.to_integer(id)),
            socket.assigns.project,
-           socket.assigns.user
+           socket.assigns.current_scope.user
          ) do
       {:ok, incident} -> {:noreply, push_patch(socket, to: chat_path(socket, incident.chat_id))}
       {:error, :full} -> {:noreply, put_flash(socket, :error, full_text())}
@@ -642,6 +643,9 @@ defmodule BurrowWeb.WorkspaceLive do
   def handle_event("toggle_preview", _params, socket),
     do: {:noreply, update(socket, :preview_open, &(!&1))}
 
+  def handle_event("toggle_phone", _params, socket),
+    do: {:noreply, update(socket, :phone, &(!&1))}
+
   def handle_event("view", %{"view" => "design"}, socket),
     do: {:noreply, socket |> assign(view: "design", overview: false) |> load_boards()}
 
@@ -777,10 +781,10 @@ defmodule BurrowWeb.WorkspaceLive do
 
   # A new empty chat with the open chat's model, its box ready to type in.
   defp new_chat(socket, opts) do
-    %{project: project, user: user, chat: chat} = socket.assigns
+    %{project: project, current_scope: %{user: user}, chat: chat} = socket.assigns
     picked = if chat, do: [model: chat.model, effort: chat.effort], else: []
 
-    if Activity.room?(project) do
+    if Activity.room?(project, user.id) do
       chat = Chats.create_empty(project.id, user, picked ++ opts)
       socket |> push_patch(to: chat_path(socket, chat.id)) |> push_event("composer:focus", %{})
     else
@@ -1029,7 +1033,14 @@ defmodule BurrowWeb.WorkspaceLive do
   defp load_tabs(socket),
     do:
       socket
-      |> assign(tabs: Activity.chats(socket.assigns.project, socket.assigns.busy))
+      |> assign(
+        tabs:
+          Activity.chats(
+            socket.assigns.project,
+            socket.assigns.current_scope.user.id,
+            socket.assigns.busy
+          )
+      )
       |> select_tab()
 
   defp select_tab(%{assigns: %{chat: nil}} = socket), do: assign(socket, tab: nil)
@@ -1634,6 +1645,7 @@ defmodule BurrowWeb.WorkspaceLive do
               chat={@chat}
               info={@info}
               frame_key={@frame_key}
+              phone={@phone}
               show_logs={@show_logs}
               logs={@logs}
               project={@project}

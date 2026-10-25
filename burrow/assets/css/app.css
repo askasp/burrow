@@ -677,6 +677,13 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ws-url { flex: 1 1 160px; min-width: 0; height: 36px; background: var(--surface); display: flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: 18px; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden }
 .ws-root .ws-prev-body { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: 14px; background: var(--surface) }
 .ws-root .ws-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 14px; background: #fff }
+/* Wide screens can show the app as a phone: a 390×844 screen in a bezel, in
+   the middle of the pane (shorter when the pane is) */
+.ws-root .vbar .vphone[aria-pressed="true"] { background: var(--sunken); color: var(--text) }
+@media (min-width: 961px) {
+  .ws-root .ws-prev-body.phone { flex: 0 1 844px; box-sizing: content-box; width: min(390px, calc(100% - 20px)); margin: auto; border: 10px solid var(--sunken); border-radius: 36px; box-shadow: 0 0 0 1px var(--border-strong), 0 12px 32px var(--shadow) }
+  .ws-root .ws-prev-body.phone .ws-frame { border-radius: 0 }
+}
 .ws-root .ws-prev-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center }
 .ws-root .ws-prev-title { font-size: 17px; line-height: 26px; font-weight: 600; max-width: 28em }
 .ws-root .ws-logs { position: absolute; left: 0; right: 0; bottom: 0; height: 40%; min-height: 200px; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border-strong); animation: bw-up .22s ease-out }
@@ -900,6 +907,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   .ws-root .vbar > a.icon-btn { margin-left: auto }
   .ws-root .vbar .ws-url { order: 10; flex: 1 1 calc(100% - 60px); margin-left: 6px }
   .ws-root .vbar .vreload { order: 11 }
+  .ws-root .vphone { display: none }
   .ws-root .ws-prev-body { margin: 0 12px }
   .ws-root .vchat { display: flex; align-items: center; gap: 10px; flex: none; width: 100%; min-height: 56px; padding: 0 16px; border: 0; background: transparent; color: var(--text-2); font-family: inherit; font-size: 14px; cursor: pointer }
   /* The chat */

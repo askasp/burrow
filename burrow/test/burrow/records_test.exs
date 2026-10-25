@@ -34,6 +34,28 @@ defmodule Burrow.RecordsTest do
       assert Chats.list(project_fixture().id) == []
     end
 
+    test "a chat is seen by whoever opened it; Peon's by the project's owner", %{
+      project: project
+    } do
+      owner = Repo.get!(Burrow.Accounts.User, project.user_id)
+      mate = Burrow.AccountsFixtures.user_fixture()
+      peons = Chats.create_empty(project.id, "peon")
+      owners = Chats.create_empty(project.id, owner)
+      mates = Chats.create_empty(project.id, mate)
+      ids = &MapSet.new(Chats.list(project, &1), fn c -> c.id end)
+
+      assert ids.(owner.id) == MapSet.new([peons.id, owners.id])
+      assert ids.(mate.id) == MapSet.new([mates.id])
+      assert Chats.get(project, mate.id, mates.id)
+      refute Chats.get(project, mate.id, owners.id) || Chats.get(project, mate.id, peons.id)
+      refute Chats.get(project_fixture(), mate.id, mates.id)
+
+      # Everyone has their own four.
+      for _ <- 2..Chats.max(), do: Chats.create_empty(project.id, mate)
+      refute Burrow.Activity.room?(project, mate.id)
+      assert Burrow.Activity.room?(project, owner.id)
+    end
+
     test "keep running, then delete", %{project: project} do
       chat = Chats.create(project.id, "t", "ada", model: "openai/gpt-x", effort: "high")
       assert {chat.model, chat.effort} == {"openai/gpt-x", "high"}

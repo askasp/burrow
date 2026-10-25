@@ -1,7 +1,7 @@
 defmodule BurrowWeb.ChatImageController do
   @moduledoc """
   The images sent with a chat's messages (`Burrow.Chat.images_dir/2`), for
-  the thread. Only for users who can open the project.
+  the thread. Only for the user who sees the chat (`Burrow.Chats.list/2`).
   """
 
   use BurrowWeb, :controller
@@ -12,11 +12,14 @@ defmodule BurrowWeb.ChatImageController do
   def path(project_id, chat_id), do: "/projects/#{project_id}/c/#{chat_id}/images"
 
   def show(conn, %{"id" => id, "chat" => chat_id, "name" => name}) do
+    scope = conn.assigns.current_scope
+
     with {project_id, ""} <- Integer.parse(id),
-         true <- Projects.visible?(conn.assigns.current_scope, project_id),
-         %{project_id: ^project_id} <- Chats.get(chat_id),
+         true <- Projects.visible?(scope, project_id),
+         %{} = project <- Projects.get(project_id),
+         %{} <- Chats.get(project, scope.user.id, chat_id),
          true <- name =~ ~r/\A[\w-]+\.(png|jpe?g|gif|webp)\z/,
-         file = Path.join(Chat.images_dir(Projects.get(project_id), chat_id), name),
+         file = Path.join(Chat.images_dir(project, chat_id), name),
          true <- File.regular?(file) do
       conn
       |> put_resp_content_type(MIME.from_path(name), nil)

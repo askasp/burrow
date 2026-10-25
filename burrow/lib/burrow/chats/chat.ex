@@ -6,6 +6,8 @@ defmodule Burrow.Chats.Chat do
     belongs_to :project, Burrow.Projects.Project
     field :title, :string, default: ""
     field :created_by, :string
+    # Who sees it; nil for one Peon opened, which the project's owner sees (`Burrow.Chats.list/2`)
+    belongs_to :user, Burrow.Accounts.User
     field :session_id, :string
     # The agent's model (provider/model) and effort, one of the model's
     # opencode variants (its thinking levels); nil for the defaults

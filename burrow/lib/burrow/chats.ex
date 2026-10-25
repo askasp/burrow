@@ -6,9 +6,11 @@ defmodule Burrow.Chats do
   chat its pull request. A chat's change is its draft in the project's
   history, under the chat's id.
 
-  A project has at most four chats that aren't done (`max/0`,
-  `Burrow.Activity.room?/1`); done ones stay, to read and follow up on. A
-  chat starts empty (title `""`) and its first message titles it
+  A chat is seen only by the user who opened it; one Peon opened (an
+  incident's fix, a project's first chat) by the project's owner
+  (`list/2`). Everyone has at most four chats in a project that aren't done
+  (`max/0`, `Burrow.Activity.room?/2`); done ones stay, to read and follow
+  up on. A chat starts empty (title `""`) and its first message titles it
   (`started/2`).
 
   Broadcasts `{:chat_created, chat}`, `{:chat_started, id}` and
@@ -18,7 +20,7 @@ defmodule Burrow.Chats do
 
   import Ecto.Query
 
-  alias Burrow.{Projects, Repo}
+  alias Burrow.{Accounts, Projects, Repo}
   alias Burrow.Chats.Chat
 
   @max 4
@@ -27,21 +29,26 @@ defmodule Burrow.Chats do
 
   def subscribe(project_id), do: Projects.subscribe(project_id, "chats")
 
-  def create_empty(project_id, created_by, opts \\ []),
-    do: create(project_id, "", created_by, [started: false] ++ opts)
+  def create_empty(project_id, by, opts \\ []),
+    do: create(project_id, "", by, [started: false] ++ opts)
 
   @doc """
-  Creates a chat. Options: `:model` and `:effort` (see `pick_model/3`),
-  `:follows` (the change it follows up on), `:from_chat` (the general chat
-  it starts from, `Burrow.GeneralChats`), `started: false`.
+  Creates a chat for `by`, the user who opens it, or a name such as
+  `"peon"` for one the project's owner sees. Options: `:model` and
+  `:effort` (see `pick_model/3`), `:follows` (the change it follows up on),
+  `:from_chat` (the general chat it starts from, `Burrow.GeneralChats`),
+  `started: false`.
   """
-  def create(project_id, title, created_by, opts \\ []) do
+  def create(project_id, title, by, opts \\ []) do
+    {created_by, user_id} = by(by)
+
     chat =
       Repo.insert!(%Chat{
         id: :crypto.strong_rand_bytes(5) |> Base.encode32(case: :lower, padding: false),
         project_id: project_id,
         title: title |> String.trim() |> String.slice(0, 80),
         created_by: created_by,
+        user_id: user_id,
         model: model(opts[:model]),
         effort: effort(opts[:effort]),
         follows: opts[:follows],
@@ -52,6 +59,9 @@ defmodule Burrow.Chats do
     Projects.broadcast(project_id, "chats", {:chat_created, chat})
     chat
   end
+
+  defp by(%Accounts.User{id: id, email: email}), do: {email, id}
+  defp by(name) when is_binary(name), do: {name, nil}
 
   @doc """
   The chat got a message: it was worked on now (`updated_at`, the drawer's
@@ -78,7 +88,34 @@ defmodule Burrow.Chats do
           order_by: [asc: c.inserted_at, asc: c.id]
       )
 
+  @doc """
+  The project's chats user `user_id` sees, oldest first: the ones they
+  opened, and for the project's owner the ones Peon opened.
+  """
+  def list(%Projects.Project{} = project, user_id),
+    do:
+      Repo.all(
+        from c in Chat,
+          where: c.project_id == ^project.id,
+          where: ^seen_by(project, user_id),
+          order_by: [asc: c.inserted_at, asc: c.id]
+      )
+
   def get(id), do: Repo.get(Chat, id)
+
+  @doc "The project's chat `id` when user `user_id` sees it (`list/2`), else nil."
+  def get(%Projects.Project{} = project, user_id, id),
+    do:
+      Repo.one(
+        from c in Chat,
+          where: c.id == ^id and c.project_id == ^project.id,
+          where: ^seen_by(project, user_id)
+      )
+
+  defp seen_by(%Projects.Project{user_id: owner_id}, owner_id),
+    do: dynamic([c], c.user_id == ^owner_id or is_nil(c.user_id))
+
+  defp seen_by(_project, user_id), do: dynamic([c], c.user_id == ^user_id)
 
   @doc """
   The chat's model (provider/model; nil for the owner's) and effort, one of

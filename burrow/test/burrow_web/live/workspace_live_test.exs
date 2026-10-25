@@ -52,6 +52,57 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       conn = log_in_user(build_conn(), stranger)
       assert_raise Ecto.NoResultsError, fn -> live(conn, ~p"/projects/#{project.id}") end
     end
+
+    test "in a shared project everyone sees only their own chats", %{
+      conn: conn,
+      user: user,
+      project: project
+    } do
+      {:ok, _view, _html} = open(conn, project)
+      [mine] = Chats.list(project.id)
+
+      owner = Scope.for_user(user)
+      mate = user_fixture()
+      {:ok, team} = Teams.create(owner, %{"name" => "Crew"})
+      {:ok, _} = Teams.add_member(owner, team, mate.email)
+      {:ok, _} = Projects.share(owner, project, team.id)
+
+      mate_conn = log_in_user(build_conn(), mate)
+      {:ok, view, _html} = open(mate_conn, project)
+      [theirs] = Chats.list(project, mate.id)
+      assert has_element?(view, "#chat-#{theirs.id}")
+      refute has_element?(view, "#chat-#{mine.id}")
+
+      # Not by its address either, nor its images.
+      base = ~p"/projects/#{project.id}"
+      assert {:error, {:live_redirect, %{to: ^base}}} = live(mate_conn, "#{base}/c/#{mine.id}")
+      assert get(mate_conn, "#{base}/c/#{mine.id}/images/a.png").status == 404
+
+      {:ok, view, _html} = live(conn, "#{base}/c/#{mine.id}")
+      refute has_element?(view, "#chat-#{theirs.id}")
+    end
+
+    test "the preview shows the app as a phone, or full width", %{conn: conn, project: project} do
+      {:ok, view, _html} = open(conn, project)
+      assert has_element?(view, "#phone-btn[aria-pressed=false][aria-label='Show as phone']")
+      refute has_element?(view, ".ws-prev-body.phone")
+
+      view |> element("#phone-btn") |> render_click()
+      assert has_element?(view, "#phone-btn[aria-pressed=true][aria-label='Show full width']")
+      assert has_element?(view, ".ws-prev-body.phone")
+
+      # The design view has its own boards, not the app.
+      view |> element("#design-view") |> render_click()
+      refute has_element?(view, "#phone-btn")
+
+      # The other versions keep it.
+      view |> element("#view-menu button", "live") |> render_click()
+      assert has_element?(view, ".ws-prev-body.phone")
+
+      view |> element("#phone-btn") |> render_click()
+      assert has_element?(view, "#phone-btn[aria-pressed=false]")
+      refute has_element?(view, ".ws-prev-body.phone")
+    end
   end
 
   describe "chats" do

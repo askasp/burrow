@@ -42,12 +42,17 @@ defmodule Burrow.Activity do
   `busy` holds the chats whose agent works. A chat was worked on when it
   got a message (`Burrow.Chats.started/2`) or its draft was submitted.
   """
-  def chats(project, busy) do
+  def chats(project, busy), do: phases(project, Chats.list(project.id), busy)
+
+  @doc "The chats user `user_id` sees (`Burrow.Chats.list/2`), as `chats/2` gives them."
+  def chats(project, user_id, busy), do: phases(project, Chats.list(project, user_id), busy)
+
+  defp phases(project, chats, busy) do
     repo = if !Projects.Project.repo?(project), do: Projects.repo_dir(project)
     refs = repo && Repo.refs(repo)
 
     # Newest first, so that of two worked on in the same second the newer leads
-    for chat <- Enum.reverse(Chats.list(project.id)) do
+    for chat <- Enum.reverse(chats) do
       draft = repo && Repo.draft(repo, chat.id)
 
       %{
@@ -90,10 +95,15 @@ defmodule Burrow.Activity do
   def done?(%{phase: "landing"}, live_only?), do: live_only?
   def done?(_chat, _live_only?), do: false
 
-  @doc "Whether the project can open another chat: up to `Burrow.Chats.max/0` that aren't done."
-  def room?(project) do
+  @doc """
+  Whether user `user_id` can open another chat in the project: up to
+  `Burrow.Chats.max/0` of the ones they see that aren't done. Peon's chats
+  (nil) count as the owner's.
+  """
+  def room?(project, user_id \\ nil) do
     live_only? = not Ship.staging?(project)
-    Enum.count(chats(project, MapSet.new()), &(not done?(&1, live_only?))) < Chats.max()
+    chats = chats(project, user_id || project.user_id, MapSet.new())
+    Enum.count(chats, &(not done?(&1, live_only?))) < Chats.max()
   end
 
   @doc "Whether the chat's change is on main or staging and not live yet."

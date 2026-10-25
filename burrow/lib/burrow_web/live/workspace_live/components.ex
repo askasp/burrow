@@ -1451,6 +1451,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :chat, :map
   attr :info, :map
   attr :frame_key, :integer, required: true
+  attr :phone, :boolean, default: false, doc: "shows the app phone-sized, on wide screens"
   attr :show_logs, :boolean, required: true
   attr :logs, :string, required: true
   attr :project, :map
@@ -1462,7 +1463,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   The version picker and what it shows: the chat's dev preview, staging or
   prod, or its boards (the inner block) in the design view. Beside it the
   address, \"Open\" (the app, its other ports, the pull request), reload,
-  and a ⋯ menu with the logs, a restart and how long the preview stays up.
+  the app as a phone (wide screens only), and a ⋯ menu with the logs, a
+  restart and how long the preview stays up.
   """
   def preview_pane(assigns) do
     assigns =
@@ -1597,6 +1599,18 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       >
         <.icon name="hero-arrow-path" class="size-[17px]" />
       </button>
+      <button
+        :if={@view != "design"}
+        id="phone-btn"
+        type="button"
+        phx-click="toggle_phone"
+        class="icon-btn vphone"
+        aria-pressed={to_string(@phone)}
+        aria-label={if @phone, do: "Show full width", else: "Show as phone"}
+        title={if @phone, do: "Show full width", else: "Show as phone"}
+      >
+        <.icon name="hero-device-phone-mobile" class="size-[18px]" />
+      </button>
       <div :if={@view != "design" && @server?} class="menuw">
         <button
           id="server-btn"
@@ -1699,7 +1713,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     </div>
 
     {if @view == "design", do: render_slot(@inner_block)}
-    <div :if={@view != "design"} class="ws-prev-body">
+    <div :if={@view != "design"} class={["ws-prev-body", @phone && "phone"]}>
       <iframe
         :if={@preview.live?}
         id={"preview-#{@view}-#{@frame_key}"}

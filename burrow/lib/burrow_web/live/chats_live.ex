@@ -226,10 +226,10 @@ defmodule BurrowWeb.ChatsLive do
     with id when is_integer(id) <- target,
          {:ok, project} <- fetch_project(scope, id),
          true <-
-           Activity.room?(project) ||
+           Activity.room?(project, scope.user.id) ||
              {:error,
-              "#{project.name} has #{Chats.max()} changes open. Merge or discard one there first."} do
-      new = Chats.create_empty(project.id, scope.user.email, from_chat: chat.id)
+              "You have #{Chats.max()} changes open in #{project.name}. Merge or discard one there first."} do
+      new = Chats.create_empty(project.id, scope.user, from_chat: chat.id)
 
       {:noreply,
        assign(socket,
@@ -254,7 +254,7 @@ defmodule BurrowWeb.ChatsLive do
 
     case Projects.create(scope, %{"name" => String.trim(name)}) do
       {:ok, project} ->
-        new = Chats.create_empty(project.id, scope.user.email, from_chat: chat.id)
+        new = Chats.create_empty(project.id, scope.user, from_chat: chat.id)
 
         {:noreply,
          socket
@@ -366,7 +366,7 @@ defmodule BurrowWeb.ChatsLive do
 
         there =
           for p <- projects,
-              c <- Chats.list(p.id),
+              c <- Chats.list(p, scope.user.id),
               c.title != "",
               String.contains?(String.downcase(c.title), String.downcase(text)),
               do: %{id: c.id, title: c.title, sub: p.name, url: ~p"/projects/#{p.id}/c/#{c.id}"}
