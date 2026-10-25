@@ -68,7 +68,9 @@ defmodule Burrow.Chat do
   # agent to split its work into the queue. The thread doesn't show it.
   @queue_hint "\n\n(Peon: if this asks for more than one thing, first put each in your queue with `tk create`, then work them one at a time.)"
   # The same for the design agent, which can't run tk: what it is for.
-  @design_hint "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained HTML files under `design/`, one per take, in the app's look. You can't change the app or run commands here: no queue, no submit. The user switches to Build when the boards are right.)"
+  @design_hint "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained HTML files under `design/`, one per page, in the app's look. Feedback changes a board's file in place, never a new file; takes only when asked for. You can't change the app or run commands here: no queue, no submit. The user switches to Build when the boards are right.)"
+  # Any wording of it, for messages sent with an earlier one
+  @design_hint_was ~r/\n\n\(Peon: you are in Design mode\..*\)\z/s
 
   ## API
 
@@ -1542,7 +1544,7 @@ defmodule Burrow.Chat do
     text =
       (m["text"] || get_in(m, ["payload", "text"]) || "")
       |> String.replace_suffix(@queue_hint, "")
-      |> String.replace_suffix(@design_hint, "")
+      |> String.replace(@design_hint_was, "")
 
     skills = m["skills"] || get_in(m, ["payload", "skills"]) || []
     files = m["files"] || get_in(m, ["payload", "files"]) || []

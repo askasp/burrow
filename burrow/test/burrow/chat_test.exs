@@ -108,7 +108,7 @@ defmodule Burrow.ChatTest do
              Chat.normalize(waiting)
   end
 
-  test "a message to the design agent shows as typed, without Peon's design hint" do
+  test "a message to the design agent shows as typed, without Peon's design hint in any wording" do
     hint =
       "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained " <>
         "HTML files under `design/`, one per take, in the app's look. You can't change the " <>
@@ -118,6 +118,9 @@ defmodule Burrow.ChatTest do
     message = %{"type" => "user", "id" => "u2", "text" => "Sketch the overview" <> hint}
 
     assert [%{role: :user, text: "Sketch the overview"}] = Chat.normalize(message)
+
+    later = %{message | "text" => "Sketch it\n\n(Peon: you are in Design mode. One per page.)"}
+    assert [%{text: "Sketch it"}] = Chat.normalize(later)
   end
 
   test "Burrow's own keep-going input is a note of its kind" do

@@ -103,6 +103,7 @@ defmodule BurrowWeb.WorkspaceLive do
     # to the dev preview), boards whose scripts failed ({hash, error} by
     # path), and what the chat changed (Burrow.Design.pending/2)
     |> assign(boards: [], board: nil, side: false, board_errors: %{}, design_url: nil)
+    |> assign(picked: MapSet.new())
     |> assign(design_pending: :none)
     |> assign(starting: false, start_error: nil, pending: nil, frame_key: 0)
     # Why the open chat stopped (Peon.Chat's {:stopped, reason}), while it is
@@ -159,6 +160,7 @@ defmodule BurrowWeb.WorkspaceLive do
           |> assign(chat: chat, info: nil, start_error: nil, show_logs: false, pending: nil)
           |> assign(slash_items: [], slash: [], stopped: nil, starting: false, step: nil)
           |> assign(board: nil, side: false, board_errors: %{}, design_pending: :none)
+          |> assign(picked: MapSet.new())
           |> assign(design_url: BurrowWeb.DesignController.path(project.id, chat.id))
           |> assign(images_url: BurrowWeb.ChatImageController.path(project.id, chat.id))
           |> assign(tickets: Chat.tickets(project, chat.id), pending_images: [])
@@ -428,6 +430,32 @@ defmodule BurrowWeb.WorkspaceLive do
   # Words for the chat box, for the user to send or change.
   def handle_event("build_board", %{"path" => path}, socket),
     do: {:noreply, put_in_box(socket, "Build #{path}")}
+
+  # Boards picked in the grid, to build together.
+  def handle_event("pick_board", %{"path" => path}, socket) do
+    picked = socket.assigns.picked
+
+    picked =
+      if MapSet.member?(picked, path),
+        do: MapSet.delete(picked, path),
+        else: MapSet.put(picked, path)
+
+    {:noreply, assign(socket, picked: picked)}
+  end
+
+  def handle_event("pick_all", _params, socket) do
+    all = for b <- socket.assigns.boards, b.hash, into: MapSet.new(), do: b.path
+    picked = if MapSet.subset?(all, socket.assigns.picked), do: MapSet.new(), else: all
+    {:noreply, assign(socket, picked: picked)}
+  end
+
+  def handle_event("build_boards", _params, socket) do
+    case for(b <- socket.assigns.boards, b.path in socket.assigns.picked, do: b.path) do
+      [] -> {:noreply, socket}
+      [path] -> {:noreply, socket |> assign(picked: MapSet.new()) |> put_in_box("Build #{path}")}
+      paths -> {:noreply, socket |> assign(picked: MapSet.new()) |> put_in_box(build_text(paths))}
+    end
+  end
 
   def handle_event("fix_board", %{"path" => path}, socket) do
     error =
@@ -884,6 +912,8 @@ defmodule BurrowWeb.WorkspaceLive do
   end
 
   defp put_in_box(socket, text), do: push_event(socket, "composer:put", %{text: text})
+
+  defp build_text(paths), do: "Build these boards: #{Enum.join(paths, ", ")}"
 
   # The open board's neighbour in its folder, `by` along.
   defp step_board(%{assigns: %{board: nil}} = socket, _by), do: socket
@@ -1685,6 +1715,7 @@ defmodule BurrowWeb.WorkspaceLive do
             >
               <.design_pane
                 boards={@boards}
+                picked={@picked}
                 open={@board}
                 side={@side}
                 drawing={@drawing}

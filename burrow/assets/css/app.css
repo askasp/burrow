@@ -753,6 +753,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .thumb:hover .tframe { border-color: var(--text-2) }
 .ws-root .thumb.busy .tframe { border-color: var(--accent-text) }
 .ws-root .thumb.bad .tframe { border-color: var(--err); background: var(--err-soft) }
+.ws-root .thumb.picked .tframe { border-color: var(--accent-text); box-shadow: 0 0 0 1px var(--accent-text) }
+.ws-root .pick { position: absolute; top: 8px; left: 8px; z-index: 3; display: grid; place-items: center; width: 22px; height: 22px; border: 1.5px solid var(--border-strong); border-radius: 5px; background: var(--surface); color: var(--bg); cursor: pointer }
+.ws-root .pick[aria-checked="true"] { border-color: var(--accent-text); background: var(--accent-text) }
+.ws-root .pick:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root .dpick { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; align-self: center }
 .ws-root .hit { position: absolute; inset: 0; z-index: 2; border: 0; border-radius: 6px; background: transparent; cursor: pointer }
 .ws-root .hit:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -3px }
 .ws-root .over { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(246, 247, 249, .85); color: #14171C; font-size: 12.5px; font-weight: 500 }

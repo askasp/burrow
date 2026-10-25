@@ -395,6 +395,40 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, ".thumbs")
     end
 
+    test "boards picked in the grid build together", %{conn: conn, project: project} do
+      other = Chats.create(project.id, "Pages", "aksel")
+      land!(project, other, "design/home.html", "<title>home</title>")
+      land!(project, other, "design/list.html", "<title>list</title>")
+      land!(project, other, "design/info.html", "<title>info</title>")
+
+      {:ok, view, _html} = open(conn, project)
+      view |> element("#design-view") |> render_click()
+      assert has_element?(view, "#build-boards[disabled]", "Build")
+
+      pick =
+        &(view
+          |> element(".pick[aria-label='Pick design/#{&1}.html to build']")
+          |> render_click())
+
+      pick.("list")
+      pick.("home")
+      assert has_element?(view, ".thumb.picked .pick[aria-checked=true]")
+      assert has_element?(view, "#build-boards", "Build 2 boards")
+
+      view |> element("#build-boards") |> render_click()
+
+      assert_push_event(view, "composer:put", %{
+        text: "Build these boards: design/home.html, design/list.html"
+      })
+
+      refute has_element?(view, ".pick[aria-checked=true]")
+
+      view |> element(".dpick button", "Pick all") |> render_click()
+      assert has_element?(view, "#build-boards", "Build 3 boards")
+      view |> element(".dpick button", "Pick none") |> render_click()
+      assert has_element?(view, "#build-boards[disabled]")
+    end
+
     test "no boards yet: the peon naps by its easel", %{conn: conn, project: project} do
       {:ok, view, _html} = open(conn, project)
       view |> element("#design-view") |> render_click()

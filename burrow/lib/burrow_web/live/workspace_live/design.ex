@@ -2,8 +2,9 @@ defmodule BurrowWeb.WorkspaceLive.Design do
   @moduledoc """
   The preview's Design view (`BurrowWeb.WorkspaceLive`), as the Peon UI
   kit's "8 · Design view" boards: the chat's boards (`Burrow.Design`) in a
-  grid by folder, one board full size (or next to the dev preview), the
-  peon at its easel while it draws, and the card that lands boards alone.
+  grid by folder, picked to build together, one board full size (or next
+  to the dev preview), the peon at its easel while it draws, and the card
+  that lands boards alone.
 
   Boards are framed from `BurrowWeb.DesignController`, sandboxed. A board's
   script errors come back through the `.BoardErrors` hook as
@@ -13,6 +14,7 @@ defmodule BurrowWeb.WorkspaceLive.Design do
   use BurrowWeb, :html
 
   attr :boards, :list, required: true, doc: "`Burrow.Design.boards/2`"
+  attr :picked, :any, required: true, doc: "the paths of the boards picked to build"
   attr :open, :string, default: nil, doc: "the board shown full size"
   attr :side, :boolean, required: true, doc: "the open board next to the dev preview"
   attr :drawing, :string, default: nil, doc: "the board the agent draws now"
@@ -33,6 +35,7 @@ defmodule BurrowWeb.WorkspaceLive.Design do
       <.grid
         :if={@boards != [] and !@board}
         boards={@boards}
+        picked={@picked}
         drawing={@drawing}
         errors={@errors}
         url={@url}
@@ -126,10 +129,29 @@ defmodule BurrowWeb.WorkspaceLive.Design do
   end
 
   defp grid(assigns) do
+    ready = for b <- assigns.boards, b.hash, do: b.path
+    picked = Enum.count(ready, &MapSet.member?(assigns.picked, &1))
+    assigns = assign(assigns, picked_n: picked, all?: picked == length(ready))
+
     ~H"""
     <div class="dhead">
       <span class="mono">design/</span>
       <span class="muted">{grid_note(@drawing)}</span>
+      <span class="dpick">
+        <button type="button" class="xlink" phx-click="pick_all">
+          {if @all?, do: "Pick none", else: "Pick all"}
+        </button>
+        <button
+          id="build-boards"
+          type="button"
+          class="btn btn-primary btn-sm"
+          phx-click="build_boards"
+          disabled={@picked_n == 0}
+          title={if @picked_n == 0, do: "Pick the boards to build", else: "Puts them in the chat box"}
+        >
+          {build_label(@picked_n)}
+        </button>
+      </span>
     </div>
     <section
       :for={group <- Enum.chunk_by(@boards, & &1.folder)}
@@ -144,6 +166,7 @@ defmodule BurrowWeb.WorkspaceLive.Design do
         <.thumb
           :for={b <- group}
           board={b}
+          picked={MapSet.member?(@picked, b.path)}
           url={@url}
           busy={b.path == @drawing}
           error={failed(@errors, b)}
@@ -164,15 +187,32 @@ defmodule BurrowWeb.WorkspaceLive.Design do
   defp variants(1), do: "1 variant"
   defp variants(n), do: "#{n} variants"
 
+  defp build_label(0), do: "Build"
+  defp build_label(1), do: "Build 1 board"
+  defp build_label(n), do: "Build #{n} boards"
+
   attr :board, :map, required: true
+  attr :picked, :boolean, required: true
   attr :url, :string, required: true
   attr :busy, :boolean, required: true
   attr :error, :string, default: nil
 
   defp thumb(assigns) do
     ~H"""
-    <div class={["thumb", @busy && "busy", @error && "bad"]}>
+    <div class={["thumb", @busy && "busy", @error && "bad", @picked && "picked"]}>
       <div class="tframe">
+        <button
+          :if={@board.hash && !@busy}
+          type="button"
+          role="checkbox"
+          class="pick"
+          aria-checked={to_string(@picked)}
+          aria-label={"Pick #{@board.path} to build"}
+          phx-click="pick_board"
+          phx-value-path={@board.path}
+        >
+          <.icon :if={@picked} name="hero-check" class="size-3.5" />
+        </button>
         <iframe
           :if={@board.hash && !@error}
           id={"thumb-#{@board.hash}"}
