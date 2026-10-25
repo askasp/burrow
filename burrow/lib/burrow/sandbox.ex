@@ -17,6 +17,11 @@ defmodule Burrow.Sandbox do
 
   @memory_mb 3072
 
+  # Public resolvers, not the host's: a host on a tailnet resolves names (its
+  # own Tailscale Funnel's too) to tailnet addresses, which containers can't
+  # reach. On a chat's own network Docker still answers container names.
+  @dns ["1.1.1.1", "8.8.8.8"]
+
   @doc """
   Runs `script` with `sh -c` in a fresh container with `dir` mounted at /app.
   Returns `{exit_status, output, duration_ms}`; a timeout kills the container
@@ -186,6 +191,7 @@ defmodule Burrow.Sandbox do
 
     ["--label", opts[:label] || "burrow.project=#{Keyword.fetch!(opts, :project)}"] ++
       ["--user", host_user(), "--cpus", "2", "--memory", "#{@memory_mb}m", "--pids-limit", "512"] ++
+      Enum.flat_map(@dns, &["--dns", &1]) ++
       ["-v", "#{dir}:/app", "-v", "#{hex_cache}:/cache/hex", "-w", "/app"] ++
       ["-v", "#{Totem.source_dir()}:/opt/totem:ro", "-e", "TOTEM_PATH=/opt/totem"] ++ env
   end
