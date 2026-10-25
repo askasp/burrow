@@ -26,6 +26,8 @@
 //                       names it in the popups, data-kb-group groups it,
 //                       data-kb-focus="#id" focuses that box after.
 //   data-kb-go="p"      a link prefix g p follows
+//   data-kb-dismiss     an open overlay's scrim: esc clicks it first,
+//                       typing or not, so it never reaches data-kb-esc
 //   data-kb-esc         esc clicks it (when not typing)
 //   data-kb-back        the back button (found without it too: "← …",
 //                       "Back …", or a left arrow or chevron icon)
@@ -690,6 +692,12 @@ function onKey(e) {
     return toggleZoom()
   }
   if (e.key === "Escape") {
+    const scrim = shown("[data-kb-dismiss]")[0]
+    if (scrim) {
+      stop()
+      if (typing) e.target.blur()
+      return scrim.click()
+    }
     if (typing) return e.target.blur()
     if (nav.cursor) return clearCursor()
     const el = shown("[data-kb-esc]")[0]

@@ -1306,6 +1306,7 @@ defmodule BurrowWeb.WorkspaceLive do
       <div
         class="ws-scrim"
         aria-hidden="true"
+        data-kb-dismiss
         phx-click={JS.remove_class("show-drawer", to: ".ws-root")}
       >
       </div>
