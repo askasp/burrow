@@ -1427,13 +1427,19 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             </button>
           </form>
           <script :type={Phoenix.LiveView.ColocatedHook} name=".QueueAdd">
-            // The box empties once its task is in the queue, ready for the next.
+            // The box empties the moment Enter sends its task, so the next one can
+            // follow straight away: LiveView's own submit would lock the box until
+            // the server answers.
             export default {
               mounted() {
-                this.handleEvent("queue:added", () => {
+                this.el.addEventListener("submit", (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
                   const input = this.el.querySelector("input")
+                  const text = input.value.trim()
                   input.value = ""
                   input.focus()
+                  if (text !== "") this.pushEvent("add_ticket", {text})
                 })
               }
             }

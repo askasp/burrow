@@ -42,6 +42,13 @@ defmodule Burrow.TicketsTest do
     assert [%{id: ^id, status: "in_progress", title: "Make the logo bigger"}] = Tickets.list(dir)
   end
 
+  test "tickets the user adds in a row stay in that order", %{dir: dir} do
+    titles = ["Logo", "Header", "Footer", "Colors"]
+    for title <- titles, do: {:ok, _} = Tickets.create(dir, title)
+
+    assert Enum.map(Tickets.list(dir), & &1.title) == titles
+  end
+
   test "only tickets that haven't started can be deleted", %{dir: dir} do
     {:ok, open} = Tickets.create(dir, "Later")
     {:ok, started} = Tickets.create(dir, "Now")

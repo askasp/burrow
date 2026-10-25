@@ -44,7 +44,8 @@ defmodule Burrow.Tickets do
     title = title |> String.replace(~r/\s+/, " ") |> String.trim() |> String.slice(0, 200)
     File.mkdir_p!(dir)
     id = new_id(dir)
-    created = DateTime.utc_now(:second) |> DateTime.to_iso8601()
+    # Finer than tk's seconds: the user adds several in a row, and they keep their order.
+    created = DateTime.utc_now() |> DateTime.to_iso8601()
     description = String.trim(description)
 
     File.write!(path(dir, id), """
