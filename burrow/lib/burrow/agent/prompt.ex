@@ -28,6 +28,8 @@ defmodule Burrow.Agent.Prompt do
 
     #{queue()}
 
+    #{commands()}
+
     ## Your environment
     - /app is your checkout of the app. Edit files with your normal tools.
     - The app runs in dev mode at http://preview:4000 and reloads code on each request.
@@ -170,6 +172,8 @@ defmodule Burrow.Agent.Prompt do
 
     #{queue()}
 
+    #{commands()}
+
     ## Your environment
     - /app is your checkout. Edit files with your normal tools; git works for looking
       at history and diffs. Don't commit, push or switch branches: Peon does that when
@@ -296,6 +300,21 @@ defmodule Burrow.Agent.Prompt do
       `tk close <id>`.
     - Before you finish, run `tk ready`: the user may have added tickets while you
       worked. If anything is open, take the next one. Finish only when it lists nothing.
+    """
+    |> String.trim_trailing()
+  end
+
+  # Long commands, in every kind of project: a hung one must not look like a slow one.
+  defp commands do
+    """
+    ## Long commands
+    - Don't pipe tests, builds or servers through `tail` or `head`: they print nothing
+      until the command ends, so a hung command looks like a slow one. Send the output to
+      a file (`cmd > /tmp/run.log 2>&1`) and read the file.
+    - A server never ends: if you start one, start it in the background with its output
+      in a file, and stop it when you are done.
+    - If a command prints nothing for a few minutes, look at what it does (its log, `ps`)
+      before you wait longer.
     """
     |> String.trim_trailing()
   end

@@ -169,6 +169,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert instructions =~ "## This chat follows up on ##{change.id}"
       assert instructions =~ "on main: Change lib/app.ex\n"
       assert instructions =~ "\n- lib/app.ex\n"
+      assert instructions =~ "## Long commands"
       refute Burrow.Agent.Prompt.instructions(project) =~ "follows up"
 
       # The chip goes: the chat starts from scratch.
