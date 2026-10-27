@@ -5,8 +5,15 @@ defmodule PeonTemplate.SiteAccess do
 
   # The modes:
   # peon:if-accounts
+  # peon:unless-burrow
   #   * :login - people log in with email and password. The app's pages (the
   #     router's :app scope) need a logged-in user.
+  # peon:end
+  # peon:end
+  # peon:if-burrow
+  #   * :burrow - an internal app, seen only in Burrow: people log in to
+  #     Burrow and come here as themselves (PeonTemplateWeb.BurrowLoginController).
+  #     The app's pages need a logged-in user.
   # peon:end
   #   * :basic_auth - the browser asks for one username and password, the
   #     secrets BASIC_AUTH_USERNAME and BASIC_AUTH_PASSWORD. Until both are

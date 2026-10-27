@@ -7,12 +7,23 @@ runs `mix test` and shows the result in a live preview.
 ## Stack
 - Phoenix 1.8, LiveView, Ecto with SQLite (`ecto_sqlite3`), Tailwind v4 + daisyUI.
 <!-- peon:if-accounts -->
+<!-- peon:unless-burrow -->
 - Authentication already exists (phx.gen.auth, email + password, `PeonTemplate.Accounts`).
   Read the user from `@current_scope.user`.
 - The first account is the admin (`user.admin`); admins add and remove
   accounts at /users/admin. Whether anyone else can sign up at
   /users/register is `PeonTemplate.SiteAccess.signups?/0`: when the owner asks
   to open or close sign-ups, change that one line. The tests follow it.
+<!-- peon:end -->
+<!-- peon:if-burrow -->
+- This is an internal app: it is seen only inside Burrow, by the people of its
+  Burrow project, who log in to Burrow, not here. Burrow sends them to
+  `/burrow/login` (`PeonTemplateWeb.BurrowLoginController`), which gives them
+  an account here the first time (`PeonTemplate.Accounts.burrow_user!/2`, no
+  password). Read the user from `@current_scope.user`. The project's owner is
+  the admin (`user.admin`). There are no log in, register, settings or
+  password pages, and no log out (people log out of Burrow); don't add any.
+<!-- peon:end -->
 - Admins see, search, add, edit and delete the rows of every table at
   /users/admin/data (`PeonTemplate.Backoffice`). It finds the schemas itself:
   a new schema needs nothing. Mark secrets and tokens `redact: true` so they
@@ -55,8 +66,14 @@ categories, opening hours, email texts, roles and permissions, settings.
 switch. When the owner asks to change who can see the app, change that line:
 
 <!-- peon:if-accounts -->
+<!-- peon:unless-burrow -->
 - `:login` (the default): people log in with email and password; the `:app`
   pages need a logged-in user.
+<!-- peon:end -->
+<!-- peon:end -->
+<!-- peon:if-burrow -->
+- `:burrow` (this app's): people log in to Burrow and come here as
+  themselves; the `:app` pages need a logged-in user.
 <!-- peon:end -->
 - `:basic_auth`: the browser asks for one username and password, the same for
   everyone. They are the secrets `BASIC_AUTH_USERNAME` and
@@ -80,8 +97,10 @@ The tests don't do this: they log in as before.
 <!-- peon:end -->
 
 <!-- peon:if-accounts -->
+<!-- peon:unless-burrow -->
 The account links in the header only show in `:login` mode (or when someone is
 logged in).
+<!-- peon:end -->
 <!-- peon:end -->
 <!-- peon:unless-accounts -->
 The app has no user accounts. If the owner wants people to have their own

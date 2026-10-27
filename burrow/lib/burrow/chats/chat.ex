@@ -29,6 +29,14 @@ defmodule Burrow.Chats.Chat do
     field :from_chat, :string
     # "/goal <condition>": the agent keeps going until it holds (`Burrow.Chat.KeepGoing`)
     field :goal, :string
+    # The horde it works in as one of its peons (`Burrow.Hordes`)
+    field :horde_id, :integer
+    # How its change ships (`Burrow.Ship`): "review" (a person merges it),
+    # "pilot" (on to prod once healthy on staging) or nil, merged when it passes
+    field :shipping, :string
+    # "Split into a horde": Peon splits big tasks into a horde by itself, this
+    # many peons at a time (`Burrow.Hordes`); nil is off
+    field :horde_at_once, :integer
     timestamps(type: :utc_datetime)
   end
 end

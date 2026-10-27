@@ -127,6 +127,11 @@ defmodule Burrow.TeamKeys do
     :ok
   end
 
+  @doc "An account is being deleted: its keys stop being shared, and teammates lose them."
+  def deleted(user_id) do
+    Repo.all(from k in Key, where: k.user_id == ^user_id) |> Enum.each(&forget/1)
+  end
+
   @doc """
   Brings the user's opencode up to date, now: the sharing of their own keys
   ends where a key is no longer the login they use, and they get the keys

@@ -1,0 +1,13 @@
+---
+burrow_user: burrow
+burrow_home: /var/lib/burrow
+burrow_src: /opt/burrow
+burrow_data_dir: "{{ burrow_home }}/data"
+burrow_database: "{{ burrow_home }}/burrow.db"
+burrow_port: 4000
+
+# The tunnel sends every *.<domain> to this loopback router, which proxies
+# peon-<port> to that loopback port when it is one Burrow hands out
+# (Burrow.Projects: 21000 on, 50 per project).
+burrow_router_port: 4098
+burrow_router_ports_regex: "2[1-9][0-9]{3}|[3-5][0-9]{4}|6[0-4][0-9]{3}"

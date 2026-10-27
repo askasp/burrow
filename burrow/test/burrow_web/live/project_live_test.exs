@@ -41,7 +41,7 @@ defmodule BurrowWeb.ProjectLiveTest do
     assert [_] = Projects.list(Scope.for_user(user))
   end
 
-  test "a new app can use one basic-auth login instead of accounts", %{conn: conn} do
+  test "a new app can use one basic-auth login instead of accounts", %{conn: conn, user: user} do
     {:ok, lv, _html} = live(conn, ~p"/projects")
     refute has_element?(lv, "#project_basic_password")
 
@@ -70,6 +70,13 @@ defmodule BurrowWeb.ProjectLiveTest do
 
     assert has_element?(lv, "#projects a.nm", "Stash")
     assert [%{auth: "basic"}] = Burrow.Repo.all(Burrow.Projects.Project)
+
+    # Only admins start from a git repo: its preview runs outside the sandbox.
+    lv |> element("#new-project") |> render_click()
+    refute has_element?(lv, "#project_repo_url")
+
+    user |> Ecto.Changeset.change(admin: true) |> Burrow.Repo.update!()
+    {:ok, lv, _html} = live(conn, ~p"/projects")
 
     # A repo keeps its own login, so the choice goes away.
     lv |> element("#new-project") |> render_click()
@@ -129,6 +136,13 @@ defmodule BurrowWeb.ProjectLiveTest do
 
     lv |> element("#project-menu-#{project.id}") |> render_click()
     assert has_element?(lv, "#project-menu-items-#{project.id} button", "Restart")
+
+    # The workspace's menu, so "Deploys and usage" opens the workspace on it.
+    lv
+    |> element("#project-menu-items-#{project.id} button", "Deploys and usage")
+    |> render_click()
+
+    assert_redirect(lv, ~p"/projects/#{project.id}?open=deploys")
   end
 
   describe "a project" do

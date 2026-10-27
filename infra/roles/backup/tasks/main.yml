@@ -1,0 +1,54 @@
+---
+# Nightly restic backup of /var/lib/burrow: Burrow's database, every
+# project's history, secrets and the apps' databases. Off while
+# backup_restic_repository is empty.
+
+- name: Back up only when a repository is set
+  ansible.builtin.meta: end_role
+  when: backup_restic_repository | length == 0
+
+- name: Assert the backup secrets are in the vault
+  ansible.builtin.assert:
+    that:
+      - vault_restic_password is defined
+      - vault_backup_aws_access_key_id is defined
+      - vault_backup_aws_secret_access_key is defined
+    fail_msg: Backups need vault_restic_password and the bucket's keys in group_vars/all/vault.yml.
+    quiet: true
+
+- name: Install restic
+  ansible.builtin.apt:
+    name: restic
+    state: present
+
+- name: Install restic's settings
+  ansible.builtin.template:
+    src: restic.env.j2
+    dest: /etc/burrow/restic.env
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: burrow-backup.j2
+    dest: /usr/local/sbin/burrow-backup
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the backup's units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [burrow-backup.service, burrow-backup.timer]
+
+- name: Run it nightly
+  ansible.builtin.systemd:
+    name: burrow-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -3,8 +3,8 @@ defmodule BurrowWeb.ProjectLive.Index do
   The projects screen: a card per project, yours and those shared with your
   teams, with what it is doing (`Burrow.Activity`), its latest change and
   your chats in it (a teammate's chats are theirs). A card opens the
-  project's workspace; its ⋯ menu restarts the project and, for its owner,
-  shares, hands over, adds staging and prod or deletes it. New project, by the title, opens the form. + starts a chat:
+  project's workspace; its ⋯ menu is the one the workspace has
+  (`project_menu/1`). New project, by the title, opens the form. + starts a chat:
   the page has no "here", so it asks where (Chats, a project, or a new
   project), next to the rail on wide screens and from the bottom on phones.
   Under "No project", Chats with the latest general chats.
@@ -13,7 +13,15 @@ defmodule BurrowWeb.ProjectLive.Index do
   use BurrowWeb, :live_view
 
   import BurrowWeb.WorkspaceLive.Components,
-    only: [place_switch: 1, account_menu: 1, rail: 1, all_projects: 1, peek_list: 1, peek: 1]
+    only: [
+      place_switch: 1,
+      account_menu: 1,
+      rail: 1,
+      all_projects: 1,
+      peek_list: 1,
+      peek: 1,
+      project_menu: 1
+    ]
 
   alias Burrow.{Activity, Cell, Chat, Chats, GeneralChats, Projects, Teams}
   alias Burrow.Projects.Project
@@ -75,6 +83,7 @@ defmodule BurrowWeb.ProjectLive.Index do
       name: project.name,
       url: ~p"/projects/#{project.id}",
       current: false,
+      internal: Projects.Project.internal?(project),
       state: tile["state"],
       label: tile["label"],
       pct: tile["pct"]
@@ -85,7 +94,8 @@ defmodule BurrowWeb.ProjectLive.Index do
   # latest change and where the refs are (a repo project has neither; its
   # history is in git), and the user's chats in it.
   defp card(project, user_id) do
-    phases = for c <- Activity.chats(project, user_id, Chat.busy_ids(project.id)), do: c.phase
+    tabs = Activity.chats(project, user_id, Chat.busy_ids(project.id))
+    phases = for c <- tabs, do: c.phase
 
     {latest, refs} =
       if Project.repo?(project) do
@@ -105,7 +115,8 @@ defmodule BurrowWeb.ProjectLive.Index do
       sub: sub,
       latest: latest,
       where: where(project, refs),
-      chats: length(phases),
+      # A horde's peons are its chat's, not chats of their own.
+      chats: Enum.count(tabs, &(not Chats.peon?(&1.chat))),
       prs: Enum.count(Chats.list(project.id), & &1.pr_url)
     }
   end
@@ -274,6 +285,13 @@ defmodule BurrowWeb.ProjectLive.Index do
     end
   end
 
+  # "Deploys and usage" and Secrets are in the project's workspace.
+  def handle_event("open", %{"open" => what, "id" => id}, socket)
+      when what in ~w(deploys secrets),
+      do:
+        {:noreply,
+         push_navigate(socket, to: ~p"/projects/#{project!(socket, id).id}?open=#{what}")}
+
   def handle_event("restart", %{"id" => id}, socket) do
     Cell.restart(project!(socket, id).id)
     {:noreply, assign(socket, menu: nil)}
@@ -329,7 +347,7 @@ defmodule BurrowWeb.ProjectLive.Index do
       </div>
       <nav id="drawer" class="drawer" aria-label="Chats and projects" data-kb-zoom-hide>
         <div class="dlist">
-          <.all_projects current />
+          <.all_projects current rail={@rail} />
           <.peek_list :if={@peek} peek={@peek} />
           <.account_menu user={@current_scope.user} />
         </div>
@@ -426,7 +444,7 @@ defmodule BurrowWeb.ProjectLive.Index do
                   hint={"slug: #{@slug || "…"}"}
                 />
               </div>
-              <div class="min-w-0">
+              <div :if={@current_scope.user.admin} class="min-w-0">
                 <.input
                   field={@form[:repo_url]}
                   label="From a git repo (optional)"
@@ -456,6 +474,13 @@ defmodule BurrowWeb.ProjectLive.Index do
                 <.input field={@form[:signups]} type="checkbox" label="Allow sign-ups" />
                 <p class="hint">Off: the first account is the admin and adds everyone else.</p>
               </div>
+              <p
+                :if={blank?(@form[:repo_url].value) and @form[:auth].value == "burrow"}
+                class="hint"
+              >
+                Only the people who see this project use it, in Burrow's Apps, logged in as
+                themselves. Each merged chat goes live: no staging, no prod.
+              </p>
               <div
                 :if={blank?(@form[:repo_url].value) and @form[:auth].value == "basic"}
                 class="flex flex-col gap-3"
@@ -639,42 +664,13 @@ defmodule BurrowWeb.ProjectLive.Index do
                   phx-window-keydown="close_menu"
                   phx-key="Escape"
                 >
-                  <button type="button" role="menuitem" phx-click="restart" phx-value-id={p.id}>
-                    Restart <.icon name="hero-arrow-path" class="size-4 text-[var(--text-3)]" />
-                  </button>
-                  <button
-                    :if={owner?}
-                    type="button"
-                    role="menuitem"
-                    phx-click="dialog"
-                    phx-value-dialog="share"
-                    phx-value-id={p.id}
-                  >
-                    Share <span class="k">{if p.team, do: p.team.name, else: "Only me"}</span>
-                  </button>
-                  <button
-                    :if={owner? && p.team}
-                    type="button"
-                    role="menuitem"
-                    phx-click="dialog"
-                    phx-value-dialog="hand_over"
-                    phx-value-id={p.id}
-                  >
-                    Hand over
-                  </button>
-                  <div :if={owner?} class="msep" role="separator"></div>
-                  <button
-                    :if={owner?}
-                    id={"delete-project-#{p.id}"}
-                    type="button"
-                    role="menuitem"
-                    class="danger"
-                    phx-click="delete_project"
-                    phx-value-id={p.id}
-                    data-confirm={"Delete #{p.name} for good? Its chats, code history, environments and secrets go with it."}
-                  >
-                    Delete project
-                  </button>
+                  <.project_menu
+                    project={p}
+                    repo?={Project.repo?(p)}
+                    owner?={owner?}
+                    team={p.team && p.team.name}
+                    hand_over?={owner? && p.team != nil}
+                  />
                 </div>
               </div>
             </li>

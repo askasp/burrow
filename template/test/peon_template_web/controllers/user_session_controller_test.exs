@@ -1,4 +1,5 @@
 # peon:accounts-only: Peon leaves this file out of apps made without accounts.
+# peon:not-burrow: nor out of internal apps, where Burrow logs people in.
 defmodule PeonTemplateWeb.UserSessionControllerTest do
   use PeonTemplateWeb.ConnCase
 

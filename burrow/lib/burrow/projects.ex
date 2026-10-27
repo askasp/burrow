@@ -102,6 +102,7 @@ defmodule Burrow.Projects do
       changeset =
         %Project{user_id: user.id}
         |> Project.create_changeset(attrs)
+        |> repo_for_admins(user)
         |> put_team(scope, attrs["team_id"] || attrs[:team_id])
 
       with {:ok, _} <- Ecto.Changeset.apply_action(changeset, :insert) do
@@ -153,6 +154,16 @@ defmodule Burrow.Projects do
     else
       {:error, :not_owner}
     end
+  end
+
+  # A repo's preview runs on the host, outside the sandbox
+  # (`Burrow.GitRepo.HostPreview`), so only admins make repo projects.
+  defp repo_for_admins(changeset, %{admin: true}), do: changeset
+
+  defp repo_for_admins(changeset, _user) do
+    if Ecto.Changeset.get_change(changeset, :repo_url),
+      do: Ecto.Changeset.add_error(changeset, :repo_url, "is for admins only"),
+      else: changeset
   end
 
   defp put_team(changeset, _scope, team_id) when team_id in [nil, ""], do: changeset

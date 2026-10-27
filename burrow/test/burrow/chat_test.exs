@@ -108,6 +108,17 @@ defmodule Burrow.ChatTest do
              Chat.normalize(waiting)
   end
 
+  test "a message in horde mode shows as typed, without Peon's horde and queue hints" do
+    text =
+      "Move every page to the new layout" <>
+        "\n\n(Peon: horde mode is on: the user wants work split. Plan a horde, 6 at a time.)" <>
+        "\n\n(Peon: if this asks for more than one thing, first put each in your queue " <>
+        "with `tk create`, then work them one at a time.)"
+
+    assert [%{text: "Move every page to the new layout"}] =
+             Chat.normalize(%{"type" => "user", "id" => "u3", "text" => text})
+  end
+
   test "a message to the design agent shows as typed, without Peon's design hint in any wording" do
     hint =
       "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained " <>

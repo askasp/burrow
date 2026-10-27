@@ -9,7 +9,7 @@ defmodule Burrow.Accounts.UserNotifier do
     email =
       new()
       |> to(recipient)
-      |> from({"Burrow", "contact@example.com"})
+      |> from({"Burrow", Application.get_env(:burrow, :mail_from, "contact@example.com")})
       |> subject(subject)
       |> text_body(body)
 

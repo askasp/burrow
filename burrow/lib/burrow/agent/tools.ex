@@ -11,13 +11,14 @@ defmodule Burrow.Agent.Tools do
   alias Burrow.GitRepo.{PreviewPack, PullRequest}
 
   # A repo project has no history, checks or envs (`Burrow.GitRepo`).
-  @repo_tools ~w(submit_changeset restart_preview secrets request_secret pull_request)
-  @repo_only ~w(pull_request)
+  @repo_tools ~w(submit_changeset restart_preview secrets request_secret pull_request
+                  comment_on_pull_request)
+  @repo_only ~w(pull_request comment_on_pull_request)
 
   def specs(project) do
     if Projects.Project.repo?(project),
-      do: for(spec <- all_specs(), spec.name in @repo_tools, do: repo_spec(spec)),
-      else: Enum.reject(all_specs(), &(&1.name in @repo_only))
+      do: for(spec <- all_specs(project), spec.name in @repo_tools, do: repo_spec(spec)),
+      else: Enum.reject(all_specs(project), &(&1.name in @repo_only))
   end
 
   defp repo_spec(%{name: "submit_changeset"} = spec),
@@ -67,7 +68,10 @@ defmodule Burrow.Agent.Tools do
 
   defp repo_spec(spec), do: spec
 
-  defp all_specs do
+  defp shipped(project),
+    do: if(Projects.Project.internal?(project), do: "goes live.", else: "the user ships it.")
+
+  defp all_specs(project) do
     [
       %{
         name: "submit_changeset",
@@ -75,8 +79,8 @@ defmodule Burrow.Agent.Tools do
         Submit all your changes in /app. Peon checks policy, then compiles with warnings as \
         errors, checks the formatting of the files you changed and runs the tests, right \
         here in /app. When that passes the change lands on main: merged with what other \
-        chats landed meanwhile. Main is then built and booted in prod mode, and the user \
-        ships it. On failure, fix the problem and submit again.\
+        chats landed meanwhile. Main is then built and booted in prod mode, and #{shipped(project)} \
+        On failure, fix the problem and submit again.\
         """,
         parameters: %{
           type: "object",
@@ -121,7 +125,7 @@ defmodule Burrow.Agent.Tools do
         parameters: %{
           type: "object",
           properties: %{
-            env: %{type: "string", enum: ["staging", "prod"]},
+            env: %{type: "string", enum: Env.names(project)},
             what: %{type: "string", enum: ["overview", "processes"]},
             sort: %{type: "string", enum: ["memory", "reductions", "message_queue_len"]}
           },
@@ -142,17 +146,38 @@ defmodule Burrow.Agent.Tools do
       %{
         name: "pull_request",
         description: """
-        Read one of the repo's pull requests on GitHub, like one the user points you to: \
-        its title, author, state, branches and description. Its branch is fetched into /app \
-        as origin/pr/<number>, next to a fresh origin/main, for git log, git diff and git \
-        show. Without a number, lists the open pull requests. You have no GitHub access \
-        of your own; this is how you read GitHub.\
+        Read one of the repo's pull requests on GitHub, like one the user points you to or \
+        the one your submit opened: its title, author, state, branches and description, \
+        and its comments and reviews (Copilot's too), with the file and line of each \
+        comment on code. Its branch is fetched into /app as origin/pr/<number>, next to a \
+        fresh origin/main, for git log, git diff and git show. Without a number, lists the \
+        open pull requests and marks yours. You have no GitHub access of your own; this \
+        is how you read GitHub.\
         """,
         parameters: %{
           type: "object",
           properties: %{
             number: %{type: "integer", description: "The PR's number, like 1122"}
           }
+        }
+      },
+      %{
+        name: "comment_on_pull_request",
+        description: """
+        Post on one of the repo's pull requests on GitHub, only when the user asks you to, \
+        like answering a review's comments once you fixed them. With reply_to, it replies \
+        in that thread of comments on code (peon_pull_request shows each one's thread); \
+        without, it comments on the PR itself. It posts as the owner of Peon's GitHub \
+        token, marked as from Peon: keep it short and say what you changed, or why not.\
+        """,
+        parameters: %{
+          type: "object",
+          properties: %{
+            number: %{type: "integer", description: "The PR's number, like 1122"},
+            body: %{type: "string", description: "What to say, in GitHub Markdown"},
+            reply_to: %{type: "integer", description: "The thread to reply in, like 2468013579"}
+          },
+          required: ["number", "body"]
         }
       },
       %{
@@ -248,14 +273,31 @@ defmodule Burrow.Agent.Tools do
   end
 
   defp run("pull_request", args, project, chat_id) do
-    case Integer.parse(to_string(args["number"] || "")) do
-      {number, ""} when number > 0 -> read_pr(project, chat_id, number)
-      _ -> list_prs(project, chat_id)
+    case number(args["number"]) do
+      nil -> list_prs(project, chat_id)
+      number -> read_pr(project, chat_id, number)
+    end
+  end
+
+  defp run("comment_on_pull_request", %{"body" => body} = args, project, chat_id)
+       when is_binary(body) do
+    case {number(args["number"]), String.trim(body)} do
+      {nil, _} -> {"Give the PR's number.", true}
+      {_, ""} -> {"Write what to say in body.", true}
+      {number, body} -> comment_pr(project, chat_id, number, body, number(args["reply_to"]))
     end
   end
 
   defp run(name, _args, _project, _chat_id),
     do: {"Unknown tool or missing arguments: #{name}", true}
+
+  # a positive integer, or nil; models sometimes send numbers as strings
+  defp number(value) do
+    case Integer.parse(to_string(value || "")) do
+      {number, ""} when number > 0 -> number
+      _ -> nil
+    end
+  end
 
   defp burrow_only(name),
     do:
@@ -291,7 +333,9 @@ defmodule Burrow.Agent.Tools do
          Its branch is in /app as origin/pr/#{number}. The change: \
          git diff origin/#{main}...origin/pr/#{number}; its commits: \
          git log origin/#{main}..origin/pr/#{number}; a file: \
-         git show origin/pr/#{number}:<path>. Read it there; don't merge or check it out.\
+         git show origin/pr/#{number}:<path>. Read it there; don't merge or check it out.
+
+         #{pr_comments(project, chat_id, number, pr["html_url"])}\
          """, false}
 
       {:error, reason} ->
@@ -299,11 +343,81 @@ defmodule Burrow.Agent.Tools do
     end
   end
 
+  @comments_max 30_000
+
+  # The newest comments that fit in @comments_max characters, oldest first.
+  defp pr_comments(project, chat_id, number, url) do
+    case PullRequest.comments(project, chat_id, number) do
+      {:ok, []} ->
+        "No comments or reviews yet."
+
+      {:ok, comments} ->
+        {shown, _} =
+          comments
+          |> Enum.reverse()
+          |> Enum.reduce_while({[], 0}, fn comment, {shown, size} ->
+            text = comment_text(comment)
+            size = size + byte_size(text)
+
+            if size > @comments_max,
+              do: {:halt, {shown, size}},
+              else: {:cont, {[text | shown], size}}
+          end)
+
+        left_out =
+          if length(shown) < length(comments),
+            do:
+              "\n\n#{length(comments) - length(shown)} older ones left out; they are on #{url}.",
+            else: ""
+
+        "Comments and reviews, oldest first:\n\n" <> Enum.join(shown, "\n\n") <> left_out
+
+      {:error, reason} ->
+        "Couldn't read its comments: #{pr_error(reason)}"
+    end
+  end
+
+  defp comment_text(comment) do
+    where =
+      case comment do
+        %{review: state} ->
+          " reviewed (#{state})"
+
+        %{path: path, line: line, outdated: outdated, thread: thread} ->
+          line = if line, do: ":#{line}"
+          " on #{path}#{line} (#{if outdated, do: "outdated, "}thread #{thread})"
+
+        _ ->
+          ""
+      end
+
+    String.trim_trailing(
+      "#{comment.author}#{where}, #{String.slice(comment.at, 0, 10)}:\n" <>
+        String.slice(comment.body, 0, 4000)
+    )
+  end
+
+  defp comment_pr(project, chat_id, number, body, thread) do
+    case PullRequest.comment(project, chat_id, number, body <> "\n\n_From Peon._", thread) do
+      {:ok, url} -> {"Posted: #{url}", false}
+      {:error, reason} -> {pr_error(reason), true}
+    end
+  end
+
   defp list_prs(project, chat_id) do
     case PullRequest.open_list(project, chat_id) do
-      {:ok, []} -> {"The repo has no open pull requests.", false}
-      {:ok, prs} -> {Enum.map_join(prs, "\n", &pr_line/1), false}
-      {:error, reason} -> {pr_error(reason), true}
+      {:ok, []} ->
+        {"The repo has no open pull requests.", false}
+
+      {:ok, prs} ->
+        yours = "peon/#{chat_id}"
+
+        {Enum.map_join(prs, "\n", fn pr ->
+           if pr["head"]["ref"] == yours, do: pr_line(pr) <> ", yours", else: pr_line(pr)
+         end), false}
+
+      {:error, reason} ->
+        {pr_error(reason), true}
     end
   end
 

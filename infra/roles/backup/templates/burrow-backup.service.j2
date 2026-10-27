@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up Burrow to {{ backup_restic_repository }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/burrow-backup
+Nice=10
+IOSchedulingClass=idle

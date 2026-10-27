@@ -18,6 +18,8 @@ defmodule Burrow.Application do
       {Registry, keys: :unique, name: Burrow.CellRegistry},
       {Registry, keys: :unique, name: Burrow.ProjectRegistry},
       {Registry, keys: :unique, name: Burrow.ChatRegistry},
+      # Paired computers' open links (`Burrow.Computers.Link`)
+      {Registry, keys: :unique, name: Burrow.ComputerRegistry},
       {DynamicSupervisor, name: Burrow.ChatSupervisor, strategy: :one_for_one},
       {DynamicSupervisor, name: Burrow.CellSupervisor, strategy: :one_for_one},
       # The agents' tools, on one Unix socket every agent container mounts.

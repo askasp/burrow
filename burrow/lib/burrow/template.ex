@@ -14,26 +14,35 @@ defmodule Burrow.Template do
       (`SiteAccess` mode `:basic_auth`, the secrets `BASIC_AUTH_USERNAME` and
       `BASIC_AUTH_PASSWORD`).
     * `"open"` - no accounts and no login (`SiteAccess` mode `:public`).
+    * `"burrow"` - an internal app: accounts, but people log in through
+      Burrow as themselves (`SiteAccess` mode `:burrow`,
+      `BurrowWeb.AppController`); no password pages.
 
-  Without accounts, the accounts code is left out, following markers in the
-  template's comments (`#`, `<%!--` or `<!--`, whole line):
+  Each app gets only its login's code, following markers in the template's
+  comments (`#`, `<%!--` or `<!--`, whole line):
 
-    * `peon:accounts-only` - the whole file is left out.
-    * `peon:if-accounts` ... `peon:end` - lines only apps with accounts get.
-    * `peon:unless-accounts` ... `peon:end` - lines only apps without accounts
-      get. Only for text and comments: the template itself runs with accounts.
+    * `peon:accounts-only` - the whole file only in apps with accounts
+      ("accounts" and "burrow"); `peon:burrow-only` only in "burrow" apps;
+      `peon:not-burrow` in every app but those.
+    * `peon:if-accounts` ... `peon:end` - lines only apps with accounts get,
+      `peon:if-burrow` ... `peon:end` lines only "burrow" apps get. Blocks nest.
+    * `peon:unless-accounts`, `peon:unless-burrow` ... `peon:end` - the
+      other apps' lines. `unless-accounts` is only for text and comments: the
+      template itself runs with accounts, and with both the lines of
+      `if-burrow` and `unless-burrow`.
 
   The marker lines themselves never reach the app.
   """
 
   @module "PeonTemplate"
   @otp_app "peon_template"
-  @auths ~w(accounts basic open)
+  @auths ~w(accounts basic open burrow)
   @site_access "lib/peon_template/site_access.ex"
   @default_mode "def mode, do: :login"
   @default_signups "def signups?, do: false"
 
-  @marker ~r/^\s*(?:#|<%!--|<!--)\s*peon:(accounts-only|if-accounts|unless-accounts|end)\b/
+  @marker ~r/^\s*(?:#|<%!--|<!--)\s*peon:((?:accounts|burrow)-only|not-burrow|(?:if|unless)-(?:accounts|burrow)|end)\b/
+  @file_markers ~w(accounts-only burrow-only not-burrow)
 
   @doc "The logins a new project can start with."
   def auths, do: @auths
@@ -45,11 +54,10 @@ defmodule Burrow.Template do
   def instantiate(template_dir, otp_app, auth \\ "accounts", opts \\ []) when auth in @auths do
     module = Macro.camelize(otp_app)
     {tree, blobs} = Totem.Tree.from_dir(template_dir, Burrow.Workspace.ignore(template_dir))
-    accounts? = auth == "accounts"
     signups? = Keyword.get(opts, :signups, false)
 
     Enum.reduce(tree, {%{}, %{}}, fn {path, hash}, {tree, new_blobs} ->
-      case variant(path, Map.fetch!(blobs, hash), accounts?) do
+      case variant(path, Map.fetch!(blobs, hash), auth) do
         :skip ->
           {tree, new_blobs}
 
@@ -70,35 +78,49 @@ defmodule Burrow.Template do
   end
 
   @doc false
-  # A file as an app with or without accounts gets it: `{:ok, content}` or `:skip`.
-  def variant(path, content, accounts?) do
+  # A file as an app with login `auth` gets it: `{:ok, content}` or `:skip`.
+  def variant(path, content, auth) do
     if String.contains?(content, "peon:") and String.valid?(content),
-      do: apply_markers(path, content, accounts?),
+      do: apply_markers(path, content, auth),
       else: {:ok, content}
   end
 
-  defp apply_markers(path, content, accounts?) do
-    {lines, block, skip?} =
+  # The open blocks are a stack of keep?s; a line stays when all say so.
+  defp apply_markers(path, content, auth) do
+    {lines, blocks, skip?} =
       content
       |> String.split("\n")
-      |> Enum.reduce({[], nil, false}, fn line, {lines, block, skip?} ->
-        case {Regex.run(@marker, line, capture: :all_but_first), block} do
-          {nil, nil} -> {[line | lines], nil, skip?}
-          {nil, keep?} -> {if(keep?, do: [line | lines], else: lines), block, skip?}
-          {["accounts-only"], nil} -> {lines, nil, skip? or not accounts?}
-          {["if-accounts"], nil} -> {lines, accounts?, skip?}
-          {["unless-accounts"], nil} -> {lines, not accounts?, skip?}
-          {["end"], keep?} when keep? != nil -> {lines, nil, skip?}
-          {[marker], _} -> raise ArgumentError, "#{path}: unexpected peon:#{marker}"
+      |> Enum.reduce({[], [], false}, fn line, {lines, blocks, skip?} ->
+        case Regex.run(@marker, line, capture: :all_but_first) do
+          nil ->
+            {if(Enum.all?(blocks), do: [line | lines], else: lines), blocks, skip?}
+
+          ["end"] when blocks != [] ->
+            {lines, tl(blocks), skip?}
+
+          [file] when file in @file_markers and blocks == [] ->
+            {lines, [], skip? or not keep?(file, auth)}
+
+          [block] when block not in ["end" | @file_markers] ->
+            {lines, [keep?(block, auth) | blocks], skip?}
+
+          [marker] ->
+            raise ArgumentError, "#{path}: unexpected peon:#{marker}"
         end
       end)
 
     cond do
-      block != nil -> raise ArgumentError, "#{path}: a peon:if block has no peon:end"
+      blocks != [] -> raise ArgumentError, "#{path}: a peon:if block has no peon:end"
       skip? -> :skip
       true -> {:ok, lines |> Enum.reverse() |> Enum.join("\n")}
     end
   end
+
+  defp keep?("accounts-only", auth), do: auth in ~w(accounts burrow)
+  defp keep?("burrow-only", auth), do: auth == "burrow"
+  defp keep?("not-burrow", auth), do: auth != "burrow"
+  defp keep?("if-" <> what, auth), do: keep?(what <> "-only", auth)
+  defp keep?("unless-" <> what, auth), do: not keep?(what <> "-only", auth)
 
   # The login the app starts with is the one line in SiteAccess; with
   # accounts, so is whether anyone can sign up.
@@ -108,7 +130,7 @@ defmodule Burrow.Template do
     do: replace_line(content, @default_signups, "def signups?, do: true")
 
   defp set_mode(content, @site_access, auth, _signups?) do
-    mode = if auth == "basic", do: ":basic_auth", else: ":public"
+    mode = %{"basic" => ":basic_auth", "open" => ":public", "burrow" => ":burrow"}[auth]
     replace_line(content, @default_mode, "def mode, do: " <> mode)
   end
 

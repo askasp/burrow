@@ -6,7 +6,7 @@ defmodule Burrow.Accounts do
   import Ecto.Query, warn: false
   alias Burrow.Repo
 
-  alias Burrow.Accounts.{User, UserToken, UserNotifier}
+  alias Burrow.Accounts.{Scope, User, UserToken, UserNotifier}
 
   ## Database getters
 
@@ -94,8 +94,11 @@ defmodule Burrow.Accounts do
 
   ## User registration
 
-  @doc "Anyone may create an account (`:sign_ups`, BURROW_SIGN_UPS=open)."
-  def sign_ups?, do: Application.get_env(:burrow, :sign_ups, false)
+  @doc """
+  Anyone may create an account (`:sign_ups`, BURROW_SIGN_UPS=open). Before
+  there is any, the first may: a new Burrow's first sign-up is its admin.
+  """
+  def sign_ups?, do: Application.get_env(:burrow, :sign_ups, false) or not Repo.exists?(User)
 
   @doc """
   Registers a user.
@@ -116,10 +119,11 @@ defmodule Burrow.Accounts do
   end
 
   @doc """
-  Registers a user with email and password. The account is confirmed at once.
+  Registers a user with email and password. The account is confirmed at once;
+  the first account is the admin.
   """
   def register_user_with_password(attrs) do
-    %User{}
+    %User{admin: not Repo.exists?(User)}
     |> User.email_changeset(attrs)
     |> User.password_changeset(attrs)
     |> User.confirm_changeset()
@@ -144,6 +148,38 @@ defmodule Burrow.Accounts do
   end
 
   def create_login(_user, _email), do: {:error, :not_admin}
+
+  @doc """
+  An admin deletes someone else's account. Their projects shared with a team
+  go to a teammate (an owner first); the rest are deleted. Teams they owned
+  alone get a new owner, or go when nobody else is in them. Their keys stop
+  being shared, and their general chats, AI logins and files go. Returns the
+  user and its session tokens, to disconnect
+  (`BurrowWeb.UserAuth.disconnect_sessions/1`).
+  """
+  def delete_user(%User{admin: true, id: admin_id}, %User{id: id} = user) when id != admin_id do
+    scope = Scope.for_user(user)
+
+    for project <- Repo.all(from(p in Burrow.Projects.Project, where: p.user_id == ^id)) do
+      case project.team_id && Burrow.Teams.heir(project.team_id, id) do
+        nil -> Burrow.Projects.delete(scope, project)
+        heir_id -> Burrow.Projects.hand_over(scope, project, heir_id)
+      end
+    end
+
+    Burrow.TeamKeys.deleted(id)
+    Burrow.Teams.remove_user(id)
+    Enum.each(Burrow.GeneralChats.list(id), &Burrow.GeneralChats.delete/1)
+    Burrow.OpenCode.Server.stop(id)
+    File.rm_rf(Path.join([Application.fetch_env!(:burrow, :data_dir), "users", "#{id}"]))
+
+    tokens = Repo.all_by(UserToken, user_id: id)
+    Repo.delete!(user)
+    {:ok, {user, tokens}}
+  end
+
+  def delete_user(%User{admin: true}, %User{}), do: {:error, :self}
+  def delete_user(_admin, _user), do: {:error, :not_admin}
 
   @doc """
   Returns a changeset for the registration form (email and password).

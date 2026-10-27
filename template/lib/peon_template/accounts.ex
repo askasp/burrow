@@ -143,6 +143,26 @@ defmodule PeonTemplate.Accounts do
       end
   end
 
+  # peon:if-burrow
+  @doc """
+  The account of someone Burrow logs in (`PeonTemplateWeb.BurrowLoginController`),
+  by email: made the first time, with no password. Whether they are an admin
+  follows Burrow (the project's owner is).
+  """
+  def burrow_user!(email, admin?) do
+    user =
+      get_user_by_email(email) ||
+        %User{}
+        |> User.email_changeset(%{email: email})
+        |> User.confirm_changeset()
+        |> Repo.insert!()
+
+    if user.admin == admin?,
+      do: user,
+      else: user |> Ecto.Changeset.change(admin: admin?) |> Repo.update!()
+  end
+
+  # peon:end
   ## Admin
 
   @doc "Every account, the oldest first. Only for admins."

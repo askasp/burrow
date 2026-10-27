@@ -1,0 +1,17 @@
+---
+# burrow:   the machine Burrow runs on (site, database, histories, secrets).
+# projects: the machines that run projects' containers (agents, previews,
+#           checks, staging, prod).
+#
+# Today both are the same VM: Burrow runs Docker on its own machine. Once
+# Burrow can drive a second VM, add it under `projects` only.
+all:
+  children:
+    burrow:
+      hosts:
+        burrow-1:
+          ansible_host: 203.0.113.10 # the VM's public IP
+          ansible_user: root
+    projects:
+      hosts:
+        burrow-1: {}

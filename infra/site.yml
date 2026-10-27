@@ -1,0 +1,58 @@
+---
+- name: Every machine
+  hosts: all
+  become: true
+  pre_tasks:
+    - name: Assert Ubuntu 26.04 or newer on x86_64
+      # apt's Elixir 1.18 / OTP 27 and Caddy are what Burrow is built and run with.
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] is version('26.04', '>=')
+          - ansible_facts['architecture'] == 'x86_64'
+        fail_msg: This playbook needs Ubuntu 26.04+ on x86_64.
+        quiet: true
+      tags: [always]
+  roles:
+    - role: base
+      tags: [base]
+
+- name: Machines that run projects
+  hosts: projects
+  become: true
+  roles:
+    - role: docker
+      tags: [docker]
+    - role: sandbox
+      tags: [sandbox]
+
+- name: Burrow
+  hosts: burrow
+  become: true
+  pre_tasks:
+    - name: Assert Burrow's machine also runs projects
+      # Burrow starts every container with the local `docker`.
+      ansible.builtin.assert:
+        that: inventory_hostname in groups['projects']
+        fail_msg: Put {{ inventory_hostname }} under `projects` too; Burrow can't drive another VM yet.
+        quiet: true
+      tags: [always]
+
+    - name: Assert the settings are filled in
+      ansible.builtin.assert:
+        that:
+          - burrow_domain | length > 0
+          - burrow_mail_from | length > 0
+          - burrow_tunnel_id | length > 0
+          - vault_resend_api_key is defined
+        fail_msg: >-
+          Set burrow_domain, burrow_mail_from and burrow_tunnel_id in
+          group_vars/all/vars.yml, and vault_resend_api_key in
+          group_vars/all/vault.yml (see README.md).
+        quiet: true
+      tags: [always]
+  roles:
+    - role: burrow
+      tags: [burrow]
+    - role: backup
+      tags: [backup]

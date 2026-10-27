@@ -4,7 +4,8 @@ defmodule Burrow.GitRepo.PullRequestTest do
   import Burrow.ProjectFixtures
 
   alias Burrow.{GitRepo, Secrets}
-  alias Burrow.GitRepo.PullRequest
+  alias Burrow.Agent.Tools
+  alias Burrow.GitRepo.{Merged, PullRequest}
 
   @moduletag :tmp_dir
 
@@ -195,11 +196,182 @@ defmodule Burrow.GitRepo.PullRequestTest do
              PullRequest.read(project_fixture(%{repo_url: origin}), "a", chat, 3)
   end
 
-  test "a chat whose PR was merged or closed stops counting against the limit" do
+  test "the agent reads a PR's comments and reviews, Copilot's too, and answers them", %{
+    work: work,
+    project: local
+  } do
+    project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+    chat = Burrow.Chat.workspace_dir(project, "c")
+    on_exit(fn -> File.rm_rf!(Burrow.Projects.dir(project)) end)
+    # cloned from the local origin; only the API is GitHub's
+    :ok = GitRepo.checkout(local, chat, "c")
+
+    sh!(["checkout", "-q", "-b", "fix"], work)
+    File.write!(Path.join(work, "a.ex"), "fixed")
+    commit!(work, "fix")
+    sh!(["push", "-q", "origin", "fix:refs/pull/4/head", "fix:peon/c"], work)
+
+    pr = %{
+      "number" => 4,
+      "title" => "Fix",
+      "state" => "open",
+      "user" => %{"login" => "ada"},
+      "base" => %{"ref" => "main"},
+      "head" => %{"ref" => "peon/c"},
+      "html_url" => "https://github.com/acme/shop/pull/4"
+    }
+
+    copilot = %{"login" => "copilot-pull-request-reviewer[bot]"}
+
+    Req.Test.stub(PullRequest, fn conn ->
+      case conn.request_path do
+        "/repos/acme/shop/pulls" ->
+          Req.Test.json(conn, [pr])
+
+        "/repos/acme/shop/pulls/4" ->
+          Req.Test.json(conn, pr)
+
+        "/repos/acme/shop/issues/4/comments" ->
+          Req.Test.json(conn, [
+            %{
+              "user" => %{"login" => "ada"},
+              "body" => "Thanks!",
+              "created_at" => "2026-10-22T09:00:00Z"
+            }
+          ])
+
+        "/repos/acme/shop/pulls/4/reviews" ->
+          Req.Test.json(conn, [
+            %{
+              "user" => copilot,
+              "state" => "COMMENTED",
+              "body" => "Copilot reviewed 1 file.",
+              "submitted_at" => "2026-10-20T09:00:00Z"
+            },
+            %{
+              "user" => %{"login" => "bo"},
+              "state" => "COMMENTED",
+              "body" => "",
+              "submitted_at" => "x"
+            },
+            %{"user" => %{"login" => "bo"}, "state" => "PENDING", "body" => "draft"},
+            %{
+              "user" => %{"login" => "bo"},
+              "state" => "CHANGES_REQUESTED",
+              "body" => nil,
+              "submitted_at" => "2026-10-23T09:00:00Z"
+            }
+          ])
+
+        "/repos/acme/shop/pulls/4/comments" ->
+          Req.Test.json(conn, [
+            %{
+              "id" => 11,
+              "user" => %{"login" => "Copilot"},
+              "body" => "This can be nil.",
+              "path" => "a.ex",
+              "line" => 3,
+              "original_line" => 3,
+              "created_at" => "2026-10-20T09:00:01Z"
+            },
+            %{
+              "id" => 13,
+              "in_reply_to_id" => 11,
+              "user" => %{"login" => "ada"},
+              "body" => "Good catch.",
+              "path" => "a.ex",
+              "line" => 3,
+              "original_line" => 3,
+              "created_at" => "2026-10-20T10:00:00Z"
+            },
+            %{
+              "id" => 12,
+              "user" => nil,
+              "body" => "Typo.",
+              "path" => "b.ex",
+              "line" => nil,
+              "original_line" => 9,
+              "created_at" => "2026-10-21T09:00:00Z"
+            }
+          ])
+      end
+    end)
+
+    assert {:ok,
+            [%{author: "copilot-pull-request-reviewer[bot]", review: "commented"} | _] = said} =
+             PullRequest.comments(project, "c", 4)
+
+    assert Enum.map(said, & &1.author) ==
+             ~w(copilot-pull-request-reviewer[bot] Copilot ada ghost ada bo)
+
+    assert {text, false} = Tools.call("pull_request", %{"number" => 4}, project, "c")
+
+    assert text =~ """
+           Comments and reviews, oldest first:
+
+           copilot-pull-request-reviewer[bot] reviewed (commented), 2026-10-20:
+           Copilot reviewed 1 file.
+
+           Copilot on a.ex:3 (thread 11), 2026-10-20:
+           This can be nil.
+
+           ada on a.ex:3 (thread 11), 2026-10-20:
+           Good catch.
+
+           ghost on b.ex:9 (outdated, thread 12), 2026-10-21:
+           Typo.
+
+           ada, 2026-10-22:
+           Thanks!
+
+           bo reviewed (changes requested), 2026-10-23:\
+           """
+
+    assert git!(["show", "origin/pr/4:a.ex"], chat) == "fixed"
+
+    assert {"#4 Fix (open, by ada, peon/c), yours", false} =
+             Tools.call("pull_request", %{}, project, "c")
+
+    test = self()
+
+    Req.Test.stub(PullRequest, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      send(test, {conn.method, conn.request_path, Jason.decode!(body)})
+
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{"html_url" => "https://github.com/acme/shop/pull/4#r14"})
+    end)
+
+    reply = %{"number" => 4, "reply_to" => 11, "body" => " Fixed: it can't be nil now. "}
+
+    assert {"Posted: https://github.com/acme/shop/pull/4#r14", false} =
+             Tools.call("comment_on_pull_request", reply, project, "c")
+
+    assert_received {"POST", "/repos/acme/shop/pulls/4/comments/11/replies",
+                     %{"body" => "Fixed: it can't be nil now.\n\n_From Peon._"}}
+
+    assert {_, false} =
+             Tools.call(
+               "comment_on_pull_request",
+               %{"number" => "4", "body" => "Done."},
+               project,
+               "c"
+             )
+
+    assert_received {"POST", "/repos/acme/shop/issues/4/comments",
+                     %{"body" => "Done.\n\n_From Peon._"}}
+
+    assert {"Write what to say in body.", true} =
+             Tools.call("comment_on_pull_request", %{"number" => 4, "body" => " "}, project, "c")
+  end
+
+  test "refresh notes which chats' PRs were merged or closed" do
     project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
     :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
 
-    for n <- 1..Burrow.Chats.max() do
+    for n <- 1..4 do
       chat = Burrow.Chats.create(project.id, "PR #{n}", "ada")
       Burrow.Chats.set(chat, pr_url: "https://github.com/acme/shop/pull/#{n}", pr_state: "open")
     end
@@ -217,13 +389,45 @@ defmodule Burrow.GitRepo.PullRequestTest do
       end
     end)
 
-    assert Burrow.Activity.room?(project)
+    assert PullRequest.refresh(project) == 2
     states = Burrow.Chats.list(project.id) |> Enum.map(& &1.pr_state) |> Enum.sort()
     assert states == ~w(closed merged open open)
 
     phases = Burrow.Activity.chats(project, MapSet.new()) |> Enum.map(& &1.phase) |> Enum.sort()
     assert phases == ~w(closed merged ready ready)
     assert PullRequest.refresh(project) == 0
+  end
+
+  test "a chat closes once its PR is merged, unless its checkout has more", %{tmp_dir: dir} do
+    project = project_fixture(%{repo_url: "https://github.com/acme/shop.git"})
+    :ok = Secrets.put(project.id, "GITHUB_TOKEN", "github_pat_x", "ada")
+
+    [none, pushed, edited, open] =
+      for n <- 1..4 do
+        chat = Burrow.Chats.create(project.id, "PR #{n}", "ada")
+        Burrow.Chats.set(chat, pr_url: "https://github.com/acme/shop/pull/#{n}", pr_state: "open")
+        chat
+      end
+
+    for chat <- [pushed, edited] do
+      work = Burrow.Chat.workspace_dir(project, chat.id)
+      sh!(["init", "-b", "peon/#{chat.id}", work], dir)
+      File.write!(Path.join(work, "index.html"), "one\n")
+      commit!(work, "first")
+      sh!(["update-ref", "refs/remotes/origin/peon/#{chat.id}", "HEAD"], work)
+    end
+
+    File.write!(Path.join(Burrow.Chat.workspace_dir(project, edited.id), "new.html"), "two\n")
+
+    Req.Test.stub(PullRequest, fn conn ->
+      if conn.request_path == "/repos/acme/shop/pulls/4",
+        do: Req.Test.json(conn, %{"state" => "open", "merged_at" => nil}),
+        else: Req.Test.json(conn, %{"state" => "closed", "merged_at" => "x"})
+    end)
+
+    assert Enum.sort(Merged.close(project)) == Enum.sort([none.id, pushed.id])
+    left = Burrow.Chats.list(project.id) |> Enum.map(& &1.id) |> Enum.sort()
+    assert left == Enum.sort([edited.id, open.id])
   end
 
   defp commit!(dir, message) do

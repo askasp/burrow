@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+tunnel: {{ burrow_tunnel_id }}
+credentials-file: /etc/burrow/tunnel-credentials.json
+ingress:
+  - hostname: {{ burrow_domain }}
+    service: http://127.0.0.1:{{ burrow_port }}
+  - hostname: "*.{{ burrow_domain }}"
+    service: http://127.0.0.1:{{ burrow_router_port }}
+  - service: http_status:404

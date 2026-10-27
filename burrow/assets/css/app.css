@@ -272,6 +272,7 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .pr-root .nm:focus-visible { outline: none }
 .pr-root .nm:focus-visible::after { outline: 2px solid var(--accent-text); outline-offset: -2px }
 .pr-root .menuw { position: relative; z-index: 1 }
+.pr-root .menuw:has(.menu) { z-index: 2 }
 .pr-root .drow .icon-btn { width: 44px; height: 44px; border: 0; border-radius: 22px }
 .pr-root .drow .icon-btn:hover { background: var(--raised) }
 .pr-root .pline { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden }
@@ -466,15 +467,11 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
    project's menu; a closed preview comes back with a chip */
 .ws-root .pbar { flex: none; display: flex; align-items: center; gap: 8px; height: 60px; padding: 0 12px 0 8px }
 .ws-root .pbar-title { flex: 1; min-width: 0; display: flex }
-.ws-root .pbar-ttl { display: flex; align-items: baseline; gap: 10px; min-width: 0; max-width: 100%; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-family: inherit; text-align: left; cursor: pointer }
-.ws-root .pbar-ttl:hover, .ws-root .pbar-ttl[aria-expanded="true"] { background: var(--surface) }
-.ws-root .pbar-ttl:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root .pbar-ttl { display: flex; align-items: baseline; gap: 10px; min-width: 0; max-width: 100%; padding: 6px 8px; color: var(--text) }
 .ws-root .pbar-name { min-width: 0; font-size: 15px; line-height: 20px; font-weight: 600 }
 .ws-root .pbar-t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .ws-root .pbar-meta { flex: none; max-width: 50%; font-size: 13px; line-height: 18px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.ws-root .pbar-chev { position: relative; display: flex; align-self: center; color: var(--text-3) }
-.ws-root .pbar-chev .mdot { top: -3px; right: -5px }
-.ws-root .pbar-title .menu { left: 0; right: auto; min-width: 280px }
+.ws-root .pbar-acts .menu { min-width: 280px }
 .ws-root .pbar-menu, .ws-root .pbar-pane, .ws-root .ws-scrim { display: none }
 .ws-root .pbar-acts { flex: none; margin-left: auto; display: flex; align-items: center; gap: 4px }
 .ws-root .pbar .icon-btn { position: relative; width: 44px; height: 44px; border: 0; border-radius: 22px }
@@ -601,6 +598,8 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ws-box .composer:focus-within { outline: 0; border-color: var(--border-strong) }
 .ws-root .ws-box .composer textarea { min-height: 44px; padding: 11px 12px; font-size: 16px }
 .ws-root .composer textarea { flex: 1; min-width: 0; min-height: 56px; border: 0; background: transparent; resize: none; padding: 10px 8px; font-family: inherit; font-size: 15px; line-height: 22px; color: var(--text) }
+/* The box grows with its text, then scrolls; lines fade out at the edges instead of being cut by the border */
+.ws-root .composer textarea { flex: none; max-height: min(40vh, 320px); overflow-y: auto; mask-image: linear-gradient(transparent, #000 10px, #000 calc(100% - 10px), transparent) }
 .ws-root .composer textarea:focus { outline: none }
 .ws-root .composer textarea::placeholder { color: var(--text-3) }
 .ws-root .composer textarea[disabled] { cursor: not-allowed }
@@ -663,6 +662,13 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .psheet { padding: 12px }
 .ws-root .psheet .msep { margin: 2px 0 }
 .ws-root .mhelp { margin: 0 0 2px; font-size: 13px; line-height: 19px; color: var(--text-3) }
+.ws-root .shipseg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--sunken) }
+.ws-root .shipseg button { flex: 1; min-height: 36px; padding: 0 8px; border: 0; border-radius: 9px; background: transparent; color: var(--text-2); font-family: inherit; font-size: 13.5px; cursor: pointer }
+.ws-root .shipseg button[aria-checked="true"] { background: var(--raised); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow) }
+.ws-root .shipseg button:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px }
+.ws-root .hordepick { display: flex; flex-direction: column; gap: 6px }
+.ws-root .horderow { display: flex; align-items: flex-start; gap: 12px; font-size: 14.5px; cursor: pointer }
+.ws-root .horderow input { flex: none; width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent-text) }
 .ws-root .psheet .mi { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-family: inherit; font-size: 14.5px; text-align: left; cursor: pointer }
 .ws-root .psheet .mi:hover { background: var(--surface) }
 .ws-root .psheet .mi > [class*="hero-"] { color: var(--text-2) }
@@ -725,6 +731,9 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .ws-url { flex: 1 1 160px; min-width: 0; height: 36px; background: var(--surface); display: flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: 18px; font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden }
 .ws-root .ws-prev-body { flex: 1; min-height: 0; position: relative; overflow: hidden; border-radius: 14px; background: var(--surface) }
 .ws-root .ws-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; border-radius: 14px; background: #fff }
+/* An internal app full size (BurrowWeb.AppLive) */
+.ap-root .ws-prev-body { margin: 0 12px 12px }
+.ap-root .pbar .btn { flex: none }
 /* Wide screens can show the app as a phone: a 390×844 screen in a bezel, in
    the middle of the pane (shorter when the pane is) */
 .ws-root .vbar .vphone[aria-pressed="true"] { background: var(--sunken); color: var(--text) }
@@ -802,6 +811,109 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
 .ws-root .blink button { padding: 0; border: 0; background: none; font: inherit; color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 4px; cursor: pointer }
 @media (prefers-reduced-motion: reduce) { .ws-root .ddot, .ws-root .shim { animation: none } }
 @media (max-width: 960px) { .ws-root .side { grid-template-columns: 1fr } .ws-root .dgroup, .ws-root .dhead { padding-left: 12px; padding-right: 12px } }
+
+/* A horde in its chat (Burrow.Hordes): the plan, one tile per peon, what needs you */
+.ws-root .horde { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: 18px; background: var(--surface) }
+.ws-root .horde-h { display: flex; align-items: baseline; gap: 8px; font-size: 13px }
+.ws-root .horde-h .t, .ws-root .horde .t { font-size: 15px; font-weight: 600 }
+.ws-root .horde .muted { font-size: 12.5px }
+.ws-root .horde .big { font-size: 16px; font-weight: 600 }
+.ws-root .horde-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 0 2px; font-size: 13px; color: var(--text-2) }
+.ws-root .horde-meta .acc { color: var(--accent-text); font-weight: 500 }
+.ws-root .horde-meta .atonce { display: inline-flex; align-items: center; gap: 2px }
+.ws-root .horde-meta .atonce b { min-width: 20px; text-align: center; color: var(--text) }
+.ws-root .horde-meta .icon-btn { width: 32px; height: 32px; border: 0; border-radius: 16px }
+.ws-root .horde-acts { display: flex; flex-wrap: wrap; gap: 6px }
+.ws-root .horde-acts .chip, .ws-root .calert .chip { background: var(--raised) }
+.ws-root .cprog { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden }
+.ws-root .cprog > span { display: block; height: 100% }
+.ws-root .tiles { display: grid; grid-template-columns: repeat(auto-fill, 30px); gap: 7px; justify-content: space-between }
+.ws-root .tile { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); cursor: pointer }
+.ws-root .tile::before, .ws-root .tile::after { content: ""; width: 4px; height: 4px; margin-top: -5px; border-radius: 50%; background: currentColor }
+.ws-root .tile:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root .tile.sel { outline: 2px solid var(--text); outline-offset: 2px }
+.ws-root .s-work { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent-text) }
+.ws-root .tile.s-work::before, .ws-root .tile.s-work::after { animation: bw-pulse 1.4s ease-in-out infinite }
+.ws-root .s-check { background: var(--raised); box-shadow: inset 0 0 0 2px var(--text-3); color: var(--text-2) }
+.ws-root .s-fix { background: var(--rust); color: #2A120A }
+.ws-root .s-need { background: var(--warn); color: #2A1C00 }
+.ws-root .s-held { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); color: var(--accent) }
+.ws-root .s-ship { background: var(--accent); color: var(--accent-ink) }
+.ws-root .s-queue { background: transparent; box-shadow: inset 0 0 0 1.5px var(--border-strong); color: var(--text-3) }
+.ws-root .s-skip { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--text-3) }
+.ws-root .s-block { background: transparent; box-shadow: inset 0 0 0 1.5px var(--border-strong); color: var(--text-3); opacity: .55 }
+.ws-root .tile.s-block { background-image: repeating-linear-gradient(135deg, transparent 0 4px, var(--sunken) 4px 6px) }
+.ws-root .tile.dep { outline: 2px solid var(--accent-text); outline-offset: 2px }
+.ws-root .tile.waits { outline: 2px dashed var(--text-3); outline-offset: 2px }
+.ws-root .hwave { display: flex; flex-direction: column; gap: 2px }
+.ws-root .hwave-h { padding: 0 2px; font-size: 12.5px; font-weight: 600; color: var(--text-2) }
+.ws-root .htasks { margin: 0; padding: 0 2px 4px; list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px }
+.ws-root .htasks li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; line-height: 21px }
+.ws-root .htasks .think { margin-left: 8px; font-size: 11.5px; color: var(--text-3) }
+.ws-root .hwaves { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--text-3) }
+.ws-root .hwaves .hw b { color: var(--text-2); font-weight: 600 }
+.ws-root .hwaves .hw.ok b { color: var(--ok) }
+.ws-root .trows { display: flex; flex-direction: column }
+.ws-root .trow { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text); font-family: inherit; font-size: 13.5px; text-align: left; cursor: pointer }
+.ws-root .trow:hover { background: var(--surface) }
+.ws-root .tile.s-skip::before, .ws-root .tile.s-skip::after { width: 5px; height: 2px; margin-top: -4px; border-radius: 1px }
+.ws-root .cprog > span { box-shadow: none }
+.ws-root .cprog .s-work { background: var(--accent-soft) }
+.ws-root .cprog .s-check { background: var(--text-3) }
+.ws-root .cprog .s-held, .ws-root .cprog .s-queue { background: var(--border-strong) }
+.ws-root .mt { display: inline-block; flex: none; width: 10px; height: 10px; border-radius: 3px }
+.ws-root .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--text-2) }
+.ws-root .legend > span { display: inline-flex; align-items: center; gap: 6px }
+.ws-root .calert { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 16px; box-shadow: inset 0 0 0 1px var(--border-strong); font-size: 14.5px; line-height: 21px }
+.ws-root .calert p { margin: 0 }
+.ws-root .calert.red { box-shadow: inset 0 0 0 1px var(--rust) }
+.ws-root .calert.need { box-shadow: inset 0 0 0 1px var(--warn) }
+.ws-root .ah { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600 }
+.ws-root .calert.red .ah { color: var(--rust) }
+.ws-root .calert.need .ah { color: var(--warn) }
+.ws-root .ah.ok { color: var(--ok) }
+.ws-root .skiprow { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--raised); font-size: 13.5px }
+.ws-root .horde-bar { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 2px 6px 8px }
+.ws-root .horde-bar .ctext { flex: 1; min-width: 0; font-size: 13px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.ws-root .horde-bar .ctext b { color: var(--text); font-weight: 600 }
+.ws-root .horde-bar .icon-btn { width: 40px; height: 40px; border: 0; border-radius: 20px }
+.ws-root .pdet .ov-in { max-width: 640px; gap: 18px }
+.ws-root .pdet-h { display: flex; align-items: center; gap: 2px }
+.ws-root .pdet-h .icon-btn { width: 40px; height: 40px; border: 0; border-radius: 20px }
+.ws-root .pdet-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; color: var(--text-3) }
+.ws-root .pdet-t .st { display: inline-flex; align-items: center; gap: 6px; font-size: 13px }
+.ws-root .pdet .h { margin-bottom: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3) }
+.ws-root .ptask { margin: 0; font-size: 14px; line-height: 21px; color: var(--text-2); white-space: pre-wrap }
+.ws-root .pdet .out { max-height: 220px; overflow-y: auto }
+.ws-root .hintf { display: flex; flex-direction: column; gap: 6px }
+.ws-root .hintrow { display: flex; align-items: center; gap: 6px }
+.ws-root .hintrow .field { flex: 1; min-width: 0 }
+.ws-root .plog { display: flex; flex-direction: column }
+.ws-root .lg { display: grid; grid-template-columns: 34px 8px minmax(0, 1fr); column-gap: 10px; padding: 6px 0; font-size: 13.5px; line-height: 20px }
+.ws-root .lg .mono { font-size: 11.5px }
+.ws-root .ldot { width: 8px; height: 8px; margin-top: 6px; border-radius: 4px; background: var(--text-3) }
+.ws-root .ldot.ok { background: var(--accent) }
+.ws-root .ldot.bad { background: var(--rust) }
+.ws-root .lnk { padding: 0; border: 0; background: none; color: var(--text-2); font-family: inherit; font-size: 12.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer }
+.ws-root .readyrow { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 12px; border-radius: 12px; background: var(--raised); font-size: 13.5px }
+.ws-root .bigger > summary { list-style: none; width: fit-content }
+.ws-root .bigger > summary::-webkit-details-marker { display: none }
+.ws-root .bigger[open] > summary { margin-bottom: 8px }
+.ws-root .bigger .pick { min-width: 0 }
+.ws-root .cchange { display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 16px; background: var(--surface) }
+.ws-root .cch { display: flex; align-items: baseline; gap: 10px; font-size: 14.5px; font-weight: 500 }
+.ws-root .cch .st { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 400 }
+.ws-root .cfile > summary { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 8px; border-radius: 10px; font-size: 12.5px; cursor: pointer; list-style: none }
+.ws-root .cfile > summary::-webkit-details-marker { display: none }
+.ws-root .cfile > summary:hover { background: var(--raised) }
+.ws-root .cfile > summary .truncate { flex: 1; min-width: 0 }
+.ws-root .cfile .add { color: var(--ok) }
+.ws-root .cfile .del { color: var(--err) }
+.ws-root .diff { margin: 4px 0 8px; padding: 10px 0; border-radius: 10px; background: var(--raised); font-size: 12px; line-height: 18px; overflow-x: auto; max-height: 480px; overflow-y: auto }
+.ws-root .diff > span { display: block; padding: 0 12px; white-space: pre }
+.ws-root .diff > .add { background: var(--ok-soft); color: var(--text) }
+.ws-root .diff > .del { background: var(--err-soft); color: var(--text) }
+@media (prefers-reduced-motion: reduce) { .ws-root .tile.s-work::before, .ws-root .tile.s-work::after { animation: none } }
 
 /* Deploys and usage, in place of the preview */
 .ws-root .ov { flex: 1; min-height: 0; overflow: auto; background: var(--bg) }
@@ -951,12 +1063,12 @@ textarea.field { height: auto; min-height: 96px; padding: 10px 12px }
   /* The bar: ≡, the title in the middle, the preview */
   .ws-root .pbar { height: 56px; gap: 4px; padding: 0 6px }
   .ws-root .pbar-menu, .ws-root .pbar-pane { display: inline-flex }
-  .ws-root .pbar-wide, .ws-root .pbar-chev { display: none }
+  .ws-root .pbar-wide { display: none }
   .ws-root .pbar-title { justify-content: center }
   .ws-root .pbar-ttl { flex-direction: column; align-items: center; gap: 0; padding: 2px 8px }
   .ws-root .pbar-ttl .pbar-name { max-width: 100% }
   .ws-root .pbar-meta { max-width: 100%; font-size: 12px; line-height: 16px }
-  .ws-root .pbar-title .menu { position: fixed; top: 52px; left: 8px; right: 8px; min-width: 0 }
+  .ws-root .pbar-acts .menu { position: fixed; top: 52px; left: 8px; right: 8px; min-width: 0 }
   /* The preview, full screen */
   .ws-root .vbar { flex-wrap: wrap; height: auto; padding: 6px 6px 8px; row-gap: 4px }
   .ws-root .vback { display: inline-flex }

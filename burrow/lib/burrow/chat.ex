@@ -70,6 +70,7 @@ defmodule Burrow.Chat do
   # The same for the design agent, which can't run tk: what it is for.
   @design_hint "\n\n(Peon: you are in Design mode. Draw what this asks as boards: self-contained HTML files under `design/`, one per page, in the app's look. Feedback changes a board's file in place, never a new file; takes only when asked for. You can't change the app or run commands here: no queue, no submit. The user switches to Build when the boards are right.)"
   # Any wording of it, for messages sent with an earlier one
+  @horde_mode_was ~r/\n\n\(Peon: (?:crew|horde) mode is on\b.*\)\z/s
   @design_hint_was ~r/\n\n\(Peon: you are in Design mode\..*\)\z/s
 
   ## API
@@ -97,6 +98,8 @@ defmodule Burrow.Chat do
   it; "/goal clear" (or just "/goal") drops it and returns
   `{:ok, :no_turn}`. "/compact" sums the conversation up for the agent to go
   on from; "/clear" starts it over (`{:ok, :cleared}`), files and all kept.
+  "/horde <task>" turns horde mode on and asks for the job as a tk queue
+  the user runs as a horde (`Burrow.Hordes`).
   """
   def send_message(project, id, text, images \\ []) do
     with {:ok, _info} <- ensure_started(project, id), do: call(id, {:prompt, text, images})
@@ -112,6 +115,15 @@ defmodule Burrow.Chat do
 
   @doc "Takes back a message the agent hasn't got yet (`inbox` in `info/1`)."
   def cancel_inbox(id, inbox_id), do: call(id, {:cancel_inbox, inbox_id})
+
+  @doc "Starts the preview of a chat that waits for it to be opened (a horde's peon)."
+  def open_preview(id), do: call(id, :open_preview)
+
+  @doc """
+  Stops the chat's agent and preview, saying `why` (`{:stopped, why}`); its
+  checkout stays. A message starts it again.
+  """
+  def stop(id, why), do: call(id, {:stop, why})
 
   @doc "Stops the agent's turn; a goal ends with it."
   def interrupt(id), do: call(id, :interrupt)
@@ -550,6 +562,14 @@ defmodule Burrow.Chat do
     {:reply, %{used_at: state.used_at, stoppable?: stoppable?, busy?: state.busy?}, state}
   end
 
+  defp on_call({:stop, why}, _from, state), do: {:stop, :normal, :ok, %{state | stopped: why}}
+
+  defp on_call(:open_preview, _from, state) do
+    if state.preview.status == :off and not designing?(state),
+      do: {:reply, :ok, state |> start_preview() |> broadcast_status()},
+      else: {:reply, :ok, state}
+  end
+
   defp on_call(:delete, _from, state) do
     if state.session_id && state.agent.status == :ready,
       do: Client.delete_session(conn(state), state.session_id)
@@ -811,12 +831,16 @@ defmodule Burrow.Chat do
   ## Containers
 
   # A chat in Design draws boards: its preview waits until it leaves Design
-  # (agent_picked/1).
+  # (agent_picked/1). A horde's peon only needs its checks: its preview waits
+  # until someone opens it (open_preview/1).
   defp boot_preview(state) do
-    if designing?(state),
+    if designing?(state) or peon?(state),
       do: put_in(state.preview.status, :off),
       else: start_preview(state)
   end
+
+  defp peon?(%{repo: true}), do: false
+  defp peon?(state), do: match?(%{horde_id: id} when id != nil, Chats.get(state.id))
 
   defp designing?(%{repo: true}), do: false
   defp designing?(state), do: agent(state) == "design"
@@ -1174,7 +1198,10 @@ defmodule Burrow.Chat do
 
     outcome = outcome(raw, state.prompted_at)
 
-    case KeepGoing.after_turn(outcome, state.tickets, state.goal, state.run) do
+    # In horde mode the queue is the horde's to run (`Burrow.Hordes`), not the agent's.
+    tickets = if horde_mode?(state), do: [], else: state.tickets
+
+    case KeepGoing.after_turn(outcome, tickets, state.goal, state.run) do
       {:continue, text, run} -> keep_going(%{state | run: run}, text, "queue")
       :judge -> judge(state)
       {:stop, note} -> state |> set_goal(nil) |> hand_back({:warn, note})
@@ -1476,6 +1503,15 @@ defmodule Burrow.Chat do
       end
 
     case name && Enum.find(slash_commands_of(state), &(&1.name == name)) do
+      # "/horde <task>": the chat runs its queue as a horde from now on.
+      %{name: "horde"} ->
+        chat = Chats.get(state.id)
+        Chats.pick_horde(chat, chat.horde_at_once || 4)
+
+        with {:ok, _} <-
+               Client.prompt(conn(state), state.session_id, args <> horde_mode(state), [], files),
+             do: {:ok, text}
+
       %{kind: :command} ->
         with :ok <- Client.command(conn(state), state.session_id, name, args), do: {:ok, text}
 
@@ -1495,20 +1531,41 @@ defmodule Burrow.Chat do
   # What goes after the user's message for the chat's agent: Plan has
   # opencode's own.
   defp hint(state) do
-    case agent(state) do
-      "design" -> @design_hint
-      "build" when state.tk? -> @queue_hint
+    case {agent(state), horde_mode(state)} do
+      {"design", _} -> @design_hint
+      {"build", ""} when state.tk? -> @queue_hint
+      {"build", horde} -> horde
       _ -> ""
     end
   end
 
-  # Peon's own "/goal", "/compact" and "/clear" first; commands win over
-  # skills of the same name, as in opencode's own UI.
-  defp slash_commands_of(state) do
-    commands = with({:ok, list} <- Client.commands(conn(state)), do: list, else: (_ -> []))
-    skills = with({:ok, list} <- Client.skills(conn(state)), do: list, else: (_ -> []))
-    taken = MapSet.new(commands, & &1.name)
+  # "Split into a horde" in the chat's + menu (`Burrow.Chats.pick_horde/2`):
+  # Peon writes big jobs as a tk queue with dependencies, which the user runs
+  # as a horde (`Burrow.Hordes.run_queue/2`). Never for a horde's own peons.
+  defp horde_mode(%{repo: true}), do: ""
 
+  defp horde_mode(state) do
+    if horde_mode?(state),
+      do:
+        "\n\n(Peon: horde mode is on: your queue runs as a horde, a peon per ticket at " <>
+          "the same time. If this asks for more than a single change, write the whole job in " <>
+          "tk, one ticket per thing that can ship on its own: `tk create \"title\" -d \"what " <>
+          "to change, where, what done looks like\" --tags think:low|think:medium|think:high`, " <>
+          "and `tk dep <id> <needed-id>` where one needs another to ship first. Then end your " <>
+          "turn without starting them: the user starts the horde. A single change you just do.)",
+      else: ""
+  end
+
+  defp horde_mode?(%{repo: true}), do: false
+
+  defp horde_mode?(state),
+    do: match?(%{horde_at_once: n, horde_id: nil} when is_integer(n), Chats.get(state.id))
+
+  @doc """
+  Peon's own commands, known before the agent runs: "/goal", "/compact",
+  "/clear" and, where hordes can ship (not a repo project), "/horde".
+  """
+  def peon_commands(repo?) do
     [
       %{
         name: "goal",
@@ -1522,6 +1579,25 @@ defmodule Burrow.Chat do
       },
       %{name: "clear", description: "Start the conversation over; the files stay", kind: :peon}
     ] ++
+      if repo?,
+        do: [],
+        else: [
+          %{
+            name: "horde",
+            description: "Split a big task into peons that work and ship at once",
+            kind: :peon
+          }
+        ]
+  end
+
+  # Peon's own first; commands win over skills of the same name, as in
+  # opencode's own UI.
+  defp slash_commands_of(state) do
+    commands = with({:ok, list} <- Client.commands(conn(state)), do: list, else: (_ -> []))
+    skills = with({:ok, list} <- Client.skills(conn(state)), do: list, else: (_ -> []))
+    taken = MapSet.new(commands, & &1.name)
+
+    peon_commands(state.repo) ++
       Enum.map(commands, &Map.put(&1, :kind, :command)) ++
       for skill <- skills,
           not MapSet.member?(taken, skill.name),
@@ -1561,6 +1637,7 @@ defmodule Burrow.Chat do
     text =
       (m["text"] || get_in(m, ["payload", "text"]) || "")
       |> String.replace_suffix(@queue_hint, "")
+      |> String.replace(@horde_mode_was, "")
       |> String.replace(@design_hint_was, "")
 
     skills = m["skills"] || get_in(m, ["payload", "skills"]) || []

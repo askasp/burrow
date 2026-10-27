@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+# Burrow's preview router. The tunnel sends every *.{{ burrow_domain }} here;
+# peon-<port> goes to that loopback port when it is one Burrow hands out.
+# Burrow first says who may see it (BurrowWeb.PreviewPass): a prod app
+# everyone, previews and staging only people logged in to Burrow, or with a
+# chat's key in the host (peon-<port>-<key>).
+{
+	admin off
+	auto_https off
+}
+
+http://:{{ burrow_router_port }} {
+	bind 127.0.0.1
+	@port header_regexp port Host ^peon-({{ burrow_router_ports_regex }})(?:-([0-9a-f]{20}))?\.{{ burrow_domain | regex_escape }}$
+	handle @port {
+		forward_auth 127.0.0.1:{{ burrow_port }} {
+			uri /previews/auth?port={re.port.1}&key={re.port.2}
+			# Keep the tunnel's X-Forwarded-Proto (https): Burrow in prod
+			# redirects plain http, and the browser would loop.
+			trusted_proxies 127.0.0.1/32 ::1/128
+		}
+		reverse_proxy 127.0.0.1:{re.port.1} {
+			# Dev servers stream (SSE, HMR); pass chunks straight through.
+			flush_interval -1
+			# Only the tunnel connects, from loopback. Keep its
+			# X-Forwarded-Proto (https), or apps that force TLS redirect forever.
+			trusted_proxies 127.0.0.1/32 ::1/128
+			# The app never sees Burrow's preview pass, only its empty name
+			# (this Caddy drops an empty replacement).
+			header_up Cookie "burrow_preview=[^;]*" "burrow_preview="
+		}
+	}
+	handle {
+		respond "No such preview" 404
+	}
+}

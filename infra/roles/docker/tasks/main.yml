@@ -1,0 +1,27 @@
+---
+- name: Install Docker
+  ansible.builtin.apt:
+    name: [docker.io, docker-buildx]
+    state: present
+
+# live-restore: containers (customers' running apps) keep running when the
+# daemon restarts, e.g. for a security update. Logs are capped per container.
+- name: Configure the Docker daemon
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "live-restore": true,
+        "log-driver": "local",
+        "log-opts": {"max-size": "10m", "max-file": "3"}
+      }
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart docker
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true

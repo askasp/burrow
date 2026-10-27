@@ -114,7 +114,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
   end
 
   describe "chats" do
-    test "New chat never blocks: one empty chat, and four open ones hold its first message", %{
+    test "New chat never blocks: one empty chat, however many are open", %{
       conn: conn,
       user: user,
       project: project
@@ -126,19 +126,15 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       for _ <- 1..2, do: view |> element("#new-chat") |> render_click()
       assert [^empty] = Chats.list(project.id)
 
-      for _ <- 1..Chats.max(), do: Chats.create(project.id, "Busy", user)
+      for _ <- 1..5, do: Chats.create(project.id, "Busy", user)
       refute has_element?(view, "#new-chat[disabled]")
       view |> element("#new-chat") |> render_click()
       assert_patched(view, ~p"/projects/#{project.id}/c/#{empty.id}")
 
-      html = view |> element("#composer") |> render_submit(%{"text" => "Add a page"})
-      assert html =~ "You have 4 chats with open changes"
-      refute Chats.get(empty.id).started_at
-
       # Closing an empty chat deletes it.
       assert has_element?(view, "#drawer-edit")
       view |> element("#chat-#{empty.id} .cx") |> render_click()
-      assert_eventually(fn -> length(Chats.list(project.id)) == Chats.max() end)
+      assert_eventually(fn -> length(Chats.list(project.id)) == 5 end)
     end
 
     test "the chat box picks the model; a new chat starts with it", %{
@@ -281,7 +277,7 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       refute has_element?(view, "#chat-#{follow.id}", "Follow-up")
       assert Chats.get(follow.id).follows == nil
 
-      # Four open chats don't block a new one: its first message waits instead.
+      # Open chats don't block a new one.
       for _ <- 1..4, do: Chats.create(project.id, "Busy", "aksel")
       render_patch(view, ~p"/projects/#{project.id}/c/#{chat.id}")
       refute has_element?(view, "#chat-done button[disabled]")
@@ -560,6 +556,14 @@ defmodule BurrowWeb.WorkspaceLiveTest do
       assert has_element?(view, "#view-menu button", "staging")
     end
 
+    test "the projects page's menu opens deploys and usage here", %{conn: conn, project: project} do
+      {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/projects/#{project.id}?open=deploys")
+      assert to =~ ~r"^/projects/#{project.id}/c/[a-z0-9]+\?open=deploys$"
+      {:ok, view, _html} = live(conn, to)
+      assert has_element?(view, "#overview-btn", "Back to preview")
+      assert has_element?(view, "#overview .env .eyebrow", "staging")
+    end
+
     test "staging shows in the pane; prod only opens in a new tab", %{
       conn: conn,
       project: project
@@ -573,6 +577,229 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
       send(view.pid, {:env, "prod", env_info("prod", 1)})
       assert has_element?(view, "#view-prod[href='https://prod.test'][target=_blank]")
+    end
+  end
+
+  describe "an internal app" do
+    setup %{user: user, tmp_dir: dir} do
+      {:ok, ops} = Projects.create(Scope.for_user(user), %{"name" => "Ops", "auth" => "burrow"})
+      %{ops: start_project!(ops, dir)}
+    end
+
+    test "goes dev, then live: no staging, no prod, no Ship; live shows through Burrow", %{
+      conn: conn,
+      ops: ops
+    } do
+      chat = Chats.create(ops.id, "Say hello", "aksel")
+      change = land!(ops, chat, "lib/app.ex", "defmodule App do def hi, do: :hi end\n")
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{ops.id}/c/#{chat.id}")
+      assert has_element?(view, ".pbar-meta", "##{change.id} going live")
+      assert has_element?(view, ".ws-cs .flow", "live")
+      refute has_element?(view, ".ws-cs .flow", "staging")
+      assert has_element?(view, "#more-menu .menu-meta", "ops · live —")
+
+      repo = Projects.repo_dir(ops)
+      :ok = Totem.Repo.move_ref(repo, "live", change.id, nil)
+      start_supervised!({Burrow.FakeEnv, {ops.id, "live", env_info("live", change.id)}})
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{ops.id}/c/#{chat.id}")
+      assert has_element?(view, "#chat-done", "##{change.id} is live.")
+      assert has_element?(view, "#chat-#{chat.id} .cst", "Live")
+      refute has_element?(view, ".ws-cs button", "Ship")
+      refute has_element?(view, "#view-prod")
+
+      view |> element("#view-menu button", "live") |> render_click()
+      assert has_element?(view, "iframe.ws-frame[src='/projects/#{ops.id}/app']")
+
+      view |> element("#overview-btn") |> render_click()
+      assert has_element?(view, "#overview .env .eyebrow", "live")
+      refute has_element?(view, "#auto-ship")
+    end
+
+    test "opens full size from the drawer's apps", %{conn: conn, ops: ops, project: project} do
+      {:ok, view, _html} = open(conn, project)
+      assert has_element?(view, "#apps a#app-#{ops.id}[href='/apps/#{ops.id}']", "Ops")
+      refute has_element?(view, "#apps a#app-#{project.id}")
+
+      {:ok, app, _html} = live(conn, ~p"/apps/#{ops.id}")
+      assert has_element?(app, "#app-#{ops.id}[aria-current=page]")
+      assert has_element?(app, "#peek .nm", "Ops")
+      assert has_element?(app, ".ws-prev-empty", "Not live yet")
+
+      send(app.pid, {:env, "live", env_info("live", 2)})
+      assert has_element?(app, "iframe.ws-frame[src='/projects/#{ops.id}/app']")
+    end
+
+    test "a project that isn't internal has no app page", %{conn: conn, project: project} do
+      assert {:error, {:live_redirect, %{to: to}}} = live(conn, ~p"/apps/#{project.id}")
+      assert to == ~p"/projects/#{project.id}"
+    end
+  end
+
+  describe "a horde" do
+    test "the + menu splits big tasks into a horde, this many peons at once", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} = open(conn, project)
+      refute has_element?(view, "#horde-chip")
+      view |> element("#horde-on") |> render_click()
+      assert has_element?(view, "#horde-chip", "Horde · 4")
+      view |> element("#horde-pick button[aria-label='More at once']") |> render_click()
+      assert has_element?(view, "#horde-chip", "Horde · 5")
+      assert has_element?(view, "#horde-pick", "Guardrails")
+      view |> element("#horde-on") |> render_click()
+      refute has_element?(view, "#horde-chip")
+    end
+
+    test "/horde is in the / menu of a new chat, before its agent runs", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} = open(conn, project)
+      view |> form("#composer", %{"text" => "/"}) |> render_change()
+      assert has_element?(view, "#slash-menu", "/goal")
+      view |> form("#composer", %{"text" => "/ho"}) |> render_change()
+      assert has_element?(view, "#slash-menu .slash-item", "/horde")
+      refute has_element?(view, "#slash-menu", "/goal")
+      view |> element("#slash-menu button", "/horde") |> render_click()
+      refute has_element?(view, "#slash-menu")
+    end
+
+    test "the queue runs as a horde: a tile per ticket, the blocked ones wait", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      lead = Chats.create(project.id, "Capitalize", user)
+      dir = Chat.tickets_dir(project, lead.id)
+      {:ok, a} = Burrow.Tickets.create(dir, "Do a", "Capitalize lib/a.ex")
+      {:ok, _b} = Burrow.Tickets.create(dir, "Do b", "Capitalize lib/b.ex")
+      tk(dir, ["dep", Enum.at(Burrow.Tickets.list(dir), 1).id, a])
+      Chats.pick_horde(lead, 1)
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{lead.id}")
+      assert has_element?(view, "#horde-queue", "2 tk tickets · 2 waves")
+      assert has_element?(view, "#horde-queue .htasks", "after #{a}")
+
+      view |> element("#horde-start") |> render_click()
+      render_async(view)
+      refute has_element?(view, "#horde-queue")
+      assert has_element?(view, "#horde #peon-1.s-work")
+      assert has_element?(view, "#horde #peon-2.s-block")
+      assert has_element?(view, "#horde-bar", "1 working")
+      assert has_element?(view, "#drawer", "Horde · 0/2 shipped")
+      # The peons' chats stay out of the drawer.
+      refute has_element?(view, "#drawer", "Do a")
+
+      view |> element("#peon-2") |> render_click()
+      assert has_element?(view, "#peon-detail", "Blocked.")
+      assert has_element?(view, "#peon-detail .trows", "Do a")
+      assert has_element?(view, "#horde #peon-1.dep")
+
+      view |> element("#peon-1") |> render_click()
+      assert has_element?(view, "#peon-detail h2", a)
+      assert has_element?(view, "#peon-detail .ptask", "Capitalize lib/a.ex")
+
+      # A peon's chat opens from the horde; the drawer still marks the horde's chat.
+      view |> element("#peon-detail a", "Open its chat") |> render_click()
+      assert has_element?(view, "#peon-of", "Back to the horde")
+      refute has_element?(view, "#drawer", "Do a")
+      assert has_element?(view, "#drawer .crow[data-on=true]", "Capitalize")
+      view |> element("#peon-of a", "Back to the horde") |> render_click()
+      view |> element("#peon-1") |> render_click()
+      view |> element("#peon-detail button", "Stop this peon") |> render_click()
+      assert has_element?(view, "#peon-detail", "Skipped")
+      # Skipped, it lets what waits on it go ahead.
+      assert has_element?(view, "#horde #peon-2.s-work")
+
+      view |> element("#horde-stop") |> render_click()
+      view |> element("#stop-horde button", "Stop, keep what shipped") |> render_click()
+      assert has_element?(view, "#horde-stopped")
+      refute has_element?(view, "#horde-bar")
+    end
+
+    test "its changes, and errors after a ship that pause it", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      lead = Chats.create(project.id, "Capitalize", user)
+      tasks = [%{"title" => "Do a", "task" => "a"}, %{"title" => "Do b", "task" => "b"}]
+      {:ok, horde} = Burrow.Hordes.plan(project, lead.id, tasks, 2)
+      horde = Burrow.Hordes.start(project, horde)
+      first = Enum.find(horde.peons, &(&1.n == 1))
+
+      change =
+        land!(project, Chats.get(first.chat_id), "lib/app.ex", "defmodule App do :ok end\n")
+
+      Burrow.Hordes.drafted(project, first.chat_id, "landed")
+
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{lead.id}")
+      view |> element("#horde button", "See the changes") |> render_click()
+      assert has_element?(view, "#horde-changes .cch", "##{change.id}")
+      assert has_element?(view, "#horde-changes .cfile", "lib/app.ex")
+      view |> element("#horde-changes button", "Horde") |> render_click()
+      refute has_element?(view, "#horde-changes")
+
+      incident =
+        Burrow.Repo.insert!(%Burrow.Incidents{
+          project_id: project.id,
+          env: "staging",
+          fingerprint: "boom",
+          title: "RuntimeError: boom",
+          change_id: change.id,
+          last_seen_at: DateTime.utc_now(:second)
+        })
+
+      # A stuck peon retries on another model.
+      Burrow.Hordes.idle(project, Enum.find(horde.peons, &(&1.n == 2)).chat_id)
+      view |> element("#horde-stuck button", "Help it") |> render_click()
+      assert has_element?(view, "#peon-detail", "Stopped without shipping")
+
+      view
+      |> form("#bigger-form", %{"model" => "openai/gpt-test"})
+      |> render_submit()
+
+      peon = Enum.find(Burrow.Hordes.get!(horde.id).peons, &(&1.n == 2))
+      assert peon.status == "working"
+      assert Chats.get(peon.chat_id).model == "openai/gpt-test"
+
+      Burrow.Hordes.errors(project, incident)
+      assert has_element?(view, "#horde-errors", "RuntimeError: boom")
+      assert has_element?(view, "#horde-errors button", "Revert ##{change.id} now")
+      view |> element("#horde-errors button", "Resume anyway") |> render_click()
+      refute has_element?(view, "#horde-errors")
+    end
+  end
+
+  describe "shipping" do
+    test "the + menu picks review; a passed change then waits for Merge", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} = open(conn, project)
+      refute has_element?(view, "#shipping-chip")
+      view |> element("#shipping-pick button", "Review") |> render_click()
+      assert has_element?(view, "#shipping-chip", "Review")
+      assert has_element?(view, "#shipping-pick button[aria-checked=true]", "Review")
+
+      chat_id = view |> render() |> then(&Regex.run(~r"/c/([a-z0-9]+)", &1)) |> List.last()
+      repo = Projects.repo_dir(project)
+      Burrow.Workspace.reset(repo, Chat.workspace_dir(project, chat_id), 1)
+
+      {:ok, _} =
+        Totem.Repo.put_draft(repo, chat_id, Totem.Repo.ref(repo, "main"), [{"lib/x.ex", "x"}],
+          intent: "Add x"
+        )
+
+      Totem.Repo.update_draft(repo, chat_id, status: "held")
+      {:ok, view, _html} = live(conn, ~p"/projects/#{project.id}/c/#{chat_id}")
+      assert has_element?(view, ".ws-cs .st", "ready to merge")
+      view |> element("#merge-btn") |> render_click()
+      assert render(view) =~ "Merged as #2."
+      assert Totem.Repo.ref(repo, "main") == 2
     end
   end
 
@@ -842,5 +1069,11 @@ defmodule BurrowWeb.WorkspaceLiveTest do
 
     {:ok, cs} = Store.set_status(cs.id, "passed", %{"steps" => []})
     cs
+  end
+
+  defp tk(dir, args) do
+    tk = Application.app_dir(:burrow, "priv/tk/tk")
+    {out, 0} = System.cmd("bash", [tk | args], cd: Path.dirname(dir), env: [{"TICKETS_DIR", dir}])
+    String.trim(out)
   end
 end

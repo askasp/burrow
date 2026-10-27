@@ -3,11 +3,13 @@ defmodule BurrowWeb.LoginLive.Index do
   Logins, for admins: sign-ups are closed, so an admin makes an account for
   someone here and sends them what the page shows (where to log in, the
   email, a new password). Burrow mails nothing, so the admin passes it on.
+  Admins also delete others' logins here (`Burrow.Accounts.delete_user/2`).
   """
 
   use BurrowWeb, :live_view
 
   alias Burrow.Accounts
+  alias BurrowWeb.UserAuth
 
   @impl true
   def mount(_params, _session, socket) do
@@ -44,6 +46,26 @@ defmodule BurrowWeb.LoginLive.Index do
 
       {:error, :not_admin} ->
         {:noreply, put_flash(socket, :error, "Only admins make logins.")}
+    end
+  end
+
+  def handle_event("delete", %{"id" => id}, socket) do
+    user = Accounts.get_user!(id)
+
+    case Accounts.delete_user(socket.assigns.current_scope.user, user) do
+      {:ok, {user, tokens}} ->
+        UserAuth.disconnect_sessions(tokens)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Deleted #{user.email}.")
+         |> assign(users: Accounts.list_users())}
+
+      {:error, :self} ->
+        {:noreply, put_flash(socket, :error, "You can't delete your own login.")}
+
+      {:error, :not_admin} ->
+        {:noreply, put_flash(socket, :error, "Only admins delete logins.")}
     end
   end
 
@@ -115,6 +137,18 @@ defmodule BurrowWeb.LoginLive.Index do
             <span class="mono text-[12px] text-[var(--text-3)]">
               since {Calendar.strftime(u.inserted_at, "%Y-%m-%d")}
             </span>
+            <button
+              :if={u.id != @current_scope.user.id}
+              id={"delete-user-#{u.id}"}
+              type="button"
+              class="icon-btn sm"
+              aria-label={"Delete #{u.email}"}
+              phx-click="delete"
+              phx-value-id={u.id}
+              data-confirm={"Delete #{u.email} for good? Their projects shared with a team go to a teammate; their other projects and chats are deleted."}
+            >
+              <.icon name="hero-trash" class="size-4" />
+            </button>
           </li>
         </ul>
       </div>

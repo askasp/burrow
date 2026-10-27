@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Burrow's preview router (peon-<port>.{{ burrow_domain }} to 127.0.0.1:<port>)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User={{ burrow_user }}
+Group={{ burrow_user }}
+ExecStart=/usr/bin/caddy run --adapter caddyfile --config /etc/burrow/router.Caddyfile
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

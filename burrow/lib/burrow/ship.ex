@@ -15,7 +15,10 @@ defmodule Burrow.Ship do
     3. **Stage, ship**: a passed check moves staging to main, and
        `Burrow.Env` loads it. A person presses Ship (`ship/3`) to move prod
        to staging's, or the project's `"auto_ship"` does it once staging
-       runs it healthily.
+       runs it healthily, as does a chat on autopilot for its own change.
+       A chat that ships for review (`Burrow.Chats.pick_shipping/2`) holds
+       its passed change until a person merges it (`land_held/2`). An internal app (`Projects.Project.internal?/1`)
+       has no staging and no prod: a passed check moves its live.
 
   Boards (`Burrow.Design`) skip the checks: a change that is only boards
   lands as it is, from the agent's submit or a person's `submit_design/3`,
@@ -31,7 +34,7 @@ defmodule Burrow.Ship do
 
   require Logger
 
-  alias Burrow.{BuildCache, Chat, Design, Projects, Runs, Sandbox, Workspace}
+  alias Burrow.{BuildCache, Chat, Hordes, Design, Env, Projects, Runs, Sandbox, Workspace}
   alias Totem.Repo
 
   @forbidden ~w(config/runtime.exs AGENTS.md rel/** priv/peon/anonymize.exs)
@@ -65,11 +68,20 @@ defmodule Burrow.Ship do
         else
           draft(project, chat_id, status: "checking", checks: %{})
           {status, steps} = check(project, chat_id, draft)
-          draft(project, chat_id, status: status, checks: %{"steps" => steps})
 
-          if status == "passed",
-            do: project |> land(chat_id) |> landed(:code),
-            else: {failed(steps), true}
+          cond do
+            status != "passed" ->
+              draft(project, chat_id, status: status, checks: %{"steps" => steps})
+              {failed(steps), true}
+
+            hold = hold(project, chat_id) ->
+              draft(project, chat_id, status: "held", checks: %{"steps" => steps})
+              {held(hold), false}
+
+            true ->
+              draft(project, chat_id, status: status, checks: %{"steps" => steps})
+              project |> land(chat_id) |> landed({:code, Env.landing(project)})
+          end
         end
 
       {:error, :no_changes} ->
@@ -148,6 +160,38 @@ defmodule Burrow.Ship do
     end
   end
 
+  # A passed change waits instead of landing: the chat ships for review, or
+  # its horde paused shipping (`Burrow.Hordes`) and it lands when that resumes.
+  defp hold(project, chat_id) do
+    cond do
+      match?(%{shipping: "review"}, Burrow.Chats.get(chat_id)) -> :review
+      Hordes.hold?(project, chat_id) -> :paused
+      true -> nil
+    end
+  end
+
+  defp held(:review),
+    do:
+      "The checks passed. The user reviews the change and merges it; if they want " <>
+        "changes, you get a message here. Your task is done."
+
+  defp held(:paused),
+    do:
+      "The checks passed. Your horde paused shipping, so the change is held and lands " <>
+        "by itself when shipping resumes. Your task is done."
+
+  @doc """
+  Lands a held draft: a person merges it, or its horde resumes shipping. On
+  a conflict its chat is told to merge and submit again.
+  """
+  def land_held(project, chat_id) do
+    with {:error, {:conflict, _}} = error <- land(project, chat_id) do
+      {text, _failed?} = landed(error, :code)
+      tell_chat(project.id, chat_id, text)
+      error
+    end
+  end
+
   defp land(project, chat_id) do
     repo = Projects.repo_dir(project)
 
@@ -169,11 +213,16 @@ defmodule Burrow.Ship do
     end
   end
 
-  defp landed({:ok, change}, :code),
+  defp landed({:ok, change}, {:code, "staging"}),
     do:
       {"It landed on main as ##{change.id}. Main is now tested, built and booted in prod " <>
          "mode; if that fails you get a message here, else it goes to staging and the " <>
          "user ships it to prod.", false}
+
+  defp landed({:ok, change}, {:code, "live"}),
+    do:
+      {"It landed on main as ##{change.id}. Main is now tested, built and booted in prod " <>
+         "mode; if that fails you get a message here, else it goes live by itself.", false}
 
   defp landed({:ok, change}, :design),
     do: {"The boards landed on main as ##{change.id}. Boards are never shipped.", false}
@@ -209,14 +258,14 @@ defmodule Burrow.Ship do
 
   ## Ship, revert
 
-  @doc "Moves prod (a person's say-so) to main's change `id`."
+  @doc "Moves prod (an internal app's live), a person's say-so, to main's change `id`."
   def ship(project, id, actor) do
     repo = Projects.repo_dir(project)
-    current = Repo.ref(repo, "prod")
+    env = Env.live(project)
 
-    with :ok <- Repo.move_ref(repo, "prod", id, current) do
+    with :ok <- Repo.move_ref(repo, env, id, Repo.ref(repo, env)) do
       Logger.info("#{project.slug}: #{actor} ships ##{id}")
-      Projects.broadcast(project.id, "refs", {:ref_moved, "prod", id})
+      Projects.broadcast(project.id, "refs", {:ref_moved, env, id})
     end
   end
 
@@ -228,13 +277,34 @@ defmodule Burrow.Ship do
     end
   end
 
-  @doc "An environment runs `id` healthily: staging passes it on to prod when shipping is automatic."
+  @doc """
+  An environment runs `id` healthily: staging passes it on to prod when
+  shipping is automatic, or when a chat on autopilot (`"pilot"`) waits for it.
+  """
   def healthy(project, "staging", id) do
-    if Projects.settings(project)["auto_ship"] == true, do: ship(project, id, "auto-ship")
+    cond do
+      Projects.settings(project)["auto_ship"] == true -> ship(project, id, "auto-ship")
+      piloted?(project, id) -> ship(project, id, "autopilot")
+      true -> :ok
+    end
+
     :ok
   end
 
   def healthy(_project, _env, _id), do: :ok
+
+  # A change on autopilot landed after prod's and up to `id`.
+  defp piloted?(project, id) do
+    repo = Projects.repo_dir(project)
+    prod = Repo.ref(repo, "prod") || 0
+
+    Enum.any?(Burrow.Chats.piloted(project.id), fn chat_id ->
+      match?(
+        %{change: change} when is_integer(change) and change > prod and change <= id,
+        Repo.draft(repo, chat_id)
+      )
+    end)
+  end
 
   @doc "Prompts a chat's agent (starting it if needed) without waiting for it."
   def tell_chat(_project_id, nil, _text), do: :ok
@@ -369,12 +439,13 @@ defmodule Burrow.Ship do
     end)
   end
 
-  # Main passed: on to staging.
+  # Main passed: on to staging, or straight to an internal app's live.
   defp advance(project, tip) do
     repo = Projects.repo_dir(project)
+    env = Env.landing(project)
 
-    with :ok <- Repo.move_ref(repo, "staging", tip, Repo.ref(repo, "staging")),
-         do: Projects.broadcast(project.id, "refs", {:ref_moved, "staging", tip})
+    with :ok <- Repo.move_ref(repo, env, tip, Repo.ref(repo, env)),
+         do: Projects.broadcast(project.id, "refs", {:ref_moved, env, tip})
   end
 
   @doc false

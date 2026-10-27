@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Back up Burrow nightly
+
+[Timer]
+OnCalendar=*-*-* 03:30
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

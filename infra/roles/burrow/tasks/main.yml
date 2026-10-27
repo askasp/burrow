@@ -1,0 +1,269 @@
+---
+# Burrow from a checkout of burrow_version, built and run with `mix` in prod
+# mode, plus its preview router (Caddy) and its Cloudflare tunnel. Each is a
+# service that restarts on failure and starts at boot.
+
+- name: Install Erlang, Elixir, a C compiler (NIFs) and Caddy
+  ansible.builtin.apt:
+    name: [elixir, erlang-nox, erlang-dev, build-essential, caddy]
+    state: present
+
+# Burrow runs its own Caddy on loopback (burrow-router); the distro's site on :80 isn't used.
+- name: Turn off the distro's Caddy
+  ansible.builtin.systemd:
+    name: caddy
+    state: stopped
+    enabled: false
+
+- name: Make the burrow user
+  # In the docker group: Burrow starts every project container.
+  ansible.builtin.user:
+    name: "{{ burrow_user }}"
+    system: true
+    home: "{{ burrow_home }}"
+    shell: /bin/bash
+    groups: [docker]
+    append: true
+
+- name: Make Burrow's directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ burrow_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ burrow_home }}", owner: "{{ burrow_user }}", mode: "0750" }
+    - { path: "{{ burrow_data_dir }}", owner: "{{ burrow_user }}", mode: "0750" }
+    - { path: "{{ burrow_src }}", owner: "{{ burrow_user }}", mode: "0755" }
+    - { path: /etc/burrow, owner: root, mode: "0750" }
+
+# ----------------------------------------------------------------- opencode
+- name: Check opencode on this computer
+  ansible.builtin.command: "{{ burrow_opencode_src }} --version"
+  delegate_to: localhost
+  become: false
+  register: burrow_local_opencode
+  changed_when: false
+  check_mode: false
+
+- name: Assert it is the pinned version
+  ansible.builtin.assert:
+    that: burrow_opencode_version in burrow_local_opencode.stdout
+    fail_msg: >-
+      {{ burrow_opencode_src }} is {{ burrow_local_opencode.stdout }}, but
+      burrow_opencode_version is {{ burrow_opencode_version }}.
+    quiet: true
+
+- name: Install opencode
+  ansible.builtin.copy:
+    src: "{{ burrow_opencode_src }}"
+    dest: /usr/local/bin/opencode
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart burrow
+
+# ----------------------------------------------------------------- Burrow
+- name: Check out Burrow
+  ansible.builtin.git:
+    repo: "{{ burrow_repo }}"
+    dest: "{{ burrow_src }}"
+    version: "{{ burrow_version }}"
+  become_user: "{{ burrow_user }}"
+  register: burrow_checkout
+
+- name: Make Burrow's secret key, once
+  ansible.builtin.shell: |
+    umask 027
+    printf 'SECRET_KEY_BASE="%s"\n' "$(openssl rand -base64 48 | tr -d '\n')" > /etc/burrow/secret.env
+  args:
+    creates: /etc/burrow/secret.env
+
+- name: Let Burrow read it
+  ansible.builtin.file:
+    path: /etc/burrow/secret.env
+    owner: root
+    group: "{{ burrow_user }}"
+    mode: "0640"
+
+- name: Install Burrow's settings
+  ansible.builtin.template:
+    src: burrow.env.j2
+    dest: /etc/burrow/burrow.env
+    owner: root
+    group: "{{ burrow_user }}"
+    mode: "0640"
+  notify: Restart burrow
+
+- name: Read which commit was built last
+  ansible.builtin.command: cat {{ burrow_home }}/built-commit
+  register: burrow_built
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# The asset tasks load runtime config, so the build sees the same settings
+# as the service. The commit is written last: a failed build runs again.
+- name: Build Burrow
+  ansible.builtin.shell: |
+    set -eu
+    set -a; . /etc/burrow/burrow.env; . /etc/burrow/secret.env; set +a
+    mix local.hex --force --if-missing
+    mix local.rebar --force --if-missing
+    mix deps.get --only prod
+    mix compile
+    mix assets.setup
+    mix assets.deploy
+    echo {{ burrow_checkout.after }} > {{ burrow_home }}/built-commit
+  args:
+    chdir: "{{ burrow_src }}/burrow"
+    executable: /bin/bash
+  become_user: "{{ burrow_user }}"
+  when: burrow_built.stdout != burrow_checkout.after
+  notify: Restart burrow
+
+# ----------------------------------------------------------------- router + tunnel
+- name: Install the preview router's Caddyfile
+  ansible.builtin.template:
+    src: router.Caddyfile.j2
+    dest: /etc/burrow/router.Caddyfile
+    owner: root
+    group: "{{ burrow_user }}"
+    mode: "0640"
+    validate: caddy validate --adapter caddyfile --config %s
+  notify: Restart burrow-router
+
+- name: Download cloudflared
+  ansible.builtin.get_url:
+    url: "https://github.com/cloudflare/cloudflared/releases/download/{{ burrow_cloudflared_version }}/cloudflared-linux-amd64"
+    dest: "/usr/local/lib/cloudflared-{{ burrow_cloudflared_version }}"
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [tunnel]
+
+- name: Use it
+  ansible.builtin.file:
+    src: "/usr/local/lib/cloudflared-{{ burrow_cloudflared_version }}"
+    dest: /usr/local/bin/cloudflared
+    state: link
+  notify: Restart burrow-tunnel
+  tags: [tunnel]
+
+- name: Copy the tunnel's credentials
+  ansible.builtin.copy:
+    src: "{{ burrow_tunnel_credentials_src }}"
+    dest: /etc/burrow/tunnel-credentials.json
+    owner: root
+    group: "{{ burrow_user }}"
+    mode: "0640"
+  notify: Restart burrow-tunnel
+  tags: [tunnel]
+
+- name: Install the tunnel config
+  ansible.builtin.template:
+    src: tunnel.yml.j2
+    dest: /etc/burrow/tunnel.yml
+    owner: root
+    group: "{{ burrow_user }}"
+    mode: "0640"
+    validate: /usr/local/bin/cloudflared tunnel --config %s ingress validate
+  notify: Restart burrow-tunnel
+  tags: [tunnel]
+
+# ----------------------------------------------------------------- services
+- name: Install Burrow's unit
+  ansible.builtin.template:
+    src: burrow.service.j2
+    dest: /etc/systemd/system/burrow.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart burrow
+
+- name: Install the router's unit
+  ansible.builtin.template:
+    src: burrow-router.service.j2
+    dest: /etc/systemd/system/burrow-router.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart burrow-router
+
+- name: Install the tunnel's unit
+  ansible.builtin.template:
+    src: burrow-tunnel.service.j2
+    dest: /etc/systemd/system/burrow-tunnel.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart burrow-tunnel
+  tags: [tunnel]
+
+# Before enabling, so a first start isn't followed by a restart mid-migration.
+- name: Restart what changed
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start Burrow and its router
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop: [burrow-router, burrow]
+
+- name: Enable and start the tunnel
+  ansible.builtin.systemd:
+    name: burrow-tunnel
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [tunnel]
+
+# ----------------------------------------------------------------- verify
+# The first start migrates the database; give it time.
+- name: Wait for Burrow
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ burrow_port }}/"
+    follow_redirects: none
+    status_code: [200, 302]
+  register: burrow_up
+  retries: 60
+  delay: 5
+  until: burrow_up.status in [200, 302]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the router refuses ports Burrow doesn't hand out
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ burrow_router_port }}/"
+    headers:
+      Host: "peon-22.{{ burrow_domain }}"
+    status_code: [404]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify the router asks Burrow before a preview
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ burrow_router_port }}/"
+    headers:
+      Host: "peon-21000.{{ burrow_domain }}"
+      X-Forwarded-Proto: https
+    follow_redirects: none
+    status_code: [302]
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify Burrow answers through the tunnel
+  ansible.builtin.uri:
+    url: "https://{{ burrow_domain }}/"
+    follow_redirects: none
+    status_code: [200, 302]
+  register: burrow_public
+  retries: 12
+  delay: 5
+  until: burrow_public.status in [200, 302]
+  changed_when: false
+  when: not ansible_check_mode
+  tags: [tunnel]

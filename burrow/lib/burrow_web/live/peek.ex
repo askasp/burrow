@@ -9,7 +9,7 @@ defmodule BurrowWeb.Peek do
 
   use BurrowWeb, :verified_routes
 
-  alias Burrow.{Activity, Chat, GeneralChat, GeneralChats, Projects}
+  alias Burrow.{Activity, Chat, Chats, GeneralChat, GeneralChats, Projects}
   alias BurrowWeb.ChatsLive
   alias BurrowWeb.WorkspaceLive.Components
 
@@ -69,7 +69,12 @@ defmodule BurrowWeb.Peek do
     with {id, ""} <- Integer.parse(to_string(place)),
          true <- Projects.visible?(scope, id) do
       project = Projects.get!(scope, id)
-      tabs = Activity.chats(project, scope.user.id, Chat.busy_ids(project.id))
+
+      tabs =
+        project
+        |> Activity.chats(scope.user.id, Chat.busy_ids(project.id))
+        |> Enum.reject(&Chats.peon?(&1.chat))
+
       tile = Enum.find(rail, &(&1.id == id)) || Activity.of(project, scope.user.id) |> tile()
 
       %{

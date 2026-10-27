@@ -13,7 +13,7 @@ defmodule Burrow.RecordsTest do
   end
 
   describe "chats" do
-    test "up to four, empty until the first message titles them", %{project: project} do
+    test "empty until the first message titles them", %{project: project} do
       chat = Chats.create_empty(project.id, "ada")
       assert_receive {:chat_created, %{id: id}} when id == chat.id
       assert chat.title == "" and chat.started_at == nil
@@ -28,11 +28,6 @@ defmodule Burrow.RecordsTest do
       Chats.started(Chats.get(id), "something else")
       assert Chats.get(id).title == "Add a booking page with a calendar"
 
-      # Empty chats don't count, started ones do.
-      for _ <- 1..Chats.max(), do: Chats.create_empty(project.id, "ada")
-      assert Burrow.Activity.room?(project)
-      for _ <- 2..Chats.max(), do: Chats.create(project.id, "t", "ada")
-      refute Burrow.Activity.room?(project)
       assert Chats.list(project_fixture().id) == []
     end
 
@@ -51,11 +46,6 @@ defmodule Burrow.RecordsTest do
       assert Chats.get(project, mate.id, mates.id)
       refute Chats.get(project, mate.id, owners.id) || Chats.get(project, mate.id, peons.id)
       refute Chats.get(project_fixture(), mate.id, mates.id)
-
-      # Everyone has their own four.
-      for _ <- 1..Chats.max(), do: Chats.create(project.id, "t", mate)
-      refute Burrow.Activity.room?(project, mate.id)
-      assert Burrow.Activity.room?(project, owner.id)
     end
 
     test "keep running, then delete", %{project: project} do

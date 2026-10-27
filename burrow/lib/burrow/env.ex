@@ -1,6 +1,7 @@
 defmodule Burrow.Env do
   @moduledoc """
-  A running environment of a project's app: "staging" or "prod". A long-lived container runs the app in prod mode; the app
+  A running environment of a project's app: "staging" or "prod", or an
+  internal app's one "live". A long-lived container runs the app in prod mode; the app
   has Totem (a dependency in the template), which dials this process on a
   Unix socket mounted into the container (`TOTEM_LINK`). Nothing runs beside
   the app.
@@ -38,8 +39,19 @@ defmodule Burrow.Env do
   ## API
 
   @doc "The project's environments, staging first."
-  def names(project),
-    do: if(Projects.Project.repo?(project), do: [], else: ["staging", "prod"])
+  def names(project) do
+    cond do
+      Projects.Project.repo?(project) -> []
+      Projects.Project.internal?(project) -> ["live"]
+      true -> ["staging", "prod"]
+    end
+  end
+
+  @doc "Where a passed main check goes: staging, or an internal app's live."
+  def landing(project), do: if(Projects.Project.internal?(project), do: "live", else: "staging")
+
+  @doc "What people use: prod, or an internal app's live."
+  def live(project), do: if(Projects.Project.internal?(project), do: "live", else: "prod")
 
   def subscribe(project_id), do: Projects.subscribe(project_id, "envs")
 
@@ -89,6 +101,19 @@ defmodule Burrow.Env do
     end)
     |> Enum.uniq()
     |> Enum.join(" ")
+  end
+
+  # An internal app logs people in through Burrow (`BurrowWeb.AppController`):
+  # where Burrow is, which project the app is, and the key its tokens are
+  # signed with.
+  defp burrow_login(project) do
+    if Projects.Project.internal?(project),
+      do: %{
+        "BURROW_URL" => BurrowWeb.Endpoint.url(),
+        "BURROW_APP" => to_string(project.id),
+        "BURROW_LOGIN_SECRET" => Projects.secret(project, "app login")
+      },
+      else: %{}
   end
 
   ## Server
@@ -360,7 +385,9 @@ defmodule Burrow.Env do
         outlive: true,
         label: "burrow.env=#{state.project.slug}",
         env:
-          Map.merge(secrets, %{
+          secrets
+          |> Map.merge(burrow_login(state.project))
+          |> Map.merge(%{
             "MIX_ENV" => "prod",
             "DATABASE_PATH" => "/data/app.db",
             "SECRET_KEY_BASE" => state.secret_key_base,

@@ -1,0 +1,65 @@
+---
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - acl
+      - ca-certificates
+      - curl
+      - git
+      - sqlite3
+      - ufw
+      - unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Turn on daily security updates
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: SSH with keys only
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/10-burrow.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+    owner: root
+    group: root
+    mode: "0644"
+    validate: sshd -t -f %s
+  notify: Reload ssh
+
+# Nothing listens publicly: Burrow is reached through its Cloudflare tunnel,
+# which dials out. Docker's published ports skip ufw, so Burrow publishes on
+# 127.0.0.1 only.
+- name: Allow SSH in
+  community.general.ufw:
+    rule: allow
+    name: OpenSSH
+
+- name: Deny everything else in, and turn the firewall on
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+
+- name: Make a swap file
+  ansible.builtin.command: >-
+    sh -c 'fallocate -l {{ swap_size_mb }}M /swapfile && chmod 600 /swapfile
+    && mkswap /swapfile && swapon /swapfile'
+  args:
+    creates: /swapfile
+  when: swap_size_mb | int > 0
+
+- name: Use it after a reboot
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: /swapfile none swap sw 0 0
+  when: swap_size_mb | int > 0

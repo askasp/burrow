@@ -43,7 +43,16 @@ defmodule Burrow.ProjectsTest do
   end
 
   test "a project from a git repo has no envs, so its whole range is previews" do
-    scope = user_scope_fixture()
+    # Only admins: a repo's preview runs on the host, outside the sandbox.
+    assert {:error, changeset} =
+             Projects.create(user_scope_fixture(), %{
+               "name" => "Amino",
+               "repo_url" => "https://github.com/a/b.git"
+             })
+
+    assert %{repo_url: ["is for admins only"]} = errors_on(changeset)
+
+    scope = admin_scope()
 
     assert {:error, changeset} =
              Projects.create(scope, %{"name" => "Amino", "repo_url" => "git@github.com:a/b"})
@@ -85,6 +94,26 @@ defmodule Burrow.ProjectsTest do
                Projects.create(user_scope_fixture(), %{"name" => "Odd", "auth" => "sso"})
 
       assert %{auth: [_]} = errors_on(changeset)
+    end
+
+    test "internal: Burrow's login, and only dev and live" do
+      {:ok, ops} =
+        Projects.create(user_scope_fixture(), %{
+          "name" => "Ops",
+          "auth" => "burrow",
+          "basic_username" => "ada"
+        })
+
+      ops = Projects.get(ops.id)
+      assert ops.auth == "burrow" and Project.internal?(ops)
+      assert Project.basic_login(ops) == nil
+      assert Burrow.Env.names(ops) == ["live"]
+      [first, last] = ops.preview_ports |> String.split("-") |> Enum.map(&String.to_integer/1)
+      assert Burrow.Cell.ports(ops) == {first..(last - 1)//1, %{"live" => last}}
+
+      {:ok, shop} = Projects.create(user_scope_fixture(), %{"name" => "Shop"})
+      refute Project.internal?(shop)
+      assert Burrow.Env.names(shop) == ["staging", "prod"]
     end
 
     test "basic auth needs a username and password, which become the app's secrets and aren't stored" do
@@ -147,7 +176,7 @@ defmodule Burrow.ProjectsTest do
 
     test "doesn't apply to a repo project" do
       {:ok, project} =
-        Projects.create(user_scope_fixture(), %{
+        Projects.create(admin_scope(), %{
           "name" => "Repo",
           "repo_url" => "https://github.com/a/b",
           "auth" => "basic"
@@ -197,4 +226,11 @@ defmodule Burrow.ProjectsTest do
     assert {:error, %Ecto.Changeset{errors: [team_id: _]}} =
              Projects.create(owner, %{"name" => "Other", "team_id" => to_string(theirs.id)})
   end
+
+  defp admin_scope,
+    do:
+      user_fixture()
+      |> Ecto.Changeset.change(admin: true)
+      |> Repo.update!()
+      |> user_scope_fixture()
 end

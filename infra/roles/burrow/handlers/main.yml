@@ -1,0 +1,20 @@
+---
+# Restarting Burrow stops open chats' agents (they start again when a chat
+# opens); projects' staging and prod containers keep running and are adopted.
+- name: Restart burrow
+  ansible.builtin.systemd:
+    name: burrow
+    state: restarted
+    daemon_reload: true
+
+- name: Restart burrow-router
+  ansible.builtin.systemd:
+    name: burrow-router
+    state: restarted
+    daemon_reload: true
+
+- name: Restart burrow-tunnel
+  ansible.builtin.systemd:
+    name: burrow-tunnel
+    state: restarted
+    daemon_reload: true

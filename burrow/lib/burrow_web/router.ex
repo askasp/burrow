@@ -32,6 +32,22 @@ defmodule BurrowWeb.Router do
     get "/design/:token/*path", DesignController, :show
   end
 
+  # Burrow Bridge (bridge/), which lets Peon work on files on a computer:
+  # pairing, the link a paired computer keeps open, and the downloads. No
+  # session: pairing hands out a token, and the link takes only that.
+  scope "/bridge", BurrowWeb do
+    pipe_through :api
+
+    post "/pair", BridgeController, :pair
+    post "/pair/token", BridgeController, :token
+  end
+
+  scope "/bridge", BurrowWeb do
+    get "/socket", BridgeController, :socket
+    get "/download/:target", BridgeController, :download
+    get "/install.sh", BridgeController, :install
+  end
+
   # Enable Swoosh mailbox preview in development
   if Application.compile_env(:burrow, :dev_routes) do
     pipeline :local_only do
@@ -57,17 +73,21 @@ defmodule BurrowWeb.Router do
       live "/projects", ProjectLive.Index, :index
       live "/projects/:id", WorkspaceLive, :index
       live "/projects/:id/c/:chat", WorkspaceLive, :chat
+      live "/apps/:id", AppLive, :show
       live "/chats", ChatsLive, :index
       live "/chats/:id", ChatsLive, :chat
       live "/teams", TeamLive.Index, :index
       live "/ai", AILive, :index
       live "/logins", LoginLive.Index, :index
+      live "/computers", ComputersLive, :index
+      live "/computers/approve", ComputersLive, :approve
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
 
     post "/users/update-password", UserSessionController, :update_password
     post "/users/theme", ThemeController, :update
+    get "/projects/:id/app", AppController, :enter
     get "/projects/:id/c/:chat/images/:name", ChatImageController, :show
     get "/chats/:id/files/:name", GeneralChatFileController, :show
   end

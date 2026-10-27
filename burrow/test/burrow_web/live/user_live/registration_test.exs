@@ -8,6 +8,7 @@ defmodule BurrowWeb.UserLive.RegistrationTest do
     test "is closed unless sign-ups are open, and log in doesn't offer it", %{conn: conn} do
       Application.put_env(:burrow, :sign_ups, false)
       on_exit(fn -> Application.put_env(:burrow, :sign_ups, true) end)
+      user_fixture()
 
       assert {:error,
               {:redirect, %{to: "/users/log-in", flash: %{"error" => "Sign-ups are closed."}}}} =
@@ -61,6 +62,32 @@ defmodule BurrowWeb.UserLive.RegistrationTest do
 
       assert redirected_to(conn) == ~p"/"
       assert Phoenix.Flash.get(conn.assigns.flash, :info) == "Account created successfully!"
+    end
+
+    test "a new Burrow takes its first sign-up, as the admin, then closes", %{conn: conn} do
+      Application.put_env(:burrow, :sign_ups, false)
+      on_exit(fn -> Application.put_env(:burrow, :sign_ups, true) end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      email = unique_user_email()
+
+      lv
+      |> form("#registration_form", user: %{email: email, password: valid_user_password()})
+      |> render_submit()
+
+      assert Burrow.Repo.get_by!(Burrow.Accounts.User, email: email).admin
+      assert {:error, {:redirect, %{to: "/users/log-in"}}} = live(conn, ~p"/users/register")
+
+      # Open sign-ups: later accounts are not admins.
+      Application.put_env(:burrow, :sign_ups, true)
+
+      {:ok, later} =
+        Burrow.Accounts.register_user_with_password(%{
+          email: unique_user_email(),
+          password: valid_user_password()
+        })
+
+      refute later.admin
     end
 
     test "renders errors for duplicated email", %{conn: conn} do

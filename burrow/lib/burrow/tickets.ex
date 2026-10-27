@@ -13,9 +13,9 @@ defmodule Burrow.Tickets do
   @statuses ~w(open in_progress closed)
 
   @doc """
-  The tickets in `dir`: `[%{id, title, status, priority, deps, created}]`,
-  the one in progress first, then the open ones by priority (0 is highest)
-  and age, then the closed ones, latest first.
+  The tickets in `dir`: `[%{id, title, status, priority, deps, tags,
+  created, description}]`, the one in progress first, then the open ones
+  by priority (0 is highest) and age, then the closed ones, latest first.
   """
   def list(dir) do
     case File.ls(dir) do
@@ -65,6 +65,21 @@ defmodule Burrow.Tickets do
     {:ok, id}
   end
 
+  @doc """
+  Sets ticket `id`'s status ("open", "in_progress" or "closed"), as `tk
+  start`/`tk close` would: a horde's peon took it, or shipped it
+  (`Burrow.Hordes`).
+  """
+  def set_status(dir, id, status) when status in @statuses do
+    with true <- valid_id?(id) || {:error, :not_found},
+         {:ok, text} <- File.read(path(dir, id)) do
+      File.write(
+        path(dir, id),
+        Regex.replace(~r/^status:.*$/m, text, "status: " <> status, global: false)
+      )
+    end
+  end
+
   @doc "Deletes a ticket the agent hasn't started; started and closed ones stay."
   def delete(dir, id) do
     with true <- valid_id?(id) || {:error, :not_found},
@@ -99,7 +114,9 @@ defmodule Burrow.Tickets do
           status: status,
           priority: priority(fields["priority"]),
           deps: list_field(fields["deps"]),
-          created: fields["created"] || ""
+          tags: list_field(fields["tags"]),
+          created: fields["created"] || "",
+          description: description(body)
         }
       ]
     else
@@ -113,6 +130,10 @@ defmodule Burrow.Tickets do
       nil -> "Untitled"
     end
   end
+
+  # What's under the title.
+  defp description(body),
+    do: body |> String.replace(~r/\A\s*# .*$/m, "", global: false) |> String.trim()
 
   defp priority(value) do
     case Integer.parse(value || "") do

@@ -47,12 +47,15 @@
         <li>
           {@current_scope.user.email}
         </li>
+        <%!-- peon:unless-burrow --%>
         <li :if={@current_scope.user.admin}>
           <.link href={~p"/users/admin"} data-kb-go="u" data-kb-label="Users">Users</.link>
         </li>
+        <%!-- peon:end --%>
         <li :if={@current_scope.user.admin}>
           <.link href={~p"/users/admin/data"} data-kb-go="d" data-kb-label="Data">Data</.link>
         </li>
+        <%!-- peon:unless-burrow --%>
         <li>
           <.link href={~p"/users/settings"} data-kb-go=",">Settings</.link>
         </li>
@@ -66,6 +69,7 @@
         <li>
           <.link href={~p"/users/log-in"}>Log in</.link>
         </li>
+        <%!-- peon:end --%>
       <% end %>
     </ul>
     <%!-- peon:end --%>

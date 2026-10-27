@@ -8,12 +8,14 @@ defmodule Burrow.Activity do
     * `"idle"` - talked, nothing submitted yet (or sent back to merge)
     * `"working"` - the agent works, or its draft is being checked
     * `"failed"` - its checks failed, or main did not pass with it
+    * `"held"` - its checks passed; it waits for a person to merge it (or
+      for its horde to resume shipping)
     * `"ready"` - a repo chat whose PR is open
     * `"merged"`, `"closed"` - a repo chat whose PR GitHub merged or closed
     * `"drawn"` - its boards are on main (`Burrow.Design`); it goes on
     * `"landing"` - on main, not shipped yet
     * `"staged"` - on staging, not on prod yet
-    * `"live"` - on prod
+    * `"live"` - on prod, or an internal app's live
 
   A project's tile in the rails (`of/2`), as one person sees it:
   `%{"state" => "working" | "waiting" | "done" | "stopped", "label",
@@ -26,7 +28,6 @@ defmodule Burrow.Activity do
   use GenServer
 
   alias Burrow.{Cell, Chat, Chats, Design, Env, Projects, Secrets}
-  alias Burrow.GitRepo.PullRequest
   alias Totem.Repo
 
   @debounce 300
@@ -42,8 +43,9 @@ defmodule Burrow.Activity do
   end
 
   @doc """
-  `[%{chat, draft, phase, worked_at}]`, the one worked on last first;
-  `busy` holds the chats whose agent works. A chat was worked on when it
+  `[%{chat, draft, phase, worked_at, internal}]`, the one worked on last
+  first; `busy` holds the chats whose agent works, `internal` says the
+  project's app goes dev, then live (`Projects.Project.internal?/1`). A chat was worked on when it
   got a message (`Burrow.Chats.started/2`) or its draft was submitted.
   """
   def chats(project, busy), do: phases(project, Chats.list(project.id), busy)
@@ -54,6 +56,7 @@ defmodule Burrow.Activity do
   defp phases(project, chats, busy) do
     repo = if !Projects.Project.repo?(project), do: Projects.repo_dir(project)
     refs = repo && Repo.refs(repo)
+    internal? = Projects.Project.internal?(project)
 
     # Newest first, so that of two worked on in the same second the newer leads
     for chat <- Enum.reverse(chats) do
@@ -63,7 +66,8 @@ defmodule Burrow.Activity do
         chat: chat,
         draft: draft,
         phase: phase(chat, draft, MapSet.member?(busy, chat.id), refs),
-        worked_at: worked_at(chat, draft)
+        worked_at: worked_at(chat, draft),
+        internal: internal?
       }
     end
     |> Enum.sort_by(& &1.worked_at, {:desc, DateTime})
@@ -87,11 +91,12 @@ defmodule Burrow.Activity do
   defp phase(_chat, nil, false, _refs), do: "idle"
   defp phase(_chat, %{status: "checking"}, false, _refs), do: "working"
   defp phase(_chat, %{status: "failed"}, false, _refs), do: "failed"
+  defp phase(_chat, %{status: "held"}, false, _refs), do: "held"
 
   defp phase(_chat, %{status: "landed", change: id} = draft, false, refs) do
     cond do
       Design.only?(draft.files) -> "drawn"
-      id <= (refs["prod"] || 0) -> "live"
+      id <= (refs["prod"] || refs["live"] || 0) -> "live"
       id <= (refs["staging"] || 0) -> "staged"
       true -> "landing"
     end
@@ -101,29 +106,6 @@ defmodule Burrow.Activity do
 
   @doc "A chat whose change is on staging or prod: it is done, shipping is the project's."
   def done?(%{phase: phase}), do: phase in ~w(staged live)
-
-  @doc """
-  Whether user `user_id` can start another chat in the project: up to
-  `Burrow.Chats.max/0` of the ones they see that count (`counts?/2`).
-  Peon's chats (nil) count as the owner's. A repo project at the limit
-  asks GitHub first whether some of its PRs were merged or closed since.
-  """
-  def room?(project, user_id \\ nil) do
-    room? = fn ->
-      chats = chats(project, user_id || project.user_id, MapSet.new())
-      Enum.count(chats, &counts?/1) < Chats.max()
-    end
-
-    room?.() or
-      (Projects.Project.repo?(project) and PullRequest.refresh(project) > 0 and room?.())
-  end
-
-  @doc """
-  Whether the chat counts against the open-chat limit: not while it is
-  empty (it runs nothing yet), done, or a repo chat whose PR is through.
-  """
-  def counts?(%{phase: phase}) when phase in ~w(new merged closed), do: false
-  def counts?(chat), do: not done?(chat)
 
   @doc "Whether the chat's change is on main or staging and not on prod yet."
   def unshipped?(project, chat_id) do
@@ -162,7 +144,7 @@ defmodule Burrow.Activity do
     phases = for c <- all, MapSet.member?(mine, c.chat.id), into: MapSet.new(), do: c.phase
     any? = &MapSet.member?(phases, &1)
     repo? = Projects.Project.repo?(project)
-    prod = !repo? && Env.info(project, "prod")
+    prod = !repo? && Env.info(project, Env.live(project))
 
     cond do
       any?.("working") or Enum.any?(all, &(&1.phase == "landing")) ->
@@ -171,7 +153,7 @@ defmodule Burrow.Activity do
       match?(%{status: {:crashed, _}}, prod) ->
         tile("stopped", "stopped", 8)
 
-      any?.("ready") or any?.("failed") ->
+      any?.("ready") or any?.("failed") or any?.("held") ->
         tile("waiting", "waiting on you", 100)
 
       Enum.any?(Secrets.list(project.id), &(not &1.set?)) ->
@@ -183,7 +165,7 @@ defmodule Burrow.Activity do
       repo? ->
         tile("done", "ready", 100)
 
-      Repo.ref(Projects.repo_dir(project), "prod") == nil ->
+      Repo.ref(Projects.repo_dir(project), Env.live(project)) == nil ->
         tile("waiting", "new", 100)
 
       true ->

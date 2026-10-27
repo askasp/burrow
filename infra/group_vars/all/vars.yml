@@ -1,0 +1,52 @@
+---
+# Settings for every machine. Secrets go in vault.yml next to this file
+# (ansible-vault encrypted, see vault.yml.example).
+
+# ------------------------------------------------------------------- Burrow
+# Burrow's address: a whole domain (a zone on Cloudflare), since previews and
+# apps live at peon-<port>.<domain> and Cloudflare's free certificate covers
+# only one level of *.<zone>. Route it and *.<domain> to the tunnel below.
+burrow_domain: "" # e.g. example.com
+
+# What runs: a branch, tag or commit of this repository, as pushed to GitHub.
+burrow_repo: https://github.com/askasp/burrow.git
+burrow_version: main
+
+# "open": anyone may sign up. Anything else: the first sign-up only (it becomes
+# the admin), then admins add people.
+burrow_sign_ups: closed
+
+# Chats running at once on the machine, across projects. Each has two
+# containers of up to 3 GB.
+burrow_max_host_chats: 6
+
+# opencode, copied from this computer. The play fails until the two agree, so
+# bump this after `opencode upgrade`.
+burrow_opencode_src: "{{ lookup('env', 'HOME') }}/.opencode/bin/opencode"
+burrow_opencode_version: "2.0.24"
+
+# ------------------------------------------------------------------- email
+# Login links go out through Resend, from an address on a domain verified at
+# resend.com. The API key is vault_resend_api_key.
+burrow_mail_from: "" # e.g. login@example.com
+
+# ------------------------------------------------------------------- tunnel
+# Cloudflare tunnel (`cloudflared tunnel create burrow`). Its credentials file
+# is copied from this computer.
+burrow_tunnel_id: ""
+burrow_tunnel_credentials_src: "{{ lookup('env', 'HOME') }}/.cloudflared/{{ burrow_tunnel_id }}.json"
+burrow_cloudflared_version: "2026.10.1"
+
+# ------------------------------------------------------------------- sandbox
+# The image every project container runs, built from images/elixir-dev.
+sandbox_image: burrow/elixir-dev:1
+
+# ------------------------------------------------------------------- backups
+# Nightly restic backup of /var/lib/burrow to S3-compatible storage. Empty: no
+# backups. Secrets: vault_restic_password, vault_backup_aws_access_key_id,
+# vault_backup_aws_secret_access_key.
+backup_restic_repository: "" # e.g. s3:https://s3.eu-central-003.backblazeb2.com/burrow-backups
+
+# ------------------------------------------------------------------- machine
+# Swap for compile spikes; 0 for none.
+swap_size_mb: 4096

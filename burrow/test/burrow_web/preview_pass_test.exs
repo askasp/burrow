@@ -36,6 +36,19 @@ defmodule BurrowWeb.PreviewPassTest do
     assert get(conn, "/previews/auth?port=21048").status == 302
   end
 
+  test "an internal app's live is only for the people who see its project", %{conn: conn} do
+    owner = user_fixture()
+    project_fixture(%{auth: "burrow", user_id: owner.id})
+
+    assert get(conn, "/previews/auth?port=21049").status == 302
+
+    assert logged_in(conn) |> recycle() |> get("/previews/auth?port=21049") |> Map.get(:status) ==
+             302
+
+    owners = conn |> log_in_user(owner) |> get(~p"/") |> recycle()
+    assert get(owners, "/previews/auth?port=21049").status == 204
+  end
+
   test "a running chat's key lets in its own preview's ports", %{conn: conn} do
     Registry.register(Burrow.ChatRegistry, {0, "c"}, %{ports: [21003], busy?: false, key: "k3y"})
 

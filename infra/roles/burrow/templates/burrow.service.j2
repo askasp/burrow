@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Burrow (https://{{ burrow_domain }})
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=exec
+User={{ burrow_user }}
+Group={{ burrow_user }}
+WorkingDirectory={{ burrow_src }}/burrow
+EnvironmentFile=/etc/burrow/burrow.env
+EnvironmentFile=/etc/burrow/secret.env
+ExecStartPre=/usr/bin/mix ecto.migrate
+ExecStart=/usr/bin/mix phx.server
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=300
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

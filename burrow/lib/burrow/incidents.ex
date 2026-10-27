@@ -3,7 +3,7 @@ defmodule Burrow.Incidents do
   Errors from a project's running environments, grouped by fingerprint
   (Totem gives each error one), and failed deploys. A new or recurring
   incident opens a chat asked to fix it (setting `"auto_fix"`, default on,
-  at most three at a time, while the project has room for a chat). An
+  at most three at a time). An
   incident resolves when its chat's change is deployed where it came from.
 
   Broadcasts `{:incident, incident}` on the project's `"incidents"` topic.
@@ -88,25 +88,18 @@ defmodule Burrow.Incidents do
     end
   end
 
-  @doc """
-  Opens a chat asked to fix the incident, for `by` (`Burrow.Chats.create/4`),
-  when there is room for one.
-  """
+  @doc "Opens a chat asked to fix the incident, for `by` (`Burrow.Chats.create/4`)."
   def fix(%__MODULE__{} = incident, project, by \\ "peon") do
-    if Burrow.Activity.room?(project, if(is_struct(by, Burrow.Accounts.User), do: by.id)) do
-      chat = Chats.create(project.id, "Fix: " <> incident.title, by)
+    chat = Chats.create(project.id, "Fix: " <> incident.title, by)
 
-      incident =
-        incident
-        |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id)
-        |> Repo.update!()
-        |> broadcast()
+    incident =
+      incident
+      |> Ecto.Changeset.change(status: "fixing", chat_id: chat.id)
+      |> Repo.update!()
+      |> broadcast()
 
-      Ship.tell_chat(project.id, chat.id, prompt(incident))
-      {:ok, incident}
-    else
-      {:error, :full}
-    end
+    Ship.tell_chat(project.id, chat.id, prompt(incident))
+    {:ok, incident}
   end
 
   @doc """

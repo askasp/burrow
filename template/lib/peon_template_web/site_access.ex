@@ -67,6 +67,9 @@ defmodule PeonTemplateWeb.SiteAccess do
   # peon:if-accounts
   def check_app_access(conn, opts, :login), do: UserAuth.require_authenticated_user(conn, opts)
   # peon:end
+  # peon:if-burrow
+  def check_app_access(conn, opts, :burrow), do: UserAuth.require_authenticated_user(conn, opts)
+  # peon:end
   def check_app_access(conn, _opts, _mode), do: conn
 
   @doc "`on_mount` for the `:app` live_session: the same rules for LiveViews."
@@ -75,6 +78,11 @@ defmodule PeonTemplateWeb.SiteAccess do
 
   # peon:if-accounts
   def on_mount({:app, :login}, params, session, socket),
+    do: UserAuth.on_mount(:require_authenticated, params, session, socket)
+
+  # peon:end
+  # peon:if-burrow
+  def on_mount({:app, :burrow}, params, session, socket),
     do: UserAuth.on_mount(:require_authenticated, params, session, socket)
 
   # peon:end

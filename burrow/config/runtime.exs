@@ -61,6 +61,8 @@ if config_env() != :test do
   # Projects' chats and environments (`Burrow.Cell`).
   config :burrow,
     template_dir: System.get_env("BURROW_TEMPLATE_DIR") || Path.join(root, "template"),
+    # Burrow Bridge's Go source, built for each download (`Burrow.Bridge`)
+    bridge_dir: System.get_env("BURROW_BRIDGE_DIR") || Path.join(root, "bridge"),
     sandbox_image: System.get_env("BURROW_SANDBOX_IMAGE", "burrow/elixir-dev:1"),
     # Where a browser reaches a preview's or an environment's port: its own
     # address behind a tunnel (e.g. https://peon-{port}.example.com), or the
@@ -70,6 +72,8 @@ if config_env() != :test do
         "http://#{System.get_env("BURROW_PEON_HOST", "localhost")}:{port}",
     # Chats running at once on this host, across projects (agent and preview)
     max_host_chats: String.to_integer(System.get_env("BURROW_MAX_HOST_CHATS", "6")),
+    # Peons a horde runs at once, at most (`Burrow.Hordes`)
+    max_horde_at_once: String.to_integer(System.get_env("BURROW_MAX_HORDE_AT_ONCE", "32")),
     # How long a deploy is watched for new errors
     health_window:
       :timer.seconds(String.to_integer(System.get_env("BURROW_HEALTH_WINDOW", "30"))),
@@ -176,21 +180,16 @@ if config_env() == :prod do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
-  # ## Configuring the mailer
-  #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :burrow, Burrow.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://swoosh.hexdocs.pm/Swoosh.html#module-installation for details.
+  # Login links and email changes go out through Resend (https://resend.com):
+  # an API key with sending access, from an address on a domain verified there.
+  config :burrow, Burrow.Mailer,
+    adapter: Swoosh.Adapters.Resend,
+    api_key:
+      System.get_env("RESEND_API_KEY") ||
+        raise("environment variable RESEND_API_KEY is missing (resend.com, API Keys)")
+
+  config :burrow,
+    mail_from:
+      System.get_env("BURROW_MAIL_FROM") ||
+        raise("environment variable BURROW_MAIL_FROM is missing, e.g. login@example.com")
 end

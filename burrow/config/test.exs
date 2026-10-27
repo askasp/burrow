@@ -47,6 +47,7 @@ config :burrow,
   sign_ups: true,
   port_url: "http://localhost:{port}",
   data_dir: Path.expand("../tmp/test-data", __DIR__),
-  template_dir: Path.expand("../../template", __DIR__)
+  template_dir: Path.expand("../../template", __DIR__),
+  bridge_dir: Path.expand("../../bridge", __DIR__)
 
 config :burrow, opencode_model: "openai/gpt-test"

@@ -10,7 +10,8 @@ defmodule Burrow.GitRepo.PullRequest do
 
   The agent reads the repo's other pull requests through Burrow too
   (`read/4`, `open_list/2`), since it has no GitHub access of its own.
-  `refresh/1` notes which chats' PRs were merged or closed.
+  `refresh/1` notes which chats' PRs were merged or closed
+  (`Burrow.GitRepo.Merged` closes the merged ones' chats).
   """
 
   alias Burrow.{Chats, GitRepo, Projects}
@@ -74,6 +75,73 @@ defmodule Burrow.GitRepo.PullRequest do
       get(project, "/repos/#{owner}/#{repo}/pulls", "list the PRs", state: "open", per_page: 50)
     end
   end
+
+  @doc """
+  What people and bots (Copilot's reviews too) said on pull request `number`,
+  oldest first: comments on the PR, reviews and comments on lines of code,
+  up to 100 of each. Each is `%{author, at, body}`, plus `review` (`"approved"`,
+  `"changes requested"`, `"commented"`, `"dismissed"`) for a review and `path`,
+  `line`, `outdated` and `thread` (its first comment's id, for `comment/5`)
+  for a comment on code. Errors like `read/4`'s.
+  """
+  def comments(project, chat_id, number) do
+    with {:ok, {owner, repo}} <- on_github(project, chat_id),
+         pr = "/repos/#{owner}/#{repo}/pulls/#{number}",
+         {:ok, talk} <-
+           get(project, "/repos/#{owner}/#{repo}/issues/#{number}/comments", "read the comments",
+             per_page: 100
+           ),
+         {:ok, reviews} <- get(project, "#{pr}/reviews", "read the reviews", per_page: 100),
+         {:ok, code} <- get(project, "#{pr}/comments", "read the code comments", per_page: 100) do
+      reviews =
+        for %{"state" => state} = review <- reviews,
+            state != "PENDING",
+            # an empty COMMENTED review only holds comments on code
+            state != "COMMENTED" or String.trim(review["body"] || "") != "",
+            do: Map.put(said(review, review["submitted_at"]), :review, review_state(state))
+
+      code =
+        for comment <- code do
+          Map.merge(said(comment, comment["created_at"]), %{
+            path: comment["path"],
+            line: comment["line"] || comment["original_line"],
+            outdated: comment["line"] == nil and comment["original_line"] != nil,
+            # GitHub takes replies to a thread's first comment only
+            thread: comment["in_reply_to_id"] || comment["id"]
+          })
+        end
+
+      talk = for comment <- talk, do: said(comment, comment["created_at"])
+      {:ok, Enum.sort_by(talk ++ reviews ++ code, & &1.at)}
+    end
+  end
+
+  @doc """
+  Posts `body` on pull request `number` as the token's user: a reply in
+  `thread` (a comment on code, `comments/3`) or, without one, a comment on
+  the PR. Returns `{:ok, url}`; errors like `read/4`'s.
+  """
+  def comment(project, chat_id, number, body, thread \\ nil) do
+    with {:ok, {owner, repo}} <- on_github(project, chat_id) do
+      {path, what} =
+        if thread,
+          do: {"/repos/#{owner}/#{repo}/pulls/#{number}/comments/#{thread}/replies", "reply"},
+          else: {"/repos/#{owner}/#{repo}/issues/#{number}/comments", "comment"}
+
+      case Req.post(req(project), url: path, json: %{body: body}) do
+        {:ok, %{status: 201, body: %{"html_url" => url}}} -> {:ok, url}
+        response -> failed(what, response)
+      end
+    end
+  end
+
+  defp said(item, at) do
+    # a deleted account has no user
+    author = item["user"]["login"] || "ghost"
+    %{author: author, at: at || "", body: String.trim(item["body"] || "")}
+  end
+
+  defp review_state(state), do: state |> String.downcase() |> String.replace("_", " ")
 
   @doc """
   Asks GitHub about every chat's PR not known to be merged or closed, and

@@ -124,6 +124,49 @@ defmodule Burrow.Teams do
     end
   end
 
+  @doc """
+  Who in team `team_id` takes over from user `user_id` when their account is
+  deleted: another owner, else the member who joined first. Nil when nobody
+  else is in it.
+  """
+  def heir(team_id, user_id) do
+    Repo.one(
+      from m in Member,
+        where: m.team_id == ^team_id and m.user_id != ^user_id,
+        order_by: [desc: m.role == "owner", asc: m.id],
+        limit: 1,
+        select: m.user_id
+    )
+  end
+
+  @doc """
+  Takes a deleted account out of its teams (`Burrow.Accounts.delete_user/2`).
+  A team it was the last owner of gets its `heir/2` as owner; a team with
+  nobody else in it goes.
+  """
+  def remove_user(user_id) do
+    for %Member{} = member <- Repo.all(from m in Member, where: m.user_id == ^user_id) do
+      case heir(member.team_id, user_id) do
+        nil ->
+          Repo.delete_all(from t in Team, where: t.id == ^member.team_id)
+
+        heir_id ->
+          if check_not_last_owner(member) == {:error, :last_owner},
+            do:
+              Repo.update_all(
+                from(m in Member, where: m.team_id == ^member.team_id and m.user_id == ^heir_id),
+                set: [role: "owner"]
+              )
+
+          Repo.delete!(member)
+      end
+
+      broadcast({:ok, %Team{id: member.team_id}})
+    end
+
+    :ok
+  end
+
   defp check_owner(scope, team), do: if(owner?(scope, team), do: :ok, else: {:error, :not_owner})
 
   defp check_not_last_owner(%Member{role: "owner", team_id: team_id}) do

@@ -28,7 +28,7 @@ defmodule BurrowWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
-  attr :active, :atom, default: nil, values: [nil, :projects, :teams, :ai, :logins, :settings]
+  attr :active, :atom, default: nil, values: [nil, :projects, :teams, :ai, :logins, :computers, :settings]
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -75,6 +75,15 @@ defmodule BurrowWeb.Layouts do
                 aria-current={@active == :ai && "page"}
               >
                 AI login
+              </.link>
+              <.link
+                navigate={~p"/computers"}
+                class="navlink"
+                data-kb="tab"
+                data-kb-go="m"
+                aria-current={@active == :computers && "page"}
+              >
+                Computers
               </.link>
               <.link
                 :if={@current_scope.user.admin}

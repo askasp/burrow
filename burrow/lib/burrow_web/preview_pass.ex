@@ -12,6 +12,9 @@ defmodule BurrowWeb.PreviewPass do
   cookies, so a chat's preview addresses also have its key in the host
   (`Burrow.Ports.url/2`, `?key=`), good while the chat runs.
 
+  An internal app's live (`Burrow.Projects.Project.internal?/1`) is only
+  for the people who see its project: their pass, not anyone's.
+
   Without such addresses (plain localhost ports, no router) there is no pass.
   """
 
@@ -33,9 +36,9 @@ defmodule BurrowWeb.PreviewPass do
   def call(%Plug.Conn{path_info: ["previews", "auth"]} = conn, _opts) do
     conn = conn |> fetch_query_params() |> fetch_cookies()
     port = port(conn.query_params["port"])
+    pass = verify(conn.cookies[@cookie], @max_age)
 
-    if match?({:ok, _}, verify(conn.cookies[@cookie], @max_age)) or prod_app?(port) or
-         Burrow.Chat.preview_key?(port, conn.query_params["key"]) do
+    if Burrow.Chat.preview_key?(port, conn.query_params["key"]) or open?(env(port), pass) do
       conn |> send_resp(204, "") |> halt()
     else
       conn
@@ -82,13 +85,31 @@ defmodule BurrowWeb.PreviewPass do
     end
   end
 
-  defp prod_app?(nil), do: false
+  # The project and env on `port`, or nil (a chat's preview, or nobody's).
+  defp env(nil), do: nil
 
-  defp prod_app?(port) do
-    Enum.any?(Burrow.Projects.all(), fn project ->
-      project.preview_ports && match?({_, %{"prod" => ^port}}, Burrow.Cell.ports(project))
+  defp env(port) do
+    Enum.find_value(Burrow.Projects.all(), fn project ->
+      if project.preview_ports do
+        {_previews, ports} = Burrow.Cell.ports(project)
+        Enum.find_value(ports, fn {name, p} -> if p == port, do: {project, name} end)
+      end
     end)
   end
+
+  # A prod app is everyone's, an internal app's live its project's people's,
+  # the rest any pass holder's.
+  defp open?({_project, "prod"}, _pass), do: true
+
+  defp open?({project, "live"}, {:ok, user_id}) do
+    case Burrow.Repo.get(Burrow.Accounts.User, user_id) do
+      nil -> false
+      user -> Burrow.Projects.visible?(Burrow.Accounts.Scope.for_user(user), project.id)
+    end
+  end
+
+  defp open?({_project, "live"}, _pass), do: false
+  defp open?(_env, pass), do: match?({:ok, _}, pass)
 
   # The port addresses' domain, example.com for https://peon-{port}.example.com,
   # when Burrow's own address is in it too (else browsers drop the cookie).

@@ -28,7 +28,8 @@ defmodule Burrow.Projects.Project do
   @auths [
     {"User accounts (email and password)", "accounts"},
     {"One username and password (basic auth)", "basic"},
-    {"Open: no login", "open"}
+    {"Open: no login", "open"},
+    {"Internal: Burrow login, opens inside Burrow", "burrow"}
   ]
 
   @doc """
@@ -65,6 +66,12 @@ defmodule Burrow.Projects.Project do
         |> delete_change(:basic_username)
         |> delete_change(:basic_password)
 
+      get_field(changeset, :auth) == "burrow" ->
+        changeset
+        |> delete_change(:basic_username)
+        |> delete_change(:basic_password)
+        |> delete_change(:signups)
+
       get_field(changeset, :auth) == "basic" ->
         changeset
         |> delete_change(:signups)
@@ -92,6 +99,12 @@ defmodule Burrow.Projects.Project do
 
   @doc "Made from an existing git repo: chats open PRs, there are no envs."
   def repo?(%__MODULE__{repo_url: url}), do: url not in [nil, ""]
+
+  @doc """
+  An app only seen inside Burrow, by the people who see the project, logged
+  in as themselves: dev, then live (no staging, no prod).
+  """
+  def internal?(%__MODULE__{auth: auth}), do: auth == "burrow"
 
   @doc "The basic auth login to hand to a new app, or nil."
   def basic_login(%__MODULE__{auth: "basic", basic_username: user, basic_password: pw})

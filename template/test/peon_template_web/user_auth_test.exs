@@ -86,6 +86,7 @@ defmodule PeonTemplateWeb.UserAuthTest do
       assert max_age == @remember_me_cookie_max_age
     end
 
+    # peon:unless-burrow
     test "redirects to settings when user is already logged in", %{conn: conn, user: user} do
       conn =
         conn
@@ -94,6 +95,8 @@ defmodule PeonTemplateWeb.UserAuthTest do
 
       assert redirected_to(conn) == ~p"/users/settings"
     end
+
+    # peon:end
 
     test "writes a cookie if remember_me was set in previous session", %{conn: conn, user: user} do
       conn = conn |> fetch_cookies() |> UserAuth.log_in_user(user, %{"remember_me" => "true"})
@@ -374,7 +377,9 @@ defmodule PeonTemplateWeb.UserAuthTest do
       conn = conn |> fetch_flash() |> UserAuth.require_authenticated_user([])
       assert conn.halted
 
+      # peon:unless-burrow
       assert redirected_to(conn) == ~p"/users/log-in"
+      # peon:end
 
       assert Phoenix.Flash.get(conn.assigns.flash, :error) ==
                "You must log in to access this page."

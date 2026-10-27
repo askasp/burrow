@@ -77,6 +77,32 @@ defmodule Burrow.TemplateTest do
     end
   end
 
+  test "burrow: an internal app, with accounts Burrow logs people in to, no password pages" do
+    files = files("burrow")
+
+    assert files["lib/sauna/site_access.ex"] =~ "def mode, do: :burrow"
+    assert files["lib/sauna/accounts.ex"] =~ "def burrow_user!(email, admin?)"
+    assert files["lib/sauna_web/controllers/burrow_login_controller.ex"]
+    assert files["test/sauna_web/controllers/burrow_login_controller_test.exs"]
+    assert files["lib/sauna_web/router.ex"] =~ ~s(get "/burrow/login")
+    assert files["lib/sauna_web/user_auth.ex"] =~ "def log_in(:burrow, path)"
+    assert files["lib/sauna_web/router.ex"] =~ ~s(live "/users/admin/data")
+    refute Enum.any?(Map.keys(files), &(&1 =~ ~r/user_live|user_session_controller/))
+
+    for path <- ~w(lib/sauna_web/router.ex lib/sauna_web/components/layouts/root.html.heex),
+        do: refute(files[path] =~ ~r"/users/(log-in|register|settings|log-out)")
+
+    refute files["lib/sauna_web/user_auth.ex"] =~ "def log_in(_mode"
+    assert files["AGENTS.md"] =~ "This is an internal app"
+    refute files["AGENTS.md"] =~ "email + password"
+    assert grep(files, ~r/peon:[a-z]/) == []
+
+    # The other apps get none of it.
+    for auth <- ~w(accounts basic open) do
+      assert grep(files(auth), ~r/burrow_user|BurrowLogin|:burrow\b|internal app/) == []
+    end
+  end
+
   test "an unknown login is refused" do
     assert_raise FunctionClauseError, fn -> Template.instantiate(@template, "sauna", "sso") end
   end
@@ -94,28 +120,60 @@ defmodule Burrow.TemplateTest do
       d
       """
 
-      assert Template.variant("x.ex", text, true) == {:ok, "a\nb\nd\n"}
-      assert Template.variant("x.ex", text, false) == {:ok, "a\nc\nd\n"}
+      assert Template.variant("x.ex", text, "accounts") == {:ok, "a\nb\nd\n"}
+      assert Template.variant("x.ex", text, "open") == {:ok, "a\nc\nd\n"}
 
       only = "# peon:accounts-only: note\ndefmodule X do\nend\n"
-      assert Template.variant("x.ex", only, true) == {:ok, "defmodule X do\nend\n"}
-      assert Template.variant("x.ex", only, false) == :skip
+      assert Template.variant("x.ex", only, "accounts") == {:ok, "defmodule X do\nend\n"}
+      assert Template.variant("x.ex", only, "burrow") == {:ok, "defmodule X do\nend\n"}
+      assert Template.variant("x.ex", only, "open") == :skip
+    end
+
+    test "burrow blocks nest in accounts blocks; burrow files" do
+      text = """
+      # peon:if-accounts
+      a
+      # peon:unless-burrow
+      b
+      # peon:end
+      # peon:end
+      # peon:if-burrow
+      c
+      # peon:end
+      """
+
+      assert Template.variant("x.ex", text, "accounts") == {:ok, "a\nb\n"}
+      assert Template.variant("x.ex", text, "burrow") == {:ok, "a\nc\n"}
+      assert Template.variant("x.ex", text, "open") == {:ok, ""}
+
+      only = "# peon:burrow-only\nx\n"
+      assert Template.variant("x.ex", only, "burrow") == {:ok, "x\n"}
+      assert Template.variant("x.ex", only, "accounts") == :skip
+
+      both = "# peon:accounts-only\n# peon:not-burrow\nx\n"
+      assert Template.variant("x.ex", both, "accounts") == {:ok, "x\n"}
+      assert Template.variant("x.ex", both, "burrow") == :skip
+      assert Template.variant("x.ex", both, "basic") == :skip
     end
 
     test "leave text that only mentions peon: alone" do
       text = "see peon:if-accounts in Peon.Template\n"
-      assert Template.variant("x.md", text, false) == {:ok, text}
+      assert Template.variant("x.md", text, "open") == {:ok, text}
     end
 
     test "must be balanced" do
       assert_raise ArgumentError, ~r/x.ex/, fn ->
-        Template.variant("x.ex", "# peon:if-accounts\na\n", false)
+        Template.variant("x.ex", "# peon:if-accounts\na\n", "open")
       end
 
-      assert_raise ArgumentError, fn -> Template.variant("x.ex", "# peon:end\n", false) end
+      assert_raise ArgumentError, fn -> Template.variant("x.ex", "# peon:end\n", "open") end
 
       assert_raise ArgumentError, fn ->
-        Template.variant("x.ex", "# peon:if-accounts\n# peon:if-accounts\n", true)
+        Template.variant("x.ex", "# peon:if-accounts\n# peon:if-accounts\n", "accounts")
+      end
+
+      assert_raise ArgumentError, ~r/unexpected peon:burrow-only/, fn ->
+        Template.variant("x.ex", "# peon:if-accounts\n# peon:burrow-only\n# peon:end\n", "burrow")
       end
     end
   end

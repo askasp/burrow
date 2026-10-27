@@ -10,12 +10,21 @@ defmodule PeonTemplateWeb.PageControllerTest do
   end
 
   # peon:if-accounts
+  # peon:unless-burrow
   test "GET / without logging in follows the site's access mode", %{conn: conn} do
     conn = get(conn, ~p"/")
 
     if PeonTemplate.SiteAccess.accounts?(),
       do: assert(redirected_to(conn) == ~p"/users/log-in"),
       else: assert(html_response(conn, 200))
+  end
+
+  # peon:end
+  # peon:end
+  # peon:if-burrow
+  test "GET / without logging in goes where people log in", %{conn: conn} do
+    [{_how, to}] = PeonTemplateWeb.UserAuth.log_in(PeonTemplate.SiteAccess.mode(), "/")
+    assert redirected_to(get(conn, ~p"/")) == to
   end
 
   # peon:end

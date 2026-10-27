@@ -33,6 +33,14 @@ defmodule Burrow.OpenCode.Server do
     end
   end
 
+  @doc "Stops the user's server, if it runs."
+  def stop(user_id) do
+    case Registry.lookup(@registry, user_id) do
+      [{pid, _}] -> DynamicSupervisor.terminate_child(Burrow.OpenCodeSupervisor, pid)
+      [] -> :ok
+    end
+  end
+
   def child_spec(user_id),
     do: %{
       id: {__MODULE__, user_id},

@@ -238,11 +238,7 @@ defmodule BurrowWeb.ChatsLive do
     %{current_scope: scope, chat: chat, target: target} = socket.assigns
 
     with id when is_integer(id) <- target,
-         {:ok, project} <- fetch_project(scope, id),
-         true <-
-           Activity.room?(project, scope.user.id) ||
-             {:error,
-              "You have #{Chats.max()} changes open in #{project.name}. Merge or discard one there first."} do
+         {:ok, project} <- fetch_project(scope, id) do
       new = Chats.create_empty(project.id, scope.user, from_chat: chat.id)
 
       {:noreply,
@@ -338,7 +334,8 @@ defmodule BurrowWeb.ChatsLive do
   defp load_chats(socket), do: assign(socket, chats: GeneralChats.list(socket.assigns.user_id))
 
   # Every project the user can open, with what it is doing (`Burrow.Activity`).
-  defp load_rail(socket) do
+  @doc "The drawer's projects (\"Switch to\", the apps on top), none of them the page's."
+  def load_rail(socket) do
     rail =
       for p <- Projects.list(socket.assigns.current_scope) do
         tile = Activity.of(p, socket.assigns.current_scope.user.id)
@@ -348,6 +345,7 @@ defmodule BurrowWeb.ChatsLive do
           name: p.name,
           url: ~p"/projects/#{p.id}",
           current: false,
+          internal: Projects.Project.internal?(p),
           state: tile["state"],
           label: tile["label"],
           pct: tile["pct"]
@@ -382,7 +380,7 @@ defmodule BurrowWeb.ChatsLive do
         there =
           for p <- projects,
               c <- Chats.list(p, scope.user.id),
-              c.title != "",
+              c.title != "" and not Chats.peon?(c),
               String.contains?(String.downcase(c.title), String.downcase(text)),
               do: %{id: c.id, title: c.title, sub: p.name, url: ~p"/projects/#{p.id}/c/#{c.id}"}
 
@@ -663,7 +661,7 @@ defmodule BurrowWeb.ChatsLive do
         data-kb-zoom-hide
       >
         <div class="dlist">
-          <.all_projects />
+          <.all_projects rail={@rail} />
           <div :if={!@peek} class="dtop">
             <button
               id="space-switch"
@@ -1168,9 +1166,20 @@ defmodule BurrowWeb.ChatsLive do
     <script :type={Phoenix.LiveView.ColocatedHook} name=".SubmitOnEnter">
       export default {
         mounted() {
+          // The box grows with its text up to its max-height, then scrolls,
+          // all the way down while typing at the end so that line isn't in the fade
+          this.fit = () => {
+            const el = this.el
+            el.style.height = "auto"
+            el.style.height = el.scrollHeight + "px"
+            if (el.selectionEnd === el.value.length) el.scrollTop = el.scrollHeight
+          }
+          this.el.addEventListener("input", this.fit)
+          this.fit()
           this.handleEvent("composer:focus", () => this.el.focus())
           this.handleEvent("composer:put", ({text}) => {
             this.el.value = text
+            this.fit()
             this.el.focus()
           })
           // Pasted images go with the message
@@ -1182,10 +1191,11 @@ defmodule BurrowWeb.ChatsLive do
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               this.el.form.requestSubmit()
-              if (!document.querySelector("#composer-files .shot")) this.el.value = ""
+              if (!document.querySelector("#composer-files .shot")) { this.el.value = ""; this.fit() }
             }
           })
-        }
+        },
+        updated() { this.fit() }
       }
     </script>
     <script :type={Phoenix.LiveView.ColocatedHook} name=".PeonLook">

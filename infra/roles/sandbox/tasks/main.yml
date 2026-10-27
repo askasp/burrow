@@ -1,0 +1,23 @@
+---
+# The image every project container runs (images/elixir-dev), built from this
+# checkout, so a machine without Burrow's source can have it too.
+
+- name: Copy the image's build context
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../images/elixir-dev/"
+    dest: /opt/burrow-images/elixir-dev/
+    owner: root
+    group: root
+    mode: "0644"
+  register: sandbox_context
+
+- name: Look for the image
+  ansible.builtin.command: docker image inspect {{ sandbox_image }}
+  register: sandbox_inspect
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Build it
+  ansible.builtin.command: docker build -t {{ sandbox_image }} /opt/burrow-images/elixir-dev
+  when: sandbox_context is changed or sandbox_inspect.rc != 0

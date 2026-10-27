@@ -7,6 +7,7 @@ defmodule PeonTemplateWeb.UserAuth do
 
   alias PeonTemplate.Accounts
   alias PeonTemplate.Accounts.Scope
+  alias PeonTemplate.SiteAccess
 
   # Make the remember me cookie valid for 14 days. This should match
   # the session validity setting in UserToken.
@@ -254,7 +255,7 @@ defmodule PeonTemplateWeb.UserAuth do
       socket =
         socket
         |> Phoenix.LiveView.put_flash(:error, "You must log in to access this page.")
-        |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+        |> Phoenix.LiveView.redirect(log_in(SiteAccess.mode(), "/"))
 
       {:halt, socket}
     end
@@ -284,7 +285,7 @@ defmodule PeonTemplateWeb.UserAuth do
       socket =
         socket
         |> Phoenix.LiveView.put_flash(:error, "You must re-authenticate to access this page.")
-        |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+        |> Phoenix.LiveView.redirect(log_in(SiteAccess.mode(), "/"))
 
       {:halt, socket}
     end
@@ -302,12 +303,27 @@ defmodule PeonTemplateWeb.UserAuth do
   end
 
   @doc "Returns the path to redirect to after log in."
+  # peon:unless-burrow
   # the user was already logged in, redirect to settings
   def signed_in_path(%Plug.Conn{assigns: %{current_scope: %Scope{user: %Accounts.User{}}}}) do
     ~p"/users/settings"
   end
 
+  # peon:end
+
   def signed_in_path(_), do: ~p"/"
+
+  @doc """
+  Where people log in, for `redirect/2`, coming back to `path` (`mode` is
+  `PeonTemplate.SiteAccess.mode/0`).
+  """
+  # peon:if-burrow
+  # An internal app's people log in to Burrow, which sends them back here.
+  def log_in(:burrow, path), do: [external: PeonTemplateWeb.BurrowLoginController.url(path)]
+  # peon:end
+  # peon:unless-burrow
+  def log_in(_mode, _path), do: [to: ~p"/users/log-in"]
+  # peon:end
 
   @doc """
   Plug for routes that require the user to be authenticated.
@@ -319,7 +335,7 @@ defmodule PeonTemplateWeb.UserAuth do
       conn
       |> put_flash(:error, "You must log in to access this page.")
       |> maybe_store_return_to()
-      |> redirect(to: ~p"/users/log-in")
+      |> redirect(log_in(SiteAccess.mode(), current_path(conn)))
       |> halt()
     end
   end

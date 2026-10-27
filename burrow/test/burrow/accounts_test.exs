@@ -394,4 +394,39 @@ defmodule Burrow.AccountsTest do
       refute inspect(%User{password: "123456"}) =~ "password: \"123456\""
     end
   end
+
+  describe "delete_user/2" do
+    test "hands shared projects to a teammate, deletes the rest, and leaves teams an owner" do
+      admin = user_fixture() |> Ecto.Changeset.change(admin: true) |> Repo.update!()
+      gone = user_scope_fixture()
+      mate = user_scope_fixture()
+
+      {:ok, crew} = Burrow.Teams.create(gone, %{"name" => "Crew"})
+      {:ok, _} = Burrow.Teams.add_member(gone, crew, mate.user.email)
+      {:ok, solo} = Burrow.Teams.create(gone, %{"name" => "Solo"})
+      {:ok, shared} = Burrow.Projects.create(gone, %{"name" => "Tower", "team_id" => crew.id})
+      {:ok, private} = Burrow.Projects.create(gone, %{"name" => "Diary"})
+      {:ok, alone} = Burrow.Projects.create(gone, %{"name" => "Hermit", "team_id" => solo.id})
+      token = Accounts.generate_user_session_token(gone.user)
+
+      assert {:ok, {%User{}, [%UserToken{token: ^token}]}} =
+               Accounts.delete_user(admin, gone.user)
+
+      refute Repo.get(User, gone.user.id)
+      assert Repo.get(Burrow.Projects.Project, shared.id).user_id == mate.user.id
+      refute Repo.get(Burrow.Projects.Project, private.id)
+      refute Repo.get(Burrow.Projects.Project, alone.id)
+      assert Burrow.Teams.owner?(mate, crew)
+      refute Repo.get(Burrow.Teams.Team, solo.id)
+    end
+
+    test "only admins delete, and not themselves" do
+      admin = user_fixture() |> Ecto.Changeset.change(admin: true) |> Repo.update!()
+      user = user_fixture()
+
+      assert {:error, :self} = Accounts.delete_user(admin, admin)
+      assert {:error, :not_admin} = Accounts.delete_user(user, admin)
+      assert Repo.get(User, admin.id)
+    end
+  end
 end

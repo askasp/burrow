@@ -1,0 +1,28 @@
+#!/bin/bash
+# {{ ansible_managed }}
+# A consistent copy of every SQLite database under {{ burrow_home }} (Burrow's,
+# and each app's in envs/<env>/data/app.db), then the rest of it, to restic.
+# Live database files are left out: they can be mid-write.
+set -euo pipefail
+set -a; . /etc/burrow/restic.env; set +a
+
+snap=/var/lib/burrow-backup
+rm -rf "$snap"
+mkdir -p "$snap"
+cd {{ burrow_home }}
+
+find . -path ./data/cache -prune -o -type f -name '*.db' -print0 |
+  while IFS= read -r -d '' db; do
+    mkdir -p "$snap/$(dirname "$db")"
+    sqlite3 "$db" ".backup '$snap/$db'"
+  done
+
+restic cat config >/dev/null 2>&1 || restic init
+
+restic backup --tag burrow \
+  --exclude '{{ burrow_home }}/data/cache' \
+  --exclude '_build' --exclude 'deps' --exclude 'node_modules' \
+  --exclude '*.db' --exclude '*.db-wal' --exclude '*.db-shm' \
+  {{ burrow_home }} "$snap"
+
+restic forget --tag burrow --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune

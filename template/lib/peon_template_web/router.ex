@@ -72,15 +72,20 @@ defmodule PeonTemplateWeb.Router do
   scope "/", PeonTemplateWeb do
     pipe_through [:browser, :require_authenticated_user]
 
+    # peon:unless-burrow
     live_session :require_authenticated_user,
       on_mount: [{PeonTemplateWeb.UserAuth, :require_authenticated}] do
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
 
+    # peon:end
+
     live_session :require_admin,
       on_mount: [{PeonTemplateWeb.UserAuth, :require_admin}] do
+      # peon:unless-burrow
       live "/users/admin", UserLive.Admin, :index
+      # peon:end
       live "/users/admin/data", DataLive.Index, :schemas
       live "/users/admin/data/:schema", DataLive.Index, :rows
       live "/users/admin/data/:schema/new", DataLive.Form, :new
@@ -88,9 +93,21 @@ defmodule PeonTemplateWeb.Router do
       live "/users/admin/data/:schema/:id/edit", DataLive.Form, :edit
     end
 
+    # peon:unless-burrow
     post "/users/update-password", UserSessionController, :update_password
+    # peon:end
   end
 
+  # peon:if-burrow
+  # Burrow logs people in (PeonTemplateWeb.BurrowLoginController).
+  scope "/", PeonTemplateWeb do
+    pipe_through [:browser]
+
+    get "/burrow/login", BurrowLoginController, :create
+  end
+
+  # peon:end
+  # peon:unless-burrow
   scope "/", PeonTemplateWeb do
     pipe_through [:browser]
 
@@ -104,6 +121,8 @@ defmodule PeonTemplateWeb.Router do
     post "/users/log-in", UserSessionController, :create
     delete "/users/log-out", UserSessionController, :delete
   end
+
+  # peon:end
 
   # peon:end
 

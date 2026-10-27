@@ -8,9 +8,7 @@ defmodule Burrow.Chats do
 
   A chat is seen only by the user who opened it; one Peon opened (an
   incident's fix, a project's first chat) by the project's owner
-  (`list/2`). Everyone has at most four chats in a project that aren't done
-  (`max/0`, `Burrow.Activity.room?/2`); done ones stay, to read and follow
-  up on. A chat starts empty (title `""`) and its first message titles it
+  (`list/2`). Done chats stay, to read and follow up on. A chat starts empty (title `""`) and its first message titles it
   (`started/2`).
 
   Broadcasts `{:chat_created, chat}`, `{:chat_started, id}` and
@@ -23,10 +21,6 @@ defmodule Burrow.Chats do
   alias Burrow.{Accounts, Projects, Repo}
   alias Burrow.Chats.Chat
 
-  @max 4
-
-  def max, do: @max
-
   def subscribe(project_id), do: Projects.subscribe(project_id, "chats")
 
   def create_empty(project_id, by, opts \\ []),
@@ -37,7 +31,8 @@ defmodule Burrow.Chats do
   `"peon"` for one the project's owner sees. Options: `:model` and
   `:effort` (see `pick_model/3`), `:follows` (the change it follows up on),
   `:from_chat` (the general chat it starts from, `Burrow.GeneralChats`),
-  `started: false`.
+  `:horde_id` (the horde it is a peon of, `Burrow.Hordes`), `:shipping`
+  (`Burrow.Ship`), `started: false`.
   """
   def create(project_id, title, by, opts \\ []) do
     {created_by, user_id} = by(by)
@@ -53,6 +48,8 @@ defmodule Burrow.Chats do
         effort: effort(opts[:effort]),
         follows: opts[:follows],
         from_chat: opts[:from_chat],
+        horde_id: opts[:horde_id],
+        shipping: opts[:shipping],
         started_at: if(opts[:started] != false, do: DateTime.utc_now(:second))
       })
 
@@ -103,6 +100,12 @@ defmodule Burrow.Chats do
 
   def get(id), do: Repo.get(Chat, id)
 
+  @doc """
+  Whether the chat is a horde's peon (`Burrow.Hordes`): it is opened from
+  its horde's chat, and lists of chats leave it out.
+  """
+  def peon?(%Chat{horde_id: id}), do: id != nil
+
   @doc "The project's chat `id` when user `user_id` sees it (`list/2`), else nil."
   def get(%Projects.Project{} = project, user_id, id),
     do:
@@ -131,6 +134,30 @@ defmodule Burrow.Chats do
   """
   def agents(%Projects.Project{} = project),
     do: if(Projects.Project.repo?(project), do: ~w(plan build), else: ~w(plan build design))
+
+  @doc "The ids of the project's chats on autopilot (`pick_shipping/2`)."
+  def piloted(project_id),
+    do:
+      Repo.all(
+        from c in Chat, where: c.project_id == ^project_id and c.shipping == "pilot", select: c.id
+      )
+
+  @doc """
+  How the chat's change ships (`Burrow.Ship`): "review", "pilot", or
+  anything else for merging it when its checks pass (nil).
+  """
+  def pick_shipping(%Chat{} = chat, shipping),
+    do: set(chat, shipping: if(shipping in ~w(review pilot), do: shipping))
+
+  @doc """
+  "Split into a horde": Peon splits big tasks into a horde by itself, `n`
+  peons at a time (`Burrow.Hordes`); nil turns it off.
+  """
+  def pick_horde(%Chat{} = chat, n),
+    do:
+      set(chat,
+        horde_at_once: if(is_integer(n), do: n |> max(1) |> min(Burrow.Hordes.max_at_once()))
+      )
 
   @doc "The chat's agent from its next message; build is nil."
   def pick_agent(%Chat{} = chat, agent),

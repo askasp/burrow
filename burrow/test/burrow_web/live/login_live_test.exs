@@ -30,6 +30,18 @@ defmodule BurrowWeb.LoginLiveTest do
     refute has_element?(lv, "#new-login")
   end
 
+  test "an admin deletes someone else's login, not their own", %{conn: conn, user: user} do
+    user |> Ecto.Changeset.change(admin: true) |> Burrow.Repo.update!()
+    other = Burrow.AccountsFixtures.user_fixture()
+    {:ok, lv, _html} = live(conn, ~p"/logins")
+
+    refute has_element?(lv, "#delete-user-#{user.id}")
+    lv |> element("#delete-user-#{other.id}") |> render_click()
+
+    refute has_element?(lv, "#user-#{other.id}")
+    refute Accounts.get_user_by_email(other.email)
+  end
+
   test "someone who isn't an admin can't open it or make logins", %{conn: conn, user: user} do
     assert {:error, {:live_redirect, %{to: "/projects"}}} = live(conn, ~p"/logins")
     assert {:error, :not_admin} = Accounts.create_login(user, "friend@example.com")

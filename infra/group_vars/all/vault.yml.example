@@ -1,0 +1,14 @@
+---
+# Copy into an encrypted vault.yml:
+#   ansible-vault create group_vars/all/vault.yml
+# (the password file is ~/.config/ansible/vault-pass, see ansible.cfg)
+
+# resend.com > API Keys > Create: permission "Sending access", domain = the
+# one burrow_mail_from is on.
+vault_resend_api_key: re_xxxxxxxxxxxxxxxxxxxxxxxx
+
+# Only with backup_restic_repository set. Keep the restic password somewhere
+# else too: without it the backups can't be read.
+vault_restic_password: change-me
+vault_backup_aws_access_key_id: xxxxxxxx
+vault_backup_aws_secret_access_key: xxxxxxxx

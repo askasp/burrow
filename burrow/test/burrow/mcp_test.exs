@@ -24,7 +24,8 @@ defmodule Burrow.Agent.MCPTest do
              ~w(submit_changeset restart_preview restore runtime secrets request_secret)
 
     assert names.(repo) ==
-             ~w(submit_changeset restart_preview secrets pull_request request_secret)
+             ~w(submit_changeset restart_preview secrets pull_request comment_on_pull_request
+                request_secret)
 
     assert %{error: %{code: -32601}} = rpc("nope", app)
   end

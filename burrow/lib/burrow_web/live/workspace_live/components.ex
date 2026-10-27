@@ -54,7 +54,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       data-kb-zoom-hide
     >
       <div class="dlist">
-        <.all_projects />
+        <.all_projects rail={@rail} />
         <div :if={!@peek} class="dtop">
           <button
             id="project-switch"
@@ -291,14 +291,33 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       |> JS.add_class("show-drawer", to: ".ws-root")
 
   attr :current, :boolean, default: false, doc: "the projects page is the page"
+  attr :rail, :list, default: [], doc: "the drawer's projects; the internal ones are apps"
+  attr :app, :any, default: nil, doc: "the app that is the page"
 
-  @doc "All projects, on top of the drawer."
+  @doc """
+  All projects, on top of the drawer, and under it the apps: the internal
+  projects (`Burrow.Projects.Project.internal?/1`), each opening full size.
+  """
   def all_projects(assigns) do
+    assigns = assign(assigns, apps: Enum.filter(assigns.rail, & &1[:internal]))
+
     ~H"""
     <div class="dhome">
       <.link navigate={~p"/projects"} class="mi" aria-current={@current && "page"}>
         <.icon name="hero-squares-2x2" class="size-[18px]" /><span class="flex-1">All projects</span>
       </.link>
+      <nav :if={@apps != []} id="apps" aria-label="Apps">
+        <div class="dsec"><span>Apps</span></div>
+        <.link
+          :for={a <- @apps}
+          id={"app-#{a.id}"}
+          navigate={~p"/apps/#{a.id}"}
+          class="mi"
+          aria-current={@app == a.id && "page"}
+        >
+          <.icon name="hero-window" class="size-[18px]" /><span class="flex-1 truncate">{a.name}</span>
+        </.link>
+      </nav>
     </div>
     """
   end
@@ -392,7 +411,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   @doc """
   The account at the bottom of the drawer: the user, and above it Teams, AI
-  login, Logins, the theme and Log out.
+  login, Logins, Computers, the theme and Log out.
   """
   def account_menu(assigns) do
     ~H"""
@@ -415,6 +434,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="size-3.5 muted"
         /></.link>
         <.link navigate={~p"/logins"} class="mi"><span class="flex-1">Logins</span><.icon
+          name="hero-chevron-right"
+          class="size-3.5 muted"
+        /></.link>
+        <.link navigate={~p"/computers"} class="mi"><span class="flex-1">Computers</span><.icon
           name="hero-chevron-right"
           class="size-3.5 muted"
         /></.link>
@@ -601,12 +624,6 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
-  @doc "Why New chat is off."
-  def full_text,
-    do:
-      "You have #{Chats.max()} chats with open changes. Merge or discard one, then send " <>
-        "this again: it stays in the box."
-
   @doc "The chats that aren't done, the one worked on last first."
   def open_chats(tabs), do: Enum.reject(tabs, &Activity.done?/1)
 
@@ -636,12 +653,16 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   end
 
   @doc "Where a chat's change stands, in a word or two, and its tone."
+  def row_status(%{horde: {text, tone}}), do: {text, tone}
+  def row_status(%{phase: "live", internal: true}), do: {"Live", "done"}
+  def row_status(%{phase: "landing", internal: true}), do: {"Going live", "working"}
   def row_status(%{phase: "live"}), do: {"On prod", "done"}
   def row_status(%{phase: "staged"}), do: {"On staging", "done"}
   def row_status(%{phase: "landing"}), do: {"Going to staging", "working"}
   def row_status(%{phase: "working", draft: %{status: "checking"}}), do: {"Checking", "working"}
   def row_status(%{phase: "working"}), do: {"Working", "working"}
   def row_status(%{phase: "failed"}), do: {"Checks failed", "err"}
+  def row_status(%{phase: "held"}), do: {"Ready to merge", "waiting"}
   def row_status(%{phase: "ready"}), do: {"PR open", "waiting"}
   def row_status(%{phase: "merged"}), do: {"PR merged", "done"}
   def row_status(%{phase: "closed"}), do: {"PR closed", "done"}
@@ -710,10 +731,9 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :preview_tone, :string, required: true, doc: "how the preview is doing: ok, warn, idle…"
 
   @doc """
-  Over the chat, quietly: its title and the line under it, a button that
-  opens the project's menu (\"Deploys and usage\", sharing, secrets). A
-  closed preview comes back with \"Preview\"; on phones the preview button
-  opens it over the chat.
+  Over the chat, quietly: its title and the line under it, and the
+  project's ⋯ menu (`project_menu/1`). A closed preview comes back with
+  \"Preview\"; on phones the preview button opens it over the chat.
   """
   def chat_bar(assigns) do
     ~H"""
@@ -726,22 +746,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       >
         <.icon name="hero-bars-2" class="size-5" />
       </button>
-      <div class="menuw pbar-title">
-        <button
-          id="more-btn"
-          type="button"
-          class="pbar-ttl"
-          aria-label={
-            "#{@title}. Menu for #{@project && @project.name}" <>
-              if(@open_incidents > 0, do: ", #{@open_incidents} open incidents", else: "")
-          }
-          aria-haspopup="menu"
-          aria-expanded="false"
-          phx-click={
-            JS.toggle(to: "#more-menu")
-            |> JS.toggle_attribute({"aria-expanded", "true", "false"})
-          }
-        >
+      <div class="pbar-title">
+        <div class="pbar-ttl">
           <span class="pbar-name"><span class="pbar-t">{@title}</span></span>
           <span class="pbar-meta">
             {Enum.join(@ctx, " · ")}<span :if={@status}>{if @ctx != [], do: " · "}<span class={[
@@ -749,66 +755,50 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               elem(@status, 1)
             ]}>{elem(@status, 0)}</span></span>
           </span>
-          <span class="pbar-chev" aria-hidden="true">
-            <.icon name="hero-chevron-down" class="size-3.5" />
-            <span :if={@open_incidents > 0} class="mdot"></span>
-          </span>
-        </button>
-        <div
-          id="more-menu"
-          class="menu"
-          role="menu"
-          style="display: none"
-          phx-click-away={hide_menu()}
-        >
-          <div class="menu-meta mono">{@meta}</div>
-          <button
-            :if={!@repo?}
-            id="overview-btn"
-            type="button"
-            role="menuitem"
-            phx-click={hide_menu() |> JS.push("toggle_overview")}
-            data-kb-key="s"
-            data-kb-label="Deploys and usage"
-            data-kb-group="Ship"
-          >
-            {if @overview, do: "Back to preview", else: "Deploys and usage"}<span
-              :if={@open_incidents > 0}
-              class="k text-[var(--err)]"
-            >{@open_incidents} {if @open_incidents == 1, do: "incident", else: "incidents"}</span>
-          </button>
-          <div :if={!@repo?} class="msep" role="separator"></div>
-          <button
-            :if={@sharing}
-            type="button"
-            role="menuitem"
-            phx-click={hide_menu() |> JS.push("dialog", value: %{dialog: "share"})}
-          >
-            Share<span class="k">{if @sharing.team, do: @sharing.team.name, else: "Only me"}</span>
-          </button>
-          <button
-            :if={@sharing && @sharing.owner? && @sharing.team && @sharing.teammates != []}
-            type="button"
-            role="menuitem"
-            phx-click={hide_menu() |> JS.push("dialog", value: %{dialog: "hand_over"})}
-          >
-            Hand over
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            phx-click={hide_menu() |> JS.push("dialog", value: %{dialog: "secrets"})}
-            data-kb-key="k"
-            data-kb-label="Secrets"
-            data-kb-group="Ship"
-          >
-            Secrets<span class={["k", asked(@secrets) != [] && "text-[var(--warn)]"]}>{secrets_text(
-              @secrets
-            )}</span>
-          </button>
         </div>
       </div>
       <div class="pbar-acts">
+        <div :if={@project} class="menuw">
+          <button
+            id="more-btn"
+            type="button"
+            class="icon-btn"
+            aria-label={
+              "More for #{@project.name}" <>
+                if(@open_incidents > 0, do: ", #{@open_incidents} open incidents", else: "")
+            }
+            aria-haspopup="menu"
+            aria-expanded="false"
+            phx-click={
+              JS.toggle(to: "#more-menu")
+              |> JS.toggle_attribute({"aria-expanded", "true", "false"})
+            }
+          >
+            <.icon name="hero-ellipsis-horizontal" class="size-5" />
+            <span :if={@open_incidents > 0} class="mdot"></span>
+          </button>
+          <div
+            id="more-menu"
+            class="menu"
+            role="menu"
+            style="display: none"
+            phx-click-away={hide_menu()}
+          >
+            <div class="menu-meta mono">{@meta}</div>
+            <.project_menu
+              project={@project}
+              here?
+              repo?={@repo?}
+              owner?={@sharing && @sharing.owner?}
+              team={@sharing && @sharing.team && @sharing.team.name}
+              hand_over?={@sharing && @sharing.owner? && @sharing.team && @sharing.teammates != []}
+              overview={@overview}
+              secrets={@secrets}
+              open_incidents={@open_incidents}
+              close={hide_menu()}
+            />
+          </div>
+        </div>
         <button
           :if={!@preview_open}
           id="preview-chip"
@@ -836,6 +826,93 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp hide_menu,
     do: JS.hide(to: "#more-menu") |> JS.set_attribute({"aria-expanded", "false"}, to: "#more-btn")
+
+  ## Project menu
+
+  attr :project, :map, required: true
+  attr :here?, :boolean, default: false, doc: "in the project's workspace"
+  attr :repo?, :boolean, required: true
+  attr :owner?, :boolean, required: true
+  attr :team, :string, default: nil, doc: "the team it is shared with"
+  attr :hand_over?, :boolean, required: true
+  attr :overview, :boolean, default: false, doc: "\"Deploys and usage\" is open"
+  attr :secrets, :list, default: nil, doc: "the project's, where known"
+  attr :open_incidents, :integer, default: 0
+  attr :close, JS, default: %JS{}, doc: "closes the menu as an item is picked"
+
+  @doc """
+  The project's ⋯ menu, the same in its workspace and on the projects page:
+  "Deploys and usage" and Secrets (`"open"`; elsewhere they open the
+  workspace on them), sharing, restart and, for its owner, delete. Each
+  item pushes its event with the project's `id`.
+  """
+  def project_menu(assigns) do
+    ~H"""
+    <button
+      :if={!@repo?}
+      id={@here? && "overview-btn"}
+      type="button"
+      role="menuitem"
+      phx-click={@close |> JS.push("open", value: %{open: "deploys", id: @project.id})}
+      data-kb-key={@here? && "s"}
+      data-kb-label="Deploys and usage"
+      data-kb-group="Ship"
+    >
+      {if @overview, do: "Back to preview", else: "Deploys and usage"}<span
+        :if={@open_incidents > 0}
+        class="k text-[var(--err)]"
+      >{@open_incidents} {if @open_incidents == 1, do: "incident", else: "incidents"}</span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      phx-click={@close |> JS.push("open", value: %{open: "secrets", id: @project.id})}
+      data-kb-key={@here? && "k"}
+      data-kb-label="Secrets"
+      data-kb-group="Ship"
+    >
+      Secrets<span :if={@secrets} class={["k", asked(@secrets) != [] && "text-[var(--warn)]"]}>{secrets_text(
+        @secrets
+      )}</span>
+    </button>
+    <div class="msep" role="separator"></div>
+    <button
+      :if={@owner?}
+      type="button"
+      role="menuitem"
+      phx-click={@close |> JS.push("dialog", value: %{dialog: "share", id: @project.id})}
+    >
+      Share<span class="k">{@team || "Only me"}</span>
+    </button>
+    <button
+      :if={@hand_over?}
+      type="button"
+      role="menuitem"
+      phx-click={@close |> JS.push("dialog", value: %{dialog: "hand_over", id: @project.id})}
+    >
+      Hand over
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      phx-click={@close |> JS.push("restart", value: %{id: @project.id})}
+    >
+      Restart <.icon name="hero-arrow-path" class="size-4 text-[var(--text-3)]" />
+    </button>
+    <div :if={@owner?} class="msep" role="separator"></div>
+    <button
+      :if={@owner?}
+      id={"delete-project-#{@project.id}"}
+      type="button"
+      role="menuitem"
+      class="danger"
+      phx-click={@close |> JS.push("delete_project", value: %{id: @project.id})}
+      data-confirm={"Delete #{@project.name} for good? Its chats, code history, environments and secrets go with it."}
+    >
+      Delete project
+    </button>
+    """
+  end
 
   ## Agent
 
@@ -1277,6 +1354,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         phase: phase,
         steps: (draft.checks["steps"] || []) ++ main,
         reached: reached(phase),
+        internal: match?(%{internal: true}, assigns.tab),
         title: if(draft.change, do: "Change ##{draft.change}", else: "Change")
       )
 
@@ -1288,8 +1366,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           class="size-[17px]"
         /></span>
         <h2 class="m-0 text-[15px] leading-[22px] font-semibold">{@title}</h2>
-        <span class={["st", badge_tone(@phase)]}><span class="dot"></span>{badge(@phase)}</span>
-        <div class="flow mono ml-auto">
+        <span class={["st", badge_tone(@phase)]}><span class="dot"></span>{badge(@phase, @internal)}</span>
+        <div :if={@internal} class="flow mono ml-auto">
+          <span class="on">dev</span>
+          <.icon name="hero-arrow-right" class="size-3" />
+          <span class={@reached >= 3 && "on"}>live</span>
+        </div>
+        <div :if={!@internal} class="flow mono ml-auto">
           <span class="on">dev</span>
           <.icon name="hero-arrow-right" class="size-3" />
           <span class={@reached >= 2 && "on"}>staging</span>
@@ -1320,10 +1403,21 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           >
             Discard
           </button>
+          <button
+            :if={@phase == "held"}
+            id="merge-btn"
+            type="button"
+            class="btn btn-primary btn-sm"
+            phx-click="merge"
+          >
+            Merge
+          </button>
           <div :if={@phase in ~w(landing staged)} class="dep" role="status">
             <span :if={@phase == "staged"} class="live"><.icon name="hero-check" class="size-4" />
             On staging</span>
-            <span :if={@phase == "landing" and !@promote}>Going to staging</span>
+            <span :if={@phase == "landing" and !@promote}>
+              {if @internal, do: "Going live", else: "Going to staging"}
+            </span>
             <span :if={@phase == "landing" and !@promote} class="dbar" aria-hidden="true"><i></i></span>
             <button
               :if={@phase == "staged"}
@@ -1510,7 +1604,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     <section id="chat-done" class="ws-done" aria-label="This chat is done">
       <div class="h">
         <.icon name="hero-check" class="size-[17px] self-center text-[var(--ok)]" />
-        <b>#{@id} {if @tab.phase == "live", do: "is on prod.", else: "is on staging."}</b>
+        <b>#{@id} {done_where(@tab)}</b>
         <span>This chat is done.</span>
       </div>
       <div class="a">
@@ -1536,13 +1630,22 @@ defmodule BurrowWeb.WorkspaceLive.Components do
     """
   end
 
+  defp done_where(%{phase: "live", internal: true}), do: "is live."
+  defp done_where(%{phase: "live"}), do: "is on prod."
+  defp done_where(_tab), do: "is on staging."
+
   defp reached("landing"), do: 1
   defp reached("staged"), do: 2
   defp reached("live"), do: 3
   defp reached(_phase), do: 0
 
+  defp badge("landing", true), do: "going live"
+  defp badge("live", true), do: "live"
+  defp badge(phase, _internal?), do: badge(phase)
+
   defp badge("working"), do: "checking"
   defp badge("failed"), do: "checks failed"
+  defp badge("held"), do: "ready to merge"
   defp badge("ready"), do: "pull request open"
   defp badge("merged"), do: "pull request merged"
   defp badge("closed"), do: "pull request closed"
@@ -1553,7 +1656,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp badge_tone(phase) when phase in ~w(working landing), do: "warn"
   defp badge_tone("failed"), do: "err"
-  defp badge_tone(phase) when phase in ~w(ready merged staged live), do: "ok"
+  defp badge_tone(phase) when phase in ~w(ready merged staged live held), do: "ok"
   defp badge_tone(_), do: "idle"
 
   attr :status, :string, required: true
@@ -1668,19 +1771,19 @@ defmodule BurrowWeb.WorkspaceLive.Components do
             <.icon name="hero-arrow-top-right-on-square" class="size-4 vout" />
           </a>
           <button
-            :if={"staging" in @env_names}
+            :for={env <- Enum.take(@env_names, 1)}
             type="button"
             role="menuitemradio"
-            aria-checked={to_string(@view == "staging")}
-            phx-click={hide_view_menu() |> JS.push("view", value: %{view: "staging"})}
+            aria-checked={to_string(@view == env)}
+            phx-click={hide_view_menu() |> JS.push("view", value: %{view: env})}
           >
-            <span class={["st", st_tone(@envs["staging"] && @envs["staging"].status)]}><span class="dot"></span></span>
+            <span class={["st", st_tone(@envs[env] && @envs[env].status)]}><span class="dot"></span></span>
             <span class="vt">
-              <span class="mono">staging</span>
-              <span class="vd">{env_about("staging")}{env_word(@envs["staging"])
+              <span class="mono">{env}</span>
+              <span class="vd">{env_about(env)}{env_word(@envs[env])
               |> then(&if(&1 != "", do: " · " <> &1, else: ""))}</span>
             </span>
-            <.icon :if={@view == "staging"} name="hero-check" class="size-4 vcheck" />
+            <.icon :if={@view == env} name="hero-check" class="size-4 vcheck" />
           </button>
           <button
             type="button"
@@ -1732,7 +1835,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       </div>
       <a
         :if={@view != "design" && @preview.url && !@preview[:empty]}
-        href={@preview.url}
+        href={@preview[:frame] || @preview.url}
         target="_blank"
         rel="noopener"
         class="icon-btn"
@@ -1871,7 +1974,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       <iframe
         :if={@preview.live?}
         id={"preview-#{@view}-#{@frame_key}"}
-        src={@preview.url}
+        src={@preview[:frame] || @preview.url}
         class="ws-frame"
       />
       <div :if={!@preview.live?} class="ws-prev-empty" role="status">
@@ -1905,7 +2008,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
         </button>
         <a
           :if={@preview[:open] && @preview.url}
-          href={@preview.url}
+          href={@preview[:frame] || @preview.url}
           target="_blank"
           rel="noopener"
           data-kb="row"
@@ -1950,6 +2053,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
   defp env_about("prod"), do: "What your users see now"
   defp env_about("staging"), do: "Every merged chat, before prod"
+  defp env_about("live"), do: "Every merged chat, seen only in Burrow"
 
   defp env_word(nil), do: ""
   defp env_word(%{deployed: nil}), do: "not built"
@@ -1988,10 +2092,13 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   incidents, and the latest deploys.
   """
   def overview(assigns) do
-    prod = assigns.envs["prod"]
+    # What people use: prod, or an internal app's live
+    live = List.last(assigns.env_names)
+    prod = assigns.envs[live]
 
     assigns =
       assign(assigns,
+        live: live,
         prod: prod,
         open: Enum.count(assigns.tabs, &(&1.phase in ~w(idle working failed))),
         running?: match?(%{status: :running, deployed: id} when id != nil, prod),
@@ -2005,7 +2112,11 @@ defmodule BurrowWeb.WorkspaceLive.Components do
       <div class="ov-in">
         <div class="flex items-center justify-between gap-3">
           <h2 class="m-0 text-lg font-semibold">Deploys and usage</h2>
-          <button type="button" class="btn btn-ghost btn-sm" phx-click="toggle_overview">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            phx-click={JS.push("open", value: %{open: "deploys"})}
+          >
             Back to preview
           </button>
         </div>
@@ -2039,7 +2150,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
               envs={@envs}
             />
           </div>
-          <div class="sync">
+          <div :if={@live == "prod"} class="sync">
             <span>{sync_text(assigns)}</span>
             <button
               :if={@promote}
@@ -2068,7 +2179,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
 
         <div>
           <div class="sec-h">
-            <span class="eyebrow">prod · {uptime(@prod, @stats)}</span>
+            <span class="eyebrow">{@live} · {uptime(@prod, @stats)}</span>
           </div>
           <div :if={@running? and @usage} class="stats">
             <.stat
@@ -2109,16 +2220,16 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           <div :if={!@running?} class="down-row">
             <%= if @prod && @prod.deployed do %>
               <span class={["st", if(match?({:crashed, _}, @prod.status), do: "err", else: "warn")]}>
-                <span class="dot"></span>{down_text(@prod, "prod")}
+                <span class="dot"></span>{down_text(@prod, @live)}
               </span>
               <button
                 :if={match?({:crashed, _}, @prod.status)}
                 type="button"
                 class="btn btn-secondary btn-sm"
                 phx-click="restart_env"
-                phx-value-env="prod"
+                phx-value-env={@live}
               >
-                Restart prod
+                Restart {@live}
               </button>
             <% else %>
               <span class="st idle"><span class="dot"></span>Nothing built yet</span>
@@ -2321,6 +2432,7 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   attr :p, :map, required: true
   attr :teams, :list, required: true
   attr :creating, :boolean, required: true
+  attr :admin, :boolean, default: false, doc: "admins may start from a git repo"
 
   @doc "A new project: a name, and optionally a git repo, a team and the app's login."
   def new_project_dialog(assigns) do
@@ -2370,10 +2482,10 @@ defmodule BurrowWeb.WorkspaceLive.Components do
           phx-click="toggle_more"
         >
           <.icon name="hero-chevron-right" class={["size-3.5 chev", @p.more && "open"]} />
-          Git repo and sharing<span class="k">{@summary}</span>
+          {if @admin, do: "Git repo and sharing", else: "Sharing and login"}<span class="k">{@summary}</span>
         </button>
         <div :if={@p.more} id="np-more" class="flex flex-col gap-3.5">
-          <div>
+          <div :if={@admin}>
             <label class="flabel" for="np-repo">From a git repo <span>(optional)</span></label>
             <input
               id="np-repo"
@@ -3043,6 +3155,8 @@ defmodule BurrowWeb.WorkspaceLive.Components do
   defp peon_words("peon_runtime"), do: "Checked the running app"
   defp peon_words("peon_secrets"), do: "Checked the keys"
   defp peon_words("peon_request_secret"), do: "Asked you for a key"
+  defp peon_words("peon_pull_request"), do: "Read a pull request"
+  defp peon_words("peon_comment_on_pull_request"), do: "Commented on the pull request"
   defp peon_words(tool), do: tool
 
   defp note_text(%{kind: "queue", text: text}) do

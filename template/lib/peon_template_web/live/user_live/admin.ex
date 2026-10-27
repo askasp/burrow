@@ -1,4 +1,5 @@
 # peon:accounts-only: Peon leaves this file out of apps made without accounts.
+# peon:not-burrow: nor out of internal apps, where Burrow logs people in.
 defmodule PeonTemplateWeb.UserLive.Admin do
   @moduledoc """
   The admin's list of accounts: add one with an email and a first password,

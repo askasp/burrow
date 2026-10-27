@@ -33,6 +33,33 @@ defmodule Burrow.TicketsTest do
     assert [_, _] = dir |> Tickets.list() |> Tickets.unfinished()
   end
 
+  test "a ticket's description, tags and dependencies; Burrow closes it as tk would", %{
+    dir: dir
+  } do
+    client =
+      tk(dir, [
+        "create",
+        "Regenerate the client",
+        "-d",
+        "From the new spec.",
+        "--tags",
+        "think:high"
+      ])
+
+    page = tk(dir, ["create", "Move the schedule page", "--tags", "think:low"])
+    tk(dir, ["dep", page, client])
+
+    assert [
+             %{id: ^client, description: "From the new spec.", tags: ["think:high"], deps: []},
+             %{id: ^page, tags: ["think:low"], deps: [^client]}
+           ] = Tickets.list(dir)
+
+    refute tk(dir, ["ready"]) =~ page
+    :ok = Tickets.set_status(dir, client, "closed")
+    assert tk(dir, ["ready"]) =~ page
+    assert %{status: "closed"} = Enum.find(Tickets.list(dir), &(&1.id == client))
+  end
+
   test "a ticket the user adds is one tk works with", %{dir: dir} do
     {:ok, id} = Tickets.create(dir, "  Make the   logo bigger ", "On every page")
 

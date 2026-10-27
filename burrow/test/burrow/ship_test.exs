@@ -73,6 +73,67 @@ defmodule Burrow.ShipTest do
     assert phase(project, chat) == "live"
   end
 
+  test "for review, a passed change waits for a person to merge it", %{
+    project: project,
+    repo: repo
+  } do
+    chat = chat(project, repo, [{"lib/a.ex", "A1\na2\na3\n"}])
+    Chats.pick_shipping(chat, "review")
+
+    assert {"The checks passed. The user reviews" <> _, false} =
+             Ship.submit(project, chat.id, "Capital A")
+
+    assert %{status: "held"} = Repo.draft(repo, chat.id)
+    assert phase(project, chat) == "held"
+    assert Repo.ref(repo, "main") == 1
+
+    assert {:ok, %{id: 2}} = Ship.land_held(project, chat.id)
+    assert phase(project, chat) == "landing"
+  end
+
+  test "on autopilot, a change goes on to prod once staging runs it healthily", %{
+    project: project,
+    repo: repo
+  } do
+    chat = chat(project, repo, [{"lib/a.ex", "A1\na2\na3\n"}])
+    Chats.pick_shipping(chat, "pilot")
+    Ship.submit(project, chat.id, "Capital A")
+    Burrow.ProjectHelpers.stage!(project, 2)
+
+    Ship.healthy(project, "staging", 2)
+    assert Repo.ref(repo, "prod") == 2
+
+    # A change not on autopilot waits for a person.
+    other = chat(project, repo, [{"lib/b.ex", "B\n"}])
+    Ship.submit(project, other.id, "Capital B")
+    Ship.healthy(project, "staging", 3)
+    assert Repo.ref(repo, "prod") == 2
+  end
+
+  test "an internal app has no staging or prod: a passed main check puts it live" do
+    project = project_fixture(%{auth: "burrow"})
+    history!(project, %{"lib/a.ex" => "a\n"})
+    repo = Projects.repo_dir(project)
+    chat = chat(project, repo, [{"lib/a.ex", "A\n"}])
+
+    assert {"It landed on main as #2." <> told, false} =
+             Ship.submit(project, chat.id, "Capital A")
+
+    assert told =~ "goes live by itself"
+    assert phase(project, chat) == "landing"
+
+    Projects.subscribe(project.id, "refs")
+    run = Runs.start(project.id, "check", "main", 2)
+    ref = make_ref()
+    Ship.handle_info({ref, {run, "passed", ""}}, %{project: project, task: {ref, 2}})
+
+    assert_received {:ref_moved, "live", 2}
+    assert Repo.ref(repo, "live") == 2
+    assert Repo.ref(repo, "staging") == nil and Repo.ref(repo, "prod") == nil
+    assert phase(project, chat) == "live"
+    assert Activity.shippable(project) == nil
+  end
+
   test "failed checks say where; the draft stays out of main", %{project: project, repo: repo} do
     fail_at("compile")
     chat = chat(project, repo, [{"lib/a.ex", "broken"}])
